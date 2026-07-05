@@ -244,7 +244,7 @@ class Player extends Entity {
       if (this.action === "attack" || this.action === "duck") {
         frames_per_action = 4;
       } else if (["pick", "axe", "potion"].includes(this.action)) {
-        frames_per_action = 4;
+        frames_per_action = 2;
       }
       this.currentFrame = (this.currentFrame + 1) % frames_per_action;
       this.frameCount = 0;
@@ -412,6 +412,16 @@ class Player extends Entity {
 
     spriteX = this.currentFrame * spriteWidth;
 
+    // Movement frames are 32px and action frames 48px, but the character is
+    // drawn at the same pixel size in both; the extra 16px of an action frame
+    // is empty space for the tool swing. Scale every frame by the same factor
+    // and center it on the cell so the character never changes size.
+    const pixelScale = canvasSettings.cellWidth / 32;
+    const destWidth = spriteWidth * pixelScale;
+    const destHeight = spriteHeight * pixelScale;
+    const offsetX = (canvasSettings.cellWidth - destWidth) / 2;
+    const offsetY = (canvasSettings.cellHeight - destHeight) / 2;
+
     ctx.save();
     if (this.movement === "left") {
       ctx.scale(-1, 1);
@@ -421,10 +431,10 @@ class Player extends Entity {
         spriteY,
         spriteWidth,
         spriteHeight,
-        -this._position.x - this._width,
-        this._position.y,
-        canvasSettings.cellWidth,
-        canvasSettings.cellHeight
+        -(this._position.x + offsetX) - destWidth,
+        this._position.y + offsetY,
+        destWidth,
+        destHeight
       );
     } else {
       ctx.drawImage(
@@ -433,10 +443,10 @@ class Player extends Entity {
         spriteY,
         spriteWidth,
         spriteHeight,
-        this._position.x,
-        this._position.y,
-        canvasSettings.cellWidth,
-        canvasSettings.cellHeight
+        this._position.x + offsetX,
+        this._position.y + offsetY,
+        destWidth,
+        destHeight
       );
     }
     ctx.restore();
