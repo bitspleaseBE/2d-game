@@ -1,9 +1,11 @@
 import { Game } from './game.js';
-import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, } from './assets.js';
+import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, totalAssetCount } from './assets.js';
+import levelData from './levels/level-data.js';
 import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.js';
 import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
 import { setSeed } from './utils/rng.js';
+import { createTouchControls, shouldShowTouchControls } from './utils/touch.js';
 
 // Entry point of the game
 // - Initialize the game engine
@@ -15,12 +17,16 @@ import { setSeed } from './utils/rng.js';
 class GameEngine {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
+        this.container.style.position = 'relative';
         this.canvas = document.createElement('canvas');
         this.context = this.canvas.getContext('2d');
         this.canvas.width = canvasSettings.width;
         this.canvas.height = canvasSettings.height;
         this.canvas.style.display = 'block';
         this.canvas.style.margin = 'auto';
+        // Scale down on small screens while keeping the aspect ratio
+        this.canvas.style.maxWidth = '100%';
+        this.canvas.style.height = 'auto';
         this.container.appendChild(this.canvas);
         
         this.currentScreen = 'splash';
@@ -37,7 +43,7 @@ class GameEngine {
     async initialize() {
         try {
             console.log('Initializing game...');
-            const totalAssets = 34;
+            const totalAssets = totalAssetCount;
             let loadedAssets = 0;
 
             const onProgress = (src, img) => {
@@ -109,6 +115,7 @@ class GameEngine {
                 } else {
                     this.game.continue();
                 }
+                this.attachTouchControls();
                 break;
             case 'gameOver':
                 this.game.pause();
@@ -127,6 +134,14 @@ class GameEngine {
             default:
                 console.error('Unknown screen:', screen);
         }
+    }
+
+    attachTouchControls() {
+        if (!shouldShowTouchControls()) return;
+        if (!this.touchControls) {
+            this.touchControls = createTouchControls(this.game);
+        }
+        this.container.appendChild(this.touchControls);
     }
 
     story() {
@@ -163,3 +178,4 @@ gameEngine.showScreen('splash');
 // seeds the RNG at load time.
 window.__wandertrap = gameEngine;
 window.__wandertrap.setSeed = setSeed;
+window.__wandertrap.levelData = levelData;

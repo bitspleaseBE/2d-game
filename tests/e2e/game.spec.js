@@ -29,6 +29,25 @@ async function press(page, key, times, delay = 30) {
   }
 }
 
+/**
+ * Hold a key down until the predicate is satisfied (or the timeout hits),
+ * then release it. Movement is applied every frame while a key is held, so
+ * this is how a human actually travels long distances.
+ */
+async function holdKeyUntil(page, key, predicate, timeoutMs = 8000) {
+  await page.keyboard.down(key);
+  try {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await predicate()) return true;
+      await page.waitForTimeout(15);
+    }
+    return false;
+  } finally {
+    await page.keyboard.up(key);
+  }
+}
+
 async function openWelcomeScreen(page) {
   await page.goto('/');
   await expect(page.locator('#welcome-screen')).toBeVisible({ timeout: 30_000 });
@@ -72,7 +91,7 @@ test('story screen opens and Escape returns to the menu', async ({ page }) => {
   await expect(page.locator('#welcome-screen')).toBeVisible();
 });
 
-test('high scores screen shows the score table', async ({ page }) => {
+test('high scores screen renders and navigates back', async ({ page }) => {
   await openWelcomeScreen(page);
   await page.getByRole('button', { name: 'High Scores' }).click();
   await expect(page.getByRole('heading', { name: 'High Scores' })).toBeVisible();
@@ -96,6 +115,18 @@ test('arrow keys move the player', async ({ page }) => {
   const after = await gameState(page);
   expect(after.position.y).toBeGreaterThan(before.position.y);
   expect(after.position.x).toBe(before.position.x);
+});
+
+test('holding a key moves the player continuously, not just once', async ({ page }) => {
+  await startNewGame(page);
+  const before = await gameState(page);
+  // A single uninterrupted hold must cover real distance (loop-driven
+  // movement); with the old keydown-driven movement this moved ~5px.
+  await page.keyboard.down('ArrowDown');
+  await page.waitForTimeout(500);
+  await page.keyboard.up('ArrowDown');
+  const after = await gameState(page);
+  expect(after.position.y - before.position.y).toBeGreaterThan(60);
 });
 
 test('walls block the player', async ({ page }) => {
@@ -198,21 +229,48 @@ test('regression: attacking damages and defeats an adjacent guard', async ({ pag
     game.spawnGuard(300, 360); // directly below the player
     game.player.movement = 'down'; // face the guard
 
+    const alive = () => game.guards.filter((g) => !g.isDefeated()).length;
     const scoreBefore = game.score;
+
     game.playerAttack(); // guard has 100 health, attackPower is 50
-    const guardsAfterOneHit = game.guards.length;
+    const aliveAfterOneHit = alive();
+    game.step(30); // wait out the attack cooldown
     game.playerAttack();
+    const aliveAfterTwoHits = alive();
+    game.powerups = []; // discard any drop so the score delta is exactly the kill
+    game.step(60); // let the death animation finish
 
     return {
-      guardsAfterOneHit,
-      guardsAfterTwoHits: game.guards.length,
+      aliveAfterOneHit,
+      aliveAfterTwoHits,
+      corpseRemoved: game.guards.length === 0,
       scoreGained: game.score - scoreBefore,
     };
   });
 
-  expect(result.guardsAfterOneHit).toBe(1); // survives the first hit
-  expect(result.guardsAfterTwoHits).toBe(0); // defeated and removed
+  expect(result.aliveAfterOneHit).toBe(1); // survives the first hit
+  expect(result.aliveAfterTwoHits).toBe(0); // defeated on the second
+  expect(result.corpseRemoved).toBe(true); // removed after the death animation
   expect(result.scoreGained).toBe(100); // defeat awards score
+});
+
+test('regression: attack has a cooldown, spamming cannot double-hit', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.teleportPlayer(300, 300);
+    game.spawnGuard(300, 360);
+    game.player.movement = 'down';
+
+    // Two attacks in the same instant: only the first may land
+    game.playerAttack();
+    game.playerAttack();
+    return { alive: game.guards.filter((g) => !g.isDefeated()).length };
+  });
+
+  expect(result.alive).toBe(1); // the spam attack was ignored
 });
 
 test('regression: attack only hits in the direction the player is facing', async ({ page }) => {
@@ -226,11 +284,65 @@ test('regression: attack only hits in the direction the player is facing', async
     game.player.movement = 'up'; // facing away from the guard
 
     game.playerAttack();
+    game.step(30);
     game.playerAttack();
-    return { guards: game.guards.length };
+    return { alive: game.guards.filter((g) => !g.isDefeated()).length };
   });
 
-  expect(result.guards).toBe(1); // guard behind the player is untouched
+  expect(result.alive).toBe(1); // guard behind the player is untouched
+});
+
+test('explosive traps arm on approach, detonate, and hurt the player', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = []; // isolate: no guard damage in this scenario
+    // Level 1 has an explosive ('E') at column 11, row 7 => pixel (704, 448).
+    // Stand one cell to its left, inside the trigger range.
+    game.teleportPlayer(640, 448);
+    game.step(1);
+    const armed = game.explosives[0] ? game.explosives[0].isArmed() : false;
+    game.step(95); // fuse is 90 frames; the blast lands within this window
+    const healthAfterBlast = game.player.getHealth();
+    game.step(25); // explosion animation finishes
+    return {
+      armed,
+      healthAfterBlast,
+      explosivesLeft: game.explosives.length,
+    };
+  });
+
+  expect(result.armed).toBe(true); // revealed and armed by proximity
+  expect(result.healthAfterBlast).toBeLessThan(100); // blast hurt the player
+  expect(result.explosivesLeft).toBe(0); // spent trap is removed
+});
+
+test('powerup effects: speed is temporary, invincibility blocks damage', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.explosives = [];
+    const player = game.player;
+
+    const baseSpeed = player.getSpeed();
+    player.applyPowerup('speed');
+    const boostedSpeed = player.getSpeed();
+    game.step(481); // effect lasts 480 frames
+    const speedAfterExpiry = player.getSpeed();
+
+    player.applyPowerup('invincibility');
+    player.takeDamage(50);
+    const healthWhileInvincible = player.getHealth();
+
+    return { baseSpeed, boostedSpeed, speedAfterExpiry, healthWhileInvincible };
+  });
+
+  expect(result.boostedSpeed).toBeGreaterThan(result.baseSpeed);
+  expect(result.speedAfterExpiry).toBe(result.baseSpeed);
+  expect(result.healthWhileInvincible).toBe(100);
 });
 
 test('the same seed produces an identical level setup', async ({ page }) => {
@@ -273,21 +385,293 @@ test('step(frames) advances the simulation deterministically while paused', asyn
   expect(result.isGameOver).toBe(false);
 });
 
+test('all levels are distinct and solvable', async ({ page }) => {
+  await openWelcomeScreen(page);
+
+  const result = await page.evaluate(() => {
+    const levels = window.__wandertrap.levelData.levels;
+
+    // BFS over the layout. Obstacles (O/T) are choppable, so only walls —
+    // and optionally locked doors — truly block the path.
+    const reachableCells = (layout, start, blocked) => {
+      const seen = new Set([start.join()]);
+      const queue = [start];
+      while (queue.length) {
+        const [x, y] = queue.shift();
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (ny < 0 || ny >= layout.length || nx < 0 || nx >= layout[ny].length) continue;
+          if (blocked.includes(layout[ny][nx])) continue;
+          const key = nx + ',' + ny;
+          if (!seen.has(key)) { seen.add(key); queue.push([nx, ny]); }
+        }
+      }
+      return seen;
+    };
+
+    const solvable = (layout) => {
+      let start, exit;
+      const keys = [];
+      for (let y = 0; y < layout.length; y++) {
+        for (let x = 0; x < layout[y].length; x++) {
+          if (layout[y][x] === 'P') start = [x, y];
+          if (layout[y][x] === 'X') exit = [x, y];
+          if (layout[y][x] === 'K') keys.push([x, y]);
+        }
+      }
+      if (!start || !exit) return false;
+
+      const hasDoors = layout.some((row) => row.includes('D'));
+      // Phase 1: what is reachable with doors still locked?
+      const lockedReach = reachableCells(layout, start, ['#', 'D']);
+      if (!hasDoors) return lockedReach.has(exit.join());
+      // With doors: a key must be reachable before any door...
+      if (!keys.some((k) => lockedReach.has(k.join()))) return false;
+      // ...and the exit reachable once doors can be opened
+      return reachableCells(layout, start, ['#']).has(exit.join());
+    };
+
+    const serialized = levels.map((level) => JSON.stringify(level.layout));
+    return {
+      count: levels.length,
+      allSolvable: levels.every((level) => solvable(level.layout)),
+      allDistinct: new Set(serialized).size === serialized.length,
+      themes: levels.map((level) => level.theme),
+    };
+  });
+
+  expect(result.count).toBe(5);
+  expect(result.allSolvable).toBe(true);
+  expect(result.allDistinct).toBe(true); // levels 3-5 used to be identical copies
+  expect(new Set(result.themes).size).toBeGreaterThan(1); // themed levels
+});
+
+test('keys open locked doors, which block until then', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.startAtLevel(4); // level 4 has a door at (15,4) => pixel (960, 256)
+    game.guards = [];
+    game.explosives = [];
+
+    const doorsBefore = game.doors.length;
+    const keysOnMap = game.keys.length;
+
+    // Without a key the door blocks like a wall
+    game.teleportPlayer(960, 192); // cell directly above the door
+    for (let i = 0; i < 30; i++) game.movePlayer('down');
+    const blockedY = game.player.getPosition().y;
+
+    // With a key, bumping the door opens it and consumes the key
+    game.player.collectKey();
+    for (let i = 0; i < 30; i++) game.movePlayer('down');
+    const passedY = game.player.getPosition().y;
+
+    return {
+      doorsBefore,
+      keysOnMap,
+      blockedY,
+      passedY,
+      doorsAfter: game.doors.length,
+      keysHeld: game.player.keys,
+    };
+  });
+
+  expect(result.doorsBefore).toBe(1);
+  expect(result.keysOnMap).toBe(1);
+  expect(result.blockedY).toBeLessThan(256); // stopped before the door cell
+  expect(result.passedY).toBeGreaterThan(result.blockedY); // moved through
+  expect(result.doorsAfter).toBe(0); // door opened
+  expect(result.keysHeld).toBe(0); // key consumed
+});
+
+test('the axe destroys an obstacle in one swing but never hurts guards', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    // Level 1 spawn faces a tree at (512, 128); face it and swing the axe
+    game.player.movement = 'right';
+    const obstaclesBefore = game.obstacles.length;
+    game.playerAxe();
+    const obstaclesAfterAxe = game.obstacles.length;
+
+    // The axe must not damage guards
+    game.step(30); // wait out the shared cooldown
+    game.spawnGuard(448 + 64, 128);
+    game.playerAxe();
+    return {
+      obstaclesBefore,
+      obstaclesAfterAxe,
+      guardsAlive: game.guards.filter((g) => !g.isDefeated()).length,
+    };
+  });
+
+  expect(result.obstaclesAfterAxe).toBe(result.obstaclesBefore - 1); // one-shot chop
+  expect(result.guardsAlive).toBe(1); // axe is for wood, not orcs
+});
+
+test('potions are carried and drinking one heals the player', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.explosives = [];
+    const player = game.player;
+
+    const startingPotions = player.potions; // every run starts with one
+    player.takeDamage(60);
+    const healthHurt = player.getHealth();
+    game.step(70); // wait out the hurt invulnerability window
+
+    const drank = game.playerDrinkPotion();
+    const healthHealed = player.getHealth();
+    // A second drink must fail: no potions left
+    game.playerDrinkPotion();
+
+    return {
+      startingPotions,
+      healthHurt,
+      healthHealed,
+      potionsLeft: player.potions,
+    };
+  });
+
+  expect(result.startingPotions).toBe(1);
+  expect(result.healthHurt).toBe(40);
+  expect(result.healthHealed).toBe(90); // +50, capped at 100
+  expect(result.potionsLeft).toBe(0);
+});
+
+test('pick disarms an armed explosive for bonus score', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    // Stand next to the level 1 explosive at (704, 448) so it arms
+    game.teleportPlayer(640, 448);
+    game.step(1);
+    const armed = game.explosives[0].isArmed();
+    const scoreBefore = game.score;
+    game.playerPick();
+    return {
+      armed,
+      explosivesLeft: game.explosives.length,
+      scoreGained: game.score - scoreBefore,
+      health: game.player.getHealth(),
+    };
+  });
+
+  expect(result.armed).toBe(true);
+  expect(result.explosivesLeft).toBe(0); // trap safely removed
+  expect(result.scoreGained).toBe(50); // disarm bonus
+  expect(result.health).toBe(100); // no explosion happened
+});
+
+test('touch controls appear with ?touch=1 and drive the player', async ({ page }) => {
+  await page.goto('/?touch=1');
+  await expect(page.locator('#welcome-screen')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'New Game' }).click();
+  await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
+
+  await expect(page.locator('#touch-controls')).toBeVisible();
+  const before = await gameState(page);
+
+  // Hold the on-screen down button for a moment
+  await page.locator('#touch-btn-down').dispatchEvent('pointerdown');
+  await page.waitForTimeout(300);
+  await page.locator('#touch-btn-down').dispatchEvent('pointerup');
+
+  const after = await gameState(page);
+  expect(after.position.y).toBeGreaterThan(before.position.y + 30); // continuous movement
+});
+
+test('level 5 has a boss guarding the exit', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.startAtLevel(5);
+    const boss = game.guards.find((g) => g.isBoss);
+    return {
+      hasBoss: Boolean(boss),
+      guardCount: game.guards.length,
+      bossDefeatedByOneHit: boss ? (boss.takeDamage(50), boss.isDefeated()) : null,
+    };
+  });
+
+  expect(result.hasBoss).toBe(true);
+  expect(result.guardCount).toBeGreaterThan(3);
+  expect(result.bossDefeatedByOneHit).toBe(false); // boss survives a normal hit
+});
+
+test('a qualifying score can be saved and shows up in high scores', async ({ page }) => {
+  await startNewGame(page);
+
+  // Earn some score (defeat one guard), then lose all lives
+  await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.teleportPlayer(300, 300);
+    game.spawnGuard(300, 360);
+    game.player.movement = 'down';
+    game.playerAttack();
+    game.step(30);
+    game.playerAttack();
+    // The kill may have dropped a powerup onto the player; strip pickups and
+    // reset effects so an invincibility drop can't block the damage below
+    game.powerups = [];
+    game.player.respawn(448, 128);
+  });
+  await expect.poll(() => gameState(page).then((s) => s.score)).toBeGreaterThanOrEqual(100);
+
+  const damage = () => page.evaluate(() => window.__wandertrap.game.player.takeDamage(100));
+  await damage();
+  await expect.poll(() => gameState(page).then((s) => s.lives)).toBe(2);
+  await damage();
+  await expect.poll(() => gameState(page).then((s) => s.lives)).toBe(1);
+  await damage();
+  await expect(page.locator('#game-over-screen')).toBeVisible();
+
+  // The score qualifies for the top 10, so the name form is shown
+  await page.locator('#score-name-input').fill('Theo');
+  await page.getByRole('button', { name: 'Save Score' }).click();
+  await expect(page.getByText('Score saved!')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Main Menu' }).click();
+  await page.getByRole('button', { name: 'High Scores' }).click();
+  await expect(page.getByRole('heading', { name: 'High Scores' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Theo' })).toBeVisible();
+});
+
 test('reaching the exit completes level 1 and advances to level 2', async ({ page }) => {
   test.setTimeout(120_000);
   await startNewGame(page);
 
-  // A tree blocks the corridor right of the spawn since obstacles became
-  // solid: face it and chop it down (2 hits at 50 damage each)
+  // A tree blocks the corridor right of the spawn: face it and chop it down
+  // (two hits at 50 damage each, waiting out the attack cooldown between)
   await press(page, 'ArrowRight', 1);
-  await press(page, ' ', 2, 100);
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(600);
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(200);
 
-  // Walk the level 1 maze: east along the top corridor, south along the
-  // right corridor, west along the bottom corridor, then north to the exit.
-  await press(page, 'ArrowRight', 52);
-  await press(page, 'ArrowDown', 64);
-  await press(page, 'ArrowLeft', 27);
-  await press(page, 'ArrowUp', 40);
+  // Walk the level 1 maze by holding keys: east along the top corridor,
+  // south along the right corridor, west along the bottom corridor, then
+  // north to the exit.
+  const at = () => gameState(page).then((s) => s.position);
+  expect(await holdKeyUntil(page, 'ArrowRight', async () => (await at()).x >= 706)).toBe(true);
+  expect(await holdKeyUntil(page, 'ArrowDown', async () => (await at()).y >= 440)).toBe(true);
+  expect(await holdKeyUntil(page, 'ArrowLeft', async () => (await at()).x <= 585)).toBe(true);
+  await holdKeyUntil(
+    page,
+    'ArrowUp',
+    () => page.locator('#level-completed-screen').isVisible()
+  );
 
   await expect(page.locator('#level-completed-screen')).toBeVisible();
   await expect(page.getByText('Level Completed!')).toBeVisible();
