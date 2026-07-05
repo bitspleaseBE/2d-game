@@ -1,7 +1,7 @@
 import { Game } from './game.js';
 import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, } from './assets.js';
 import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.js';
-import { showWelcomeScreen, showGameOverScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
+import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
 
 // Entry point of the game
@@ -40,7 +40,6 @@ class GameEngine {
             let loadedAssets = 0;
 
             const onProgress = (src, img) => {
-                console.log('Progress:', src, img);
                 loadedAssets++;
                 const progress = Math.floor((loadedAssets / totalAssets) * 100);
                 updateSplashScreenProgress(progress);
@@ -52,7 +51,11 @@ class GameEngine {
             const powerupsAssets = await loadPowerUpsAssets(onProgress);
 
             this.assets = { playerAssets, levelAssets, guardAssets, powerupsAssets };
-            this.game = new Game(this.container.id, this.canvas, this.context, this.assets);
+            this.game = new Game(this.container.id, this.canvas, this.context, this.assets, {
+                onGameOver: () => this.showScreen('gameOver'),
+                onLevelCompleted: () => this.showScreen('levelCompleted'),
+                onGameWon: () => this.showScreen('gameWon'),
+            });
             this.showScreen('welcome');
             this.setupGameControls();
         } catch (error) {
@@ -64,6 +67,9 @@ class GameEngine {
         window.addEventListener('keydown', (event) => {
             switch (event.key) {
                 case controlSettings.esc:
+                    if (this.game && this.game.started) {
+                        this.game.pause();
+                    }
                     this.showScreen('welcome');
                     break;
             }
@@ -97,9 +103,12 @@ class GameEngine {
                 }
                 break;
             case 'gameOver':
+                this.game.pause();
                 this.game.started = false;
-                this.game.gameOver = true;
                 showGameOverScreen(this.game.score, () => this.startGame(), () => this.showScreen('welcome'));
+                break;
+            case 'gameWon':
+                showGameWonScreen(this.game.score, () => this.startGame(), () => this.showScreen('welcome'));
                 break;
             case 'highScore':
                 showHighScoreScreen(() => this.showScreen('welcome'));
@@ -140,3 +149,6 @@ class GameEngine {
 
 const gameEngine = new GameEngine('game-container');
 gameEngine.showScreen('splash');
+
+// Exposed for automated (Playwright) tests to inspect game state
+window.__wandertrap = gameEngine;

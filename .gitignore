@@ -29,6 +29,10 @@ Thumbs.db
 # Coverage reports
 coverage/
 
+# Playwright
+test-results/
+playwright-report/
+
 # Build artifacts
 build/
 

@@ -33,9 +33,9 @@ class Powerup extends Entity {
   collect() {
     if (!this.#collected) {
       this.#collected = true;
-      console.log(`Powerup collected: ${this._type}`);
-      // Return the powerup effect
+      return this._type;
     }
+    return null;
   }
 
   // ... rest of the Powerup class methods ...

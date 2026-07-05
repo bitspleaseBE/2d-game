@@ -21,7 +21,7 @@ export const playerSettings = {
 // Game settings
 export const gameSettings = {
     initialLevel: 1, // Initial level of the game
-    maxLevels: 10, // Maximum number of levels in the game
+    maxLevels: 5, // Maximum number of levels in the game (must match levels defined in levels/level-data.js)
     scoreIncrement: 100, // Points added to the score for each successful action
 };
 
@@ -49,7 +49,6 @@ export const controlSettings = {
     left: 'ArrowLeft', // Key for moving left
     right: 'ArrowRight', // Key for moving right
     attack: 'a', // Key for attacking
-    space: ' ', // Key for jumping
     esc: 'Escape', // Key for going back to the welcome screen
     pick: 'p', // Key for picking
     axe: 'x', // Key for axe
