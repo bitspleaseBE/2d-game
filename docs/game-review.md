@@ -2,6 +2,8 @@
 
 *Reviewed by playing the game in a real browser (Chromium via Playwright), reading every source file, and running the e2e suite (14/14 tests pass, no console errors).*
 
+> **Status update:** the P0–P2 recommendations and the bug table below have been implemented in a follow-up commit — loop-driven movement, attack cooldown, guard death animations and tighter hitboxes, distinct themed levels 3–5, working explosive traps, the full powerup set with guard drops, a level-5 boss, persistent high scores, synthesized sound effects, and HUD/controls improvements. Still open (P3): touch controls, doors + keys, and the pick/axe/potion actions. This document is kept as the original review for context.
+
 ## Verdict
 
 The skeleton is genuinely good: clean entity/screen/level structure, seeded RNG for reproducible runs, working pause/continue, a charming level 1, and a solid e2e test suite. But the game currently plays like a tech demo rather than a game — roughly **half of the designed mechanics are stubs**, 3 of the 5 levels are identical copies, and the two core verbs (moving and attacking) both have game-feel problems. That is the "low on details" feeling: the systems exist in name, but few of them push back on the player.

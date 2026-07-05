@@ -5,57 +5,65 @@ This document provides an overview of the entities in "Wandertrap" and the lette
 ## Entities and Their Representations
 
 - **Player (P)**
-  - Can move left, right, up, and down.
-  - Can attack guards, and collect powerups, explosives, and keys.
+  - Moves left, right, up, and down — movement is applied every frame while a key is held, so diagonals work and speed is frame-consistent.
+  - Attacks with the sword (Space). Attacks have a short cooldown (~0.4s) and only hit in the facing direction.
+  - Collects powerup crystals by walking over them.
+  - Has 100 health and a short invulnerability window (with a flicker) after each hit.
 
 - **Guard (G)**
-  - Can move towards the player and detect the player's position.
-  - Can attack the player and be defeated by the player.
-  - Can drop powerups, explosives, and keys when defeated.
+  - Patrols in place, looking around; detects the player within 5 cells when it has a clear line of sight.
+  - Chases the player and deals contact damage (10).
+  - Takes two sword hits to defeat; plays a hurt flash and a death animation.
+  - Has a 40% chance to drop a random powerup where it fell.
 
-![Rock](../assets/images/obstacle/Rock6_1.png)
+- **Boss (B)**
+  - A hulking guard that protects the final exit on level 5.
+  - Triple health (300, with a visible health bar), double contact damage (20), faster, and spots the player from 7 cells.
+  - Defeating it awards 500 points. It can also be lured onto an explosive trap.
 
-- **Obstacle (O)**
-  - Can be destroyed by the player.
-  - Can drop powerups, explosives, and keys when destroyed.
+- **Obstacle (O boulder / T tree)**
+  - Blocks the player like a wall until destroyed (two sword hits).
+  - The tree sprite varies with the level theme.
 
-- **Powerup (U)**
-  - Can be collected by the player.
-  - Can be dropped by guards, obstacles, and keys.
+- **Powerup (C)**
+  - A crystal collected on touch (+50 points). Four types:
+    - **Health** (red): restores 25 health.
+    - **Speed** (blue): +60% movement speed for ~8 seconds.
+    - **Strength** (green): double attack damage for ~8 seconds.
+    - **Invincibility** (yellow): blocks all damage for ~8 seconds (golden aura).
+  - Active timed effects are shown in the HUD with seconds remaining.
 
 - **Explosive (E)**
-  - Can be hidden under obstacles and activates when the player is near.
-  - Can reduce player lives and create visual effects when detonated.
-
-- **Key (K)**
-  - Can be collected by the player.
-  - Can be dropped by guards and obstacles.
+  - A hidden trap. Invisible until the player comes within 1.5 cells, then it reveals itself and arms: the fuse burns for ~1.5 seconds with an accelerating red warning flash.
+  - On detonation it damages everything in the blast radius — 30 to the player, 100 to guards (enough to kill a regular guard). Traps can be used tactically against pursuers.
 
 - **Wall (#)**
   - Cannot be destroyed by the player.
 
 - **Exit (X)**
-  - Represents the exit in the game.
-  - Can be collected by the player.
+  - A glowing, sparkling ruin. Reaching it completes the level and awards a bonus (100 × level number). Its sprite matches the level theme (golden, sand, or snow ruin).
 
 ## Example Level Layout
 
-Here is an example of a level layout with the entities represented by their respective letters:
+Levels are 20×10 grids declared in `game/levels/level-data.js`; rows can be written as plain strings:
 
 ```javascript
 [
-    ['#', '#', '#', '#', '#', '#', '#', '#'],
-    ['#', 'P', ' ', ' ', ' ', ' ', ' ', '#'],
-    ['#', 'O', '#', ' ', '#', ' ', ' ', '#'],
-    ['#', ' ', '#', ' ', '#', ' ', ' ', '#'],
-    ['#', 'E', ' ', ' ', ' ', ' ', ' ', '#'],
-    ['#', ' ', '#', ' ', '#', ' ', ' ', '#'],
-    ['#', ' ', ' ', 'G', ' ', 'E', ' ', 'X'],
-    ['#', '#', '#', '#', '#', '#', '#', '#']
+    '####################',
+    '#P  #      E   G  ##',
+    '###   #C#####E### ##',
+    '# # # #  G C#O#   ##',
+    '# # # ##  # # # ####',
+    '#   # #   # # #   ##',
+    '#E ## # # # # ##OC##',
+    '#G    # #G    #  X##',
+    '####################',
+    '####################',
 ]
 ```
 
-## Note
+An automated test BFS-checks every level for solvability and asserts that no two levels share a layout.
 
-The current way of level design leaves not a lot of room for customization. We have different powerups, different kinds of obstacles, and other entities that could be utilized to create more varied and interesting levels. Consider expanding the level design to incorporate these elements more effectively.
-The current approach is very rigid and doesn't allow for much creativity in level design. It was designed to be simple and easy to understand, but it may not be the best way to create a game with a lot of levels and different scenarios.
+## Planned / not yet implemented
+
+- **Key (K)** — doors and keys are not in the game yet; `pick` (p), `axe` (x) and `potion` (u) currently only play their animations.

@@ -1,20 +1,18 @@
 import Entity from './entity.js';
-import { canvasSettings } from "../utils/settings.js";
+import { canvasSettings, playerSettings } from "../utils/settings.js";
 
 class Player extends Entity {
   #health;
-  #speed;
-  #isHurt = false;
-  #hurtInterval = null;
+  #hurtTimer = 0; // frames of invulnerability left after a hit
+  #attackCooldown = 0; // frames until the next swing is allowed
+  #attackAnimTimer = 0; // frames the attack animation keeps playing
+  #actionTimer = 0; // frames a transient action (pick/axe/potion) keeps playing
+  // Timed powerup effects, in frames remaining
+  #effects = { speed: 0, strength: 0, invincibility: 0 };
 
   constructor(x, y, assets) {
     super(x, y, 'player', assets);
     this.#health = 100;
-    this.#speed = 5;
-    this.attackPower = 50;
-    this.explosives = [];
-    this.keys = [];
-    this.powerups = [];
 
     this.currentFrame = 0;
     this.frameCount = 0;
@@ -28,6 +26,31 @@ class Player extends Entity {
       movement: assets.playerMovement,
       actions: assets.playerActions
     };
+  }
+
+  getSpeed() {
+    return playerSettings.speed + (this.#effects.speed > 0 ? 3 : 0);
+  }
+
+  get attackPower() {
+    return playerSettings.attackPower * (this.#effects.strength > 0 ? 2 : 1);
+  }
+
+  canAttack() {
+    return this.#attackCooldown <= 0;
+  }
+
+  // Remaining frames per active effect, for the HUD
+  getActiveEffects() {
+    const active = {};
+    for (const [name, frames] of Object.entries(this.#effects)) {
+      if (frames > 0) active[name] = frames;
+    }
+    return active;
+  }
+
+  isInvincible() {
+    return this.#effects.invincibility > 0;
   }
 
   getPickupRange() {
@@ -70,108 +93,131 @@ class Player extends Entity {
   }
 
   takeDamage(amount) {
-    // Ignore hits during the invulnerability window after being hurt
-    if (this.#isHurt || this.#health <= 0) return;
+    // Ignore hits during the invulnerability window after being hurt,
+    // or while an invincibility powerup is active
+    if (this.#hurtTimer > 0 || this.#health <= 0 || this.isInvincible()) return;
     this.#health -= amount;
-    this.hurtAnimation();
+    this.#hurtTimer = playerSettings.hurtDuration;
   }
 
   respawn(x, y) {
     this._position = { x, y };
     this.#health = 100;
-    this.#isHurt = false;
-    if (this.#hurtInterval) {
-      clearInterval(this.#hurtInterval);
-      this.#hurtInterval = null;
-    }
+    this.#hurtTimer = 0;
+    this.#attackCooldown = 0;
+    this.#attackAnimTimer = 0;
+    this.#actionTimer = 0;
+    this.#effects = { speed: 0, strength: 0, invincibility: 0 };
     this.visible = true;
     this.action = "idle";
     this.movement = "down";
   }
 
+  // Walking must not stomp an attack/pick animation that is still playing
+  #setWalk() {
+    if (this.#attackAnimTimer <= 0 && this.#actionTimer <= 0) {
+      this.action = "walk";
+    }
+  }
+
   moveLeft() {
-    this._position.x -= this.#speed;
-    this.action = "walk";
+    this._position.x -= this.getSpeed();
+    this.#setWalk();
     this.movement = "left";
   }
 
   moveRight() {
-    this._position.x += this.#speed;
-    this.action = "walk";
+    this._position.x += this.getSpeed();
+    this.#setWalk();
     this.movement = "right";
   }
 
   moveUp() {
-    this._position.y -= this.#speed;
-    this.action = "walk";
+    this._position.y -= this.getSpeed();
+    this.#setWalk();
     this.movement = "up";
   }
 
   moveDown() {
-    this._position.y += this.#speed;
-    this.action = "walk";
+    this._position.y += this.getSpeed();
+    this.#setWalk();
     this.movement = "down";
   }
 
+  // Starts a swing. Returns false while the previous swing is still cooling
+  // down, so callers know not to apply damage.
   attack() {
+    if (!this.canAttack()) return false;
     this.action = "attack";
-    // Implement attack logic here
+    this.currentFrame = 0;
+    this.#attackCooldown = playerSettings.attackCooldown;
+    this.#attackAnimTimer = Math.min(16, playerSettings.attackCooldown);
+    return true;
+  }
+
+  #transientAction(action) {
+    this.action = action;
+    this.currentFrame = 0;
+    this.#actionTimer = 30;
   }
 
   pick() {
-    this.action = "pick";
-    // TODO: Implement actual object detection and picking logic
-    // This would involve checking for collisions with pickable entities
-    // and handling the pickup if a valid object is found
+    this.#transientAction("pick");
   }
 
   axe() {
-    this.action = "axe";
-    // Implement axe logic here
+    this.#transientAction("axe");
   }
 
   potion() {
-    this.action = "potion";
-    // Implement potion logic here
-  }
-
-  collectExplosive(explosive) {
-    this.explosives.push(explosive);
-  }
-
-  collectKey(key) {
-    this.keys.push(key);
-  }
-
-  collectPowerup(powerup) {
-    this.powerups.push(powerup);
+    this.#transientAction("potion");
   }
 
   applyPowerup(effect) {
-    this.powerups.push(effect);
-    if (effect === "health") {
-      this.#health = Math.min(100, this.#health + 25);
+    switch (effect) {
+      case "health":
+        this.#health = Math.min(100, this.#health + 25);
+        break;
+      case "speed":
+      case "strength":
+      case "invincibility":
+        this.#effects[effect] = playerSettings.effectDuration;
+        break;
     }
   }
 
   update() {
+    // Tick down timers
+    if (this.#attackCooldown > 0) this.#attackCooldown--;
+    if (this.#attackAnimTimer > 0) {
+      this.#attackAnimTimer--;
+      if (this.#attackAnimTimer === 0 && this.action === "attack") this.action = "idle";
+    }
+    if (this.#actionTimer > 0) {
+      this.#actionTimer--;
+      if (this.#actionTimer === 0 && ["pick", "axe", "potion"].includes(this.action)) {
+        this.action = "idle";
+      }
+    }
+    for (const name of Object.keys(this.#effects)) {
+      if (this.#effects[name] > 0) this.#effects[name]--;
+    }
+
+    // Hurt flicker, frame-based so it pauses with the game and works with
+    // the deterministic step() test hook
+    if (this.#hurtTimer > 0) {
+      this.#hurtTimer--;
+      this.visible = Math.floor(this.#hurtTimer / 6) % 2 === 0;
+      if (this.#hurtTimer === 0) this.visible = true;
+    }
+
+    // Advance the sprite animation
     this.frameCount++;
     if (this.frameCount >= 10) {
-      // Adjust frame rate as needed
       let frames_per_action = 6;
-      if (
-        this.action === "walk" ||
-        this.action === "idle" ||
-        this.action === "jump"
-      ) {
-        frames_per_action = 6;
-      } else if (this.action === "attack" || this.action === "duck") {
+      if (this.action === "attack" || this.action === "duck") {
         frames_per_action = 4;
-      } else if (
-        this.action === "pick" ||
-        this.action === "axe" ||
-        this.action === "potion"
-      ) {
+      } else if (["pick", "axe", "potion"].includes(this.action)) {
         frames_per_action = 4;
       }
       this.currentFrame = (this.currentFrame + 1) % frames_per_action;
@@ -184,45 +230,39 @@ class Player extends Entity {
     const nextPosition = { ...this._position };
     switch (direction) {
       case 'left':
-        nextPosition.x -= this.#speed;
+        nextPosition.x -= this.getSpeed();
         break;
       case 'right':
-        nextPosition.x += this.#speed;
+        nextPosition.x += this.getSpeed();
         break;
       case 'up':
-        nextPosition.y -= this.#speed;
+        nextPosition.y -= this.getSpeed();
         break;
       case 'down':
-        nextPosition.y += this.#speed;
+        nextPosition.y += this.getSpeed();
         break;
     }
     return nextPosition;
   }
 
-  hurtAnimation() {
-    if (this.#isHurt) return;
-
-    this.#isHurt = true;
-    this.action = "idle"; // Freeze the player
-
-    let flickerCount = 0;
-    const maxFlickers = 10;
-    const flickerDuration = 100; // milliseconds
-
-    this.#hurtInterval = setInterval(() => {
-      this.visible = !this.visible; // Toggle visibility
-      flickerCount++;
-
-      if (flickerCount >= maxFlickers) {
-        clearInterval(this.#hurtInterval);
-        this.#hurtInterval = null;
-        this.#isHurt = false;
-        this.visible = true; // Ensure player is visible after flickering
-      }
-    }, flickerDuration);
-  }
-
   draw(ctx) {
+    // Invincibility aura, drawn even while flickering so the effect reads
+    if (this.isInvincible()) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 215, 0, 0.8)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(
+        this._position.x + this._width / 2,
+        this._position.y + this._height / 2,
+        this._width * 0.55,
+        0,
+        Math.PI * 2
+      );
+      ctx.stroke();
+      ctx.restore();
+    }
+
     if (!this.visible) return;
 
     let spriteHeight = 32;
@@ -310,7 +350,6 @@ class Player extends Entity {
         spriteHeight = 48;
         spriteWidth = 48;
         spriteSheet = this._sprites.actions;
-        // spriteY = 11 * spriteHeight;
         switch (this.movement) {
             case "down":
               spriteY = 9 * spriteHeight;
@@ -326,7 +365,6 @@ class Player extends Entity {
               break;
           }
           break;
-        break;
       case "idle":
       default:
         switch (this.movement) {

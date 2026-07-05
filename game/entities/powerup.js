@@ -3,16 +3,15 @@ import Entity from './entity.js';
 // Powerup entity class
 // - Represents the powerups in the game
 // - Can be collected by the player
-// - Can be dropped by guards
-// - Can be dropped by obstacles
-// - Properties: position, type, collected
-// - Methods: collect (mark as collected), update, draw
+// - Can be dropped by guards when defeated
+// - Types: health (red), speed (blue), strength (green), invincibility (yellow)
 class Powerup extends Entity {
   #collected;
 
   constructor(x, y, type, assets) {
     super(x, y, type, assets);
     this.#collected = false;
+    this.bobFrame = 0;
   }
 
   selectSprites(assets) {
@@ -26,6 +25,7 @@ class Powerup extends Entity {
       case "invincibility":
         return { crystal: assets.yellowCrystal };
       default:
+        console.warn(`Unknown powerup type "${this._type}", rendering as blue crystal`);
         return { crystal: assets.blueCrystal };
     }
   }
@@ -38,18 +38,21 @@ class Powerup extends Entity {
     return null;
   }
 
-  // ... rest of the Powerup class methods ...
+  update() {
+    this.bobFrame = (this.bobFrame + 1) % 120;
+  }
 
   draw(ctx) {
-    if (!this.#collected) {
-      ctx.drawImage(
-        this._sprites.crystal,
-        this._position.x,
-        this._position.y,
-        this._width,
-        this._height
-      );
-    }
+    if (this.#collected) return;
+    // Gentle bobbing so pickups stand out from the scenery
+    const bob = Math.sin((this.bobFrame / 120) * Math.PI * 2) * 4;
+    ctx.drawImage(
+      this._sprites.crystal,
+      this._position.x,
+      this._position.y + bob,
+      this._width,
+      this._height
+    );
   }
 }
 

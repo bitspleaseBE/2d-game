@@ -3,14 +3,22 @@ import { random } from "../utils/rng.js";
 
 // Exit entity class
 // - Represents the exit in the game
-// - Can be collected by the player
-// - Properties: position
-// - Methods: collect (mark as collected), update, draw
+// - Reached by the player to complete the level
+// - Ruin sprite matches the level theme (sand/snow/golden)
 
 class Exit extends Entity {
-  constructor(x, y, assets) {
+  constructor(x, y, assets, theme = 'forest') {
     super(x, y, 'exit', assets);
-    this._sprite = assets.yellowRuin;
+    switch (theme) {
+      case 'sand':
+        this._sprite = assets.sandRuin;
+        break;
+      case 'snow':
+        this._sprite = assets.snowRuin;
+        break;
+      default:
+        this._sprite = assets.yellowRuin;
+    }
     this._sparkles = this._createSparkles();
   }
 

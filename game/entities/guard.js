@@ -8,48 +8,66 @@ import { randomInt } from "../utils/rng.js";
 // - Can move towards the player
 // - Can detect the player's position
 // - Can attack the player
-// - Can be defeated by the player
-// - Can drop powerups when defeated
-// - Can drop explosives when defeated
-// - Can drop keys when defeated
-// - Can drop keys when defeated
+// - Can be defeated by the player (plays its death animation, then is removed)
+// - The 'boss' type is a bigger, tougher guard that protects the final exit
+
+const DEATH_ANIMATION_FRAMES = 40; // how long the death animation plays
+const HURT_ANIMATION_FRAMES = 15; // how long the hurt sprite is held
 
 class Guard extends Entity {
   #speed;
   #detectionRange;
   #currentSprite;
   #health;
+  #hurtTimer = 0;
+  #deathTimer = 0;
 
   constructor(x, y, type, assets) {
+    const isBoss = type === "boss";
     super(
       x,
       y,
       type,
       assets,
-      entitySettings.enemyWidth,
-      entitySettings.enemyHeight
+      isBoss ? entitySettings.bossWidth : entitySettings.enemyWidth,
+      isBoss ? entitySettings.bossHeight : entitySettings.enemyHeight
     );
+    this.isBoss = isBoss;
     this.action = "idle";
     this.movement = ["down", "up", "left", "right"][randomInt(0, 3)];
-    this.damage = 10;
-    this.#health = 100;
-    this.#speed = 1;
-    this.#detectionRange = 5 * canvasSettings.cellWidth;
+    this.damage = isBoss ? 20 : 10;
+    this.#health = isBoss ? 300 : 100;
+    this.#speed = isBoss ? 1.5 : 1;
+    this.#detectionRange = (isBoss ? 7 : 5) * canvasSettings.cellWidth;
     this.#currentSprite = this._sprites.idle;
     this.frameCount = 0;
     this.currentFrame = 0;
   }
 
   selectSprites(assets) {
+    // The boss reuses the orc3 sheets, drawn larger
+    const sheet = this._type === "boss" ? "orc3" : this._type;
     return {
-      attack: assets[`${this._type}_Attack`],
-      death: assets[`${this._type}_Death`],
-      hurt: assets[`${this._type}_Hurt`],
-      idle: assets[`${this._type}_Idle`],
-      run: assets[`${this._type}_Run`],
-      runAttack: assets[`${this._type}_Run_Attack`],
-      walk: assets[`${this._type}_Walk`],
-      walkAttack: assets[`${this._type}_Walk_Attack`],
+      attack: assets[`${sheet}_Attack`],
+      death: assets[`${sheet}_Death`],
+      hurt: assets[`${sheet}_Hurt`],
+      idle: assets[`${sheet}_Idle`],
+      run: assets[`${sheet}_Run`],
+      runAttack: assets[`${sheet}_Run_Attack`],
+      walk: assets[`${sheet}_Walk`],
+      walkAttack: assets[`${sheet}_Walk_Attack`],
+    };
+  }
+
+  // The sprite sheet has generous transparent padding; shrink the hitbox to
+  // the orc's body so contact damage only triggers when sprites visibly touch
+  getHitBox() {
+    const inset = this._width * 0.25;
+    return {
+      x: this._position.x + inset * 0.5,
+      y: this._position.y + inset * 0.5,
+      width: this._width - inset * 2,
+      height: this._height - inset * 2,
     };
   }
 
@@ -153,6 +171,7 @@ class Guard extends Entity {
   hurt() {
     this.action = "hurt";
     this.#currentSprite = this._sprites.hurt;
+    this.#hurtTimer = HURT_ANIMATION_FRAMES;
   }
 
   // Apply damage from the player. Returns true when the guard is defeated.
@@ -171,10 +190,17 @@ class Guard extends Entity {
     return this.#health <= 0;
   }
 
+  // True once the death animation has finished and the corpse can be removed
+  isReadyToRemove() {
+    return this.isDefeated() && this.#deathTimer <= 0;
+  }
+
   defeat() {
     this.action = "dead";
     this.#currentSprite = this._sprites.death;
-    // Return dropped items (powerups, explosives, keys)
+    this.currentFrame = 0;
+    this.frameCount = 0;
+    this.#deathTimer = DEATH_ANIMATION_FRAMES;
   }
 
   lookAround() {
@@ -191,8 +217,28 @@ class Guard extends Entity {
 
   update(playerPosition, walls) {
     const frames_per_action = 4;
-    const frames_per_look =  60*3; // Look around every 60 frames (about 1 second at 60 FPS)
-    const max_frame_count = this.action === 'idle' ? 60*3 : 20; 
+
+    // Dead: only advance the death animation until it finishes
+    if (this.isDefeated()) {
+      if (this.#deathTimer > 0) {
+        this.#deathTimer--;
+        this.frameCount++;
+        if (this.frameCount >= 10 && this.currentFrame < frames_per_action - 1) {
+          this.frameCount = 0;
+          this.currentFrame++;
+        }
+      }
+      return;
+    }
+
+    // Freshly hurt: hold the hurt sprite briefly so the hit reads on screen
+    if (this.#hurtTimer > 0) {
+      this.#hurtTimer--;
+      return;
+    }
+
+    const frames_per_look =  60*3; // Look around every ~3 seconds at 60 FPS
+    const max_frame_count = this.action === 'idle' ? 60*3 : 20;
     this.frameCount++;
     if (this.frameCount >= max_frame_count) {
       this.frameCount = 0;
@@ -230,9 +276,14 @@ class Guard extends Entity {
       case "right":
         spriteY = 3 * spriteHeight;
         break;
-      
+
     }
 
+    // Fade the corpse out as the death animation ends
+    ctx.save();
+    if (this.isDefeated() && this.#deathTimer < 15) {
+      ctx.globalAlpha = Math.max(0, this.#deathTimer / 15);
+    }
     ctx.drawImage(
         this.#currentSprite,
         spriteX,
@@ -244,6 +295,23 @@ class Guard extends Entity {
         this._width,
         this._height
       );
+    ctx.restore();
+
+    // Boss health bar so the fight has readable progress
+    if (this.isBoss && !this.isDefeated()) {
+      const barWidth = this._width - 30;
+      const x = this._position.x + 5;
+      const y = this._position.y - 18;
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.fillRect(x, y, barWidth, 8);
+      ctx.fillStyle = '#c62828';
+      ctx.fillRect(x, y, (this.#health / 300) * barWidth, 8);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, barWidth, 8);
+      ctx.restore();
+    }
   }
 }
 

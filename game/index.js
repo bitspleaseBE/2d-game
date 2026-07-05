@@ -1,5 +1,6 @@
 import { Game } from './game.js';
-import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, } from './assets.js';
+import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, totalAssetCount } from './assets.js';
+import levelData from './levels/level-data.js';
 import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.js';
 import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
@@ -21,6 +22,9 @@ class GameEngine {
         this.canvas.height = canvasSettings.height;
         this.canvas.style.display = 'block';
         this.canvas.style.margin = 'auto';
+        // Scale down on small screens while keeping the aspect ratio
+        this.canvas.style.maxWidth = '100%';
+        this.canvas.style.height = 'auto';
         this.container.appendChild(this.canvas);
         
         this.currentScreen = 'splash';
@@ -37,7 +41,7 @@ class GameEngine {
     async initialize() {
         try {
             console.log('Initializing game...');
-            const totalAssets = 34;
+            const totalAssets = totalAssetCount;
             let loadedAssets = 0;
 
             const onProgress = (src, img) => {
@@ -163,3 +167,4 @@ gameEngine.showScreen('splash');
 // seeds the RNG at load time.
 window.__wandertrap = gameEngine;
 window.__wandertrap.setSeed = setSeed;
+window.__wandertrap.levelData = levelData;

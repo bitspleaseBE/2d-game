@@ -1,7 +1,16 @@
 // Level data
 // - Define the structure of each level (layout of the labyrinth)
 // - Specify positions of obstacles, powerups, explosives, guards
-// - Include metadata (level number, difficulty, etc.)
+// - Include metadata (level number, difficulty, theme)
+//
+// Layout legend:
+//   '#' wall        'P' player spawn   'X' exit
+//   'G' guard       'B' boss guard     'E' hidden explosive trap
+//   'C' powerup     'O' boulder        'T' tree
+//   ' ' open floor
+//
+// Layout rows may be written as strings (easier to read and edit) or as
+// arrays of characters; the Level constructor normalizes both forms.
 
 class LevelData {
     constructor() {
@@ -15,22 +24,26 @@ class LevelData {
     getLevel(levelNumber) {
         return this.levels[levelNumber - 1] || null;
     }
+
+    getLevelCount() {
+        return this.levels.length;
+    }
 }
 
 class Level {
-    constructor(number, difficulty, layout, theme) {
+    constructor(number, difficulty, layout, theme = 'forest') {
         this.number = number;
         this.difficulty = difficulty;
-        this.layout = layout;
+        this.layout = layout.map((row) =>
+            typeof row === 'string' ? row.split('') : row
+        );
         this.theme = theme;
     }
 }
 
-// Example usage:
 const levelData = new LevelData();
 
-// Add levels
-
+// Level 1 — gentle introduction: one small maze ringed by a palm forest
 levelData.addLevel(new Level(
     1,
     'easy',
@@ -45,10 +58,11 @@ levelData.addLevel(new Level(
         ['T', 'T', 'T', 'T', 'T', 'T', '#', ' ', 'C', 'G', ' ', 'E', ' ', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
         ['T', 'T', 'T', 'T', 'T', 'T', '#', '#', '#', '#', '#', '#', '#', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
         ['T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T']
-    ]
+    ],
+    'forest'
 ));
 
-
+// Level 2 — a full-screen maze, no extras: learn to navigate
 levelData.addLevel(new Level(
     2,
     'easy',
@@ -63,59 +77,66 @@ levelData.addLevel(new Level(
         ['#', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', '#', ' ', '#'],
         ['#', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', '#', '#', ' ', ' ', ' ', '#', ' ', ' ', ' ', '#'],
         ['#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#']
-    ]
+    ],
+    'forest'
 ));
 
-
+// Level 3 — desert ruins: guards patrol wider corridors with looping paths,
+// and the first hidden explosive traps appear
 levelData.addLevel(new Level(
     3,
     'medium',
     [
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'P', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', '#', '#', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', ' ', '#', ' ', 'C', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'E', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', ' ', '#', ' ', 'G', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', 'C', 'G', ' ', 'E', ' ', 'X', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-    ]
+        '####################',
+        '#P#  G            ##',
+        '#   # ## #### # # ##',
+        '#   #       C   # ##',
+        '# #######T### ### ##',
+        '#      E#   #     ##',
+        '### #G# ###C## ##X##',
+        '#EG  O#  C        ##',
+        '####################',
+        '####################',
+    ],
+    'sand'
 ));
 
+// Level 4 — frozen halls: tighter corridors, more guards, more traps
 levelData.addLevel(new Level(
     4,
     'hard',
     [
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'P', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', '#', '#', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', ' ', '#', ' ', 'C', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'E', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', ' ', '#', ' ', 'G', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', 'C', 'G', ' ', 'E', ' ', 'X', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-    ]
+        '####################',
+        '#P  #      E   G  ##',
+        '###   #C#####E### ##',
+        '# # # #  G C#O#   ##',
+        '# # # ##  # # # ####',
+        '#   # #   # # #   ##',
+        '#E ## # # # # ##OC##',
+        '#G    # #G    #  X##',
+        '####################',
+        '####################',
+    ],
+    'snow'
 ));
 
+// Level 5 — the dark heart of the labyrinth: the exit is guarded by the boss
 levelData.addLevel(new Level(
     5,
     'expert',
     [
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'P', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', '#', '#', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', ' ', '#', ' ', 'C', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'E', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', ' ', '#', ' ', 'G', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', 'C', 'G', ' ', 'E', ' ', 'X', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-    ]
+        '####################',
+        '#P  # C #     #  G##',
+        '### # # # ### #B#C##',
+        '#     # #  E#G#X# ##',
+        '#  ####C### # ### ##',
+        '#        G E#   # ##',
+        '# ### ######### # ##',
+        '#GE    C          ##',
+        '####################',
+        '####################',
+    ],
+    'dark'
 ));
 
 export default levelData;

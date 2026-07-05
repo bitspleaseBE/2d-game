@@ -1,56 +1,61 @@
 # Levels Overview
 
-This document provides an overview of the levels in "Theo Maze," including the entities present in each level and a brief story for each.
+This document provides an overview of the five levels in "Wandertrap," including their theme, the entities present, and a brief story for each.
 
-## Level 1: Easy
+Layout legend: `#` wall · `P` player spawn · `X` exit · `G` guard · `B` boss · `E` hidden explosive trap · `C` powerup crystal · `O` boulder · `T` tree
 
-### Story
-
-Theo finds himself in the first level of the labyrinth, an easy introduction to the maze. As he navigates through the corridors, he encounters a few obstacles and explosives. A lone guard patrols the area, but Theo is determined to find the exit and move on to the next challenge.
-
-### Entities
-
-- Player (P)
-- Walls (#)
-- Obstacle (O)
-- Explosive (E)
-- Guard (G)
-- Exit (X)
-
-## Level 2: Medium
+## Level 1: Easy — Forest clearing
 
 ### Story
 
-The second level increases in difficulty, with more walls creating a complex maze. Theo must carefully navigate through the narrow passages, ensuring he doesn't get trapped. There are no additional entities in this level, allowing Theo to focus on mastering the maze layout.
+Theo finds himself in the first level of the labyrinth, an easy introduction ringed by a palm forest. A tree blocks the corridor right of the spawn — his first chance to swing the sword. A couple of guards patrol the small maze, a powerup or two glitter in the corners, and one hidden trap waits near the bottom corridor.
 
 ### Entities
 
-- Player (P)
-- Walls (#)
+Player, walls, trees, a boulder, 2 guards, 2 powerups, 1 explosive trap, exit.
 
-## Level 3: Hard
+## Level 2: Easy — Forest maze
 
 ### Story
 
-In the third level, the maze becomes even more challenging. The walls are more densely packed, and Theo must use all his skills to find the correct path. The absence of other entities means Theo can concentrate solely on solving the maze, but the difficulty is significantly higher.
+A full-screen maze with no distractions: Theo must master navigation through narrow passages while three guards patrol the corridors.
 
 ### Entities
 
-- Player (P)
-- Walls (#)
+Player, walls, 3 guards, exit.
 
-## Level 4: Expert
+## Level 3: Medium — Desert ruins
 
 ### Story
 
-The fourth level is designed for experts. Theo faces a labyrinth filled with obstacles that block his path. He must find a way to destroy or navigate around these obstacles to progress. The maze is intricate, and only the most skilled players will be able to find the exit.
+The labyrinth shifts to sun-bleached desert ruins. The corridors are wider and loop back on themselves, guards patrol in greater numbers, and for the first time Theo's own hidden explosive traps arm themselves when he wanders too close — after a short fuse they detonate, hurting anything in the blast, guards included. A clever wizard turns his traps into weapons.
 
 ### Entities
 
-- Player (P)
-- Walls (#)
-- Obstacle (O)
+Player, walls, a tree, a boulder, 3 guards, 3 powerups, 2 explosive traps, exit (sand ruin).
 
-## Note
+## Level 4: Hard — Frozen halls
 
-The current way of level design leaves not a lot of room for customization. We have different powerups, different kinds of obstacles, and other entities that could be utilized to create more varied and interesting levels. Consider expanding the level design to incorporate these elements more effectively.
+### Story
+
+Snow blankets the fourth level. The corridors tighten, four guards patrol the halls, and three traps lie buried in the ice. Every wrong turn costs time and health; the powerup crystals along the way are the difference between freezing and escaping.
+
+### Entities
+
+Player, walls, 2 boulders, 4 guards, 3 powerups, 3 explosive traps, exit (snow ruin).
+
+## Level 5: Expert — The dark heart
+
+### Story
+
+The final level. In the labyrinth's darkest depths, the exit is guarded by the labyrinth's most formidable guardian — a hulking boss with triple health, heavier blows, and a longer reach for spotting intruders. Theo must fight his way past four guards, dodge three traps, and bring the guardian down (or lure it onto a trap...) to escape the Wandertrap.
+
+### Entities
+
+Player, walls, 4 guards, 1 boss, 4 powerups, 3 explosive traps, exit.
+
+## Design notes
+
+- Levels are declared in `game/levels/level-data.js`; rows can be written as plain strings for readability.
+- Every level is BFS-verified solvable by an automated test (`all levels are distinct and solvable`), which also asserts no two levels share a layout.
+- Each level has a `theme` (`forest`, `sand`, `snow`, `dark`) that controls the background palette, the exit ruin sprite, and the tree sprite.

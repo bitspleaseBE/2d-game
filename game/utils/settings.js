@@ -14,26 +14,35 @@ export const canvasSettings = {
 // Player settings
 export const playerSettings = {
     initialLives: 3, // Initial number of lives for the player
-    speed: 5, // Speed of the player movement
-    color: '#ff69b4', // Color of the player (funny pink color)
+    speed: 5, // Speed of the player movement (pixels per frame)
+    attackPower: 50, // Damage dealt per sword swing
+    attackCooldown: 24, // Frames between sword swings (~0.4s at 60 FPS)
+    hurtDuration: 60, // Invulnerability window after taking a hit, in frames
+    effectDuration: 480, // How long a timed powerup lasts, in frames (~8s)
 };
 
 // Game settings
 export const gameSettings = {
     initialLevel: 1, // Initial level of the game
-    maxLevels: 5, // Maximum number of levels in the game (must match levels defined in levels/level-data.js)
-    scoreIncrement: 100, // Points added to the score for each successful action
+    scoreIncrement: 100, // Points for defeating a guard
+    powerupScore: 50, // Points for collecting a powerup
+    bossScore: 500, // Points for defeating the boss
+    levelBonus: 100, // Level-completion bonus, multiplied by the level number
+    guardDropChance: 0.4, // Chance a defeated guard drops a powerup
+    controlsHintFrames: 300, // How long the controls hint shows at level start (~5s)
 };
 
 // Entity settings
 export const entitySettings = {
     enemyWidth: 91, // Width of the enemy
     enemyHeight: 91, // Height of the enemy
-    obstacleColor: '#c62828', // Color of obstacles (Carmen red)
-    powerupColor: '#1565c0', // Color of powerups (Darker formal blue)
-    guardColor: '#ff69b4', // Color of guards (funny pink color)
-    explosiveColor: '#ffd54f', // Color of explosives (Yellow)
-    exitColor: '#4caf50', // Color of the exit (Green)
+    bossWidth: 128, // Width of the boss
+    bossHeight: 128, // Height of the boss
+    explosiveTriggerRange: 96, // Distance at which a hidden explosive arms itself
+    explosiveFuseFrames: 90, // Frames between arming and detonation (~1.5s)
+    explosiveBlastRadius: 96, // Blast radius in pixels
+    explosivePlayerDamage: 30, // Damage the blast deals to the player
+    explosiveGuardDamage: 100, // Damage the blast deals to guards
 };
 
 // Sound settings
@@ -53,6 +62,14 @@ export const controlSettings = {
     pick: 'p', // Key for picking
     axe: 'x', // Key for axe
     potion: 'u', // Key for potion
+};
+
+// Theme palettes for the level background, keyed by the level's theme name
+export const levelThemes = {
+    forest: { center: '#3E8948', edge: '#1A3B1F', grid: 'rgba(0, 255, 0, 0.1)' },
+    sand: { center: '#D8B863', edge: '#8A6B2F', grid: 'rgba(120, 80, 0, 0.12)' },
+    snow: { center: '#DCE8F0', edge: '#8FA9BC', grid: 'rgba(60, 90, 120, 0.12)' },
+    dark: { center: '#4A3B5C', edge: '#191024', grid: 'rgba(200, 160, 255, 0.08)' },
 };
 
 // Add more settings as needed for other aspects of the game
