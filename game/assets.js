@@ -6,6 +6,11 @@
 // Load guard sprite sheets
 // Load obstacle images
 
+// NOTE: asset URLs must be written inline as `new URL('literal', import.meta.url)`.
+// Parcel only bundles the referenced file when the first argument is a string
+// literal at the call site. Wrapping it in a helper (variable argument) defeats
+// static analysis, leaving an unbundled `file://` path that the browser blocks.
+
 function loadImage(src, onProgress) {
   return new Promise((resolve, reject) => {
     try {
@@ -29,11 +34,11 @@ function loadImage(src, onProgress) {
 export async function loadPlayerAssets(onProgress) {
   console.log("Loading player assets...");
   const playerMovement = await loadImage(
-    require("../assets/images/player/Player.png"),
+    new URL("../assets/images/player/Player.png", import.meta.url).href,
     onProgress
   );
   const playerActions = await loadImage(
-    require("../assets/images/player/Player_Actions.png"),
+    new URL("../assets/images/player/Player_Actions.png", import.meta.url).href,
     onProgress
   );
 
@@ -44,106 +49,105 @@ export async function loadGuardAssets(onProgress) {
   console.log("Loading guard assets...");
   // ORC 1
   const orc1_Attack = await loadImage(
-    require("../assets/images/enemies/orc1/orc1_attack_full.png"),
+    new URL("../assets/images/enemies/orc1/orc1_attack_full.png", import.meta.url).href,
     onProgress
   );
   const orc1_Death = await loadImage(
-    require("../assets/images/enemies/orc1/orc1_death_full.png"),
+    new URL("../assets/images/enemies/orc1/orc1_death_full.png", import.meta.url).href,
     onProgress
   );
   const orc1_Hurt = await loadImage(
-    require("../assets/images/enemies/orc1/orc1_hurt_full.png"),
+    new URL("../assets/images/enemies/orc1/orc1_hurt_full.png", import.meta.url).href,
     onProgress
   );
   const orc1_Idle = await loadImage(
-    require("../assets/images/enemies/orc1/orc1_idle_full.png"),
+    new URL("../assets/images/enemies/orc1/orc1_idle_full.png", import.meta.url).href,
     onProgress
   );
   const orc1_Run = await loadImage(
-    require("../assets/images/enemies/orc1/orc1_run_full.png"),
+    new URL("../assets/images/enemies/orc1/orc1_run_full.png", import.meta.url).href,
     onProgress
   );
   const orc1_Run_Attack = await loadImage(
-    require("../assets/images/enemies/orc1/orc1_run_attack_front_full.png"),
+    new URL("../assets/images/enemies/orc1/orc1_run_attack_front_full.png", import.meta.url).href,
     onProgress
   );
   const orc1_Walk = await loadImage(
-    require("../assets/images/enemies/orc1/orc1_walk_full.png"),
+    new URL("../assets/images/enemies/orc1/orc1_walk_full.png", import.meta.url).href,
     onProgress
   );
   const orc1_Walk_Attack = await loadImage(
-    require("../assets/images/enemies/orc1/orc1_walk_attack_front_full.png"),
+    new URL("../assets/images/enemies/orc1/orc1_walk_attack_front_full.png", import.meta.url).href,
     onProgress
   );
 
   // ORC 2
   const orc2_Attack = await loadImage(
-    require("../assets/images/enemies/orc2/orc2_attack_full.png"),
+    new URL("../assets/images/enemies/orc2/orc2_attack_full.png", import.meta.url).href,
     onProgress
   );
   const orc2_Death = await loadImage(
-    require("../assets/images/enemies/orc2/orc2_death_full.png"),
+    new URL("../assets/images/enemies/orc2/orc2_death_full.png", import.meta.url).href,
     onProgress
   );
   const orc2_Hurt = await loadImage(
-    require("../assets/images/enemies/orc2/orc2_hurt_full.png"),
+    new URL("../assets/images/enemies/orc2/orc2_hurt_full.png", import.meta.url).href,
     onProgress
   );
   const orc2_Idle = await loadImage(
-    require("../assets/images/enemies/orc2/orc2_idle_full.png"),
+    new URL("../assets/images/enemies/orc2/orc2_idle_full.png", import.meta.url).href,
     onProgress
   );
   const orc2_Run = await loadImage(
-    require("../assets/images/enemies/orc2/orc2_run_full.png"),
+    new URL("../assets/images/enemies/orc2/orc2_run_full.png", import.meta.url).href,
     onProgress
   );
   const orc2_Run_Attack = await loadImage(
-    require("../assets/images/enemies/orc2/orc2_run_attack_full.png"),
+    new URL("../assets/images/enemies/orc2/orc2_run_attack_full.png", import.meta.url).href,
     onProgress
   );
   const orc2_Walk = await loadImage(
-    require("../assets/images/enemies/orc2/orc2_walk_full.png"),
+    new URL("../assets/images/enemies/orc2/orc2_walk_full.png", import.meta.url).href,
     onProgress
   );
   const orc2_Walk_Attack = await loadImage(
-    require("../assets/images/enemies/orc2/orc2_walk_attack_full.png"),
+    new URL("../assets/images/enemies/orc2/orc2_walk_attack_full.png", import.meta.url).href,
     onProgress
   );
 
   // ORC 3
   const orc3_Attack = await loadImage(
-    require("../assets/images/enemies/orc3/orc3_attack_full.png"),
+    new URL("../assets/images/enemies/orc3/orc3_attack_full.png", import.meta.url).href,
     onProgress
   );
   const orc3_Death = await loadImage(
-    require("../assets/images/enemies/orc3/orc3_death_full.png"),
+    new URL("../assets/images/enemies/orc3/orc3_death_full.png", import.meta.url).href,
     onProgress
-  );    
+  );
   const orc3_Hurt = await loadImage(
-    require("../assets/images/enemies/orc3/orc3_hurt_full.png"),
+    new URL("../assets/images/enemies/orc3/orc3_hurt_full.png", import.meta.url).href,
     onProgress
   );
   const orc3_Idle = await loadImage(
-    require("../assets/images/enemies/orc3/orc3_idle_full.png"),
+    new URL("../assets/images/enemies/orc3/orc3_idle_full.png", import.meta.url).href,
     onProgress
-  );    
+  );
   const orc3_Run = await loadImage(
-    require("../assets/images/enemies/orc3/orc3_run_full.png"),
+    new URL("../assets/images/enemies/orc3/orc3_run_full.png", import.meta.url).href,
     onProgress
   );
   const orc3_Run_Attack = await loadImage(
-    require("../assets/images/enemies/orc3/orc3_run_attack_full.png"),
+    new URL("../assets/images/enemies/orc3/orc3_run_attack_full.png", import.meta.url).href,
     onProgress
-  );    
+  );
   const orc3_Walk = await loadImage(
-    require("../assets/images/enemies/orc3/orc3_walk_full.png"),
+    new URL("../assets/images/enemies/orc3/orc3_walk_full.png", import.meta.url).href,
     onProgress
   );
   const orc3_Walk_Attack = await loadImage(
-    require("../assets/images/enemies/orc3/orc3_walk_attack_full.png"),
+    new URL("../assets/images/enemies/orc3/orc3_walk_attack_full.png", import.meta.url).href,
     onProgress
   );
-  
 
   return {
     orc1_Attack,
@@ -176,42 +180,42 @@ export async function loadGuardAssets(onProgress) {
 export async function loadLevelAssets(onProgress) {
   console.log("Loading level assets...");
   const rock = await loadImage(
-    require("../assets/images/obstacle/Rock6_1.png"),
+    new URL("../assets/images/obstacle/Rock6_1.png", import.meta.url).href,
     onProgress
   );
   const tree1 = await loadImage(
-    require("../assets/images/obstacle/Tree1.png"),
+    new URL("../assets/images/obstacle/Tree1.png", import.meta.url).href,
     onProgress
   );
   const tree2 = await loadImage(
-    require("../assets/images/obstacle/Tree2.png"),
+    new URL("../assets/images/obstacle/Tree2.png", import.meta.url).href,
     onProgress
   );
   const tree3 = await loadImage(
-    require("../assets/images/obstacle/Tree3.png"),
+    new URL("../assets/images/obstacle/Tree3.png", import.meta.url).href,
     onProgress
   );
   const palm1 = await loadImage(
-    require("../assets/images/obstacle/Palm_tree1_2.png"),
+    new URL("../assets/images/obstacle/Palm_tree1_2.png", import.meta.url).href,
     onProgress
   );
   const palm2 = await loadImage(
-    require("../assets/images/obstacle/Palm_tree2_2.png"),
+    new URL("../assets/images/obstacle/Palm_tree2_2.png", import.meta.url).href,
     onProgress
   );
-  
+
   const sandRuin = await loadImage(
-    require("../assets/images/exit/Sand_ruins3.png"),
+    new URL("../assets/images/exit/Sand_ruins3.png", import.meta.url).href,
     onProgress
-  );    
+  );
 
   const snowRuin = await loadImage(
-    require("../assets/images/exit/Snow_ruins3.png"),
+    new URL("../assets/images/exit/Snow_ruins3.png", import.meta.url).href,
     onProgress
   );
 
   const yellowRuin = await loadImage(
-    require("../assets/images/exit/Yellow_ruins3.png"),
+    new URL("../assets/images/exit/Yellow_ruins3.png", import.meta.url).href,
     onProgress
   );
 
@@ -221,19 +225,19 @@ export async function loadLevelAssets(onProgress) {
 export async function loadPowerUpsAssets(onProgress) {
   console.log("Loading powerups assets...");
   const greenCrystal = await loadImage(
-    require("../assets/images/powerups/Green_crystal2.png"),
+    new URL("../assets/images/powerups/Green_crystal2.png", import.meta.url).href,
     onProgress
   );
   const redCrystal = await loadImage(
-    require("../assets/images/powerups/Red_crystal2.png"),
+    new URL("../assets/images/powerups/Red_crystal2.png", import.meta.url).href,
     onProgress
   );
   const blueCrystal = await loadImage(
-    require("../assets/images/powerups/Blue_crystal2.png"),
+    new URL("../assets/images/powerups/Blue_crystal2.png", import.meta.url).href,
     onProgress
   );
   const yellowCrystal = await loadImage(
-    require("../assets/images/powerups/Yellow_crystal2.png"),
+    new URL("../assets/images/powerups/Yellow_crystal2.png", import.meta.url).href,
     onProgress
   );
 

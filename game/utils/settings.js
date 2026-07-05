@@ -48,7 +48,7 @@ export const controlSettings = {
     down: 'ArrowDown', // Key for moving down
     left: 'ArrowLeft', // Key for moving left
     right: 'ArrowRight', // Key for moving right
-    attack: 'a', // Key for attacking
+    attack: ' ', // Key for attacking (Space bar)
     esc: 'Escape', // Key for going back to the welcome screen
     pick: 'p', // Key for picking
     axe: 'x', // Key for axe

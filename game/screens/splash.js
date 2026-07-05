@@ -21,10 +21,15 @@ export function showSplashScreen(initialise, onComplete) {
 
     document.body.appendChild(splashScreen);
 
-    initialise().then(() => {
-        onComplete();
-        document.body.removeChild(splashScreen);
-    });
+    initialise()
+        .then(() => {
+            onComplete();
+            document.body.removeChild(splashScreen);
+        })
+        .catch((error) => {
+            console.error('Failed to initialize game:', error);
+            splashScreen.innerText = 'Failed to load game. Please refresh the page.';
+        });
 }
 
 export function updateSplashScreenProgress(progress) {

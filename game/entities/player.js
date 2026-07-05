@@ -11,6 +11,7 @@ class Player extends Entity {
     super(x, y, 'player', assets);
     this.#health = 100;
     this.#speed = 5;
+    this.attackPower = 50;
     this.explosives = [];
     this.keys = [];
     this.powerups = [];
@@ -45,6 +46,23 @@ class Player extends Entity {
       width: this._width * 0.5,
       height: this._height * 0.5,
     };
+  }
+
+  // Area in front of the player that an attack sweeps over
+  getAttackBox() {
+    const hitBox = this.getHitBox();
+    const reach = this._width * 0.6;
+    switch (this.movement) {
+      case "up":
+        return { x: hitBox.x, y: hitBox.y - reach, width: hitBox.width, height: reach };
+      case "down":
+        return { x: hitBox.x, y: hitBox.y + hitBox.height, width: hitBox.width, height: reach };
+      case "left":
+        return { x: hitBox.x - reach, y: hitBox.y, width: reach, height: hitBox.height };
+      case "right":
+      default:
+        return { x: hitBox.x + hitBox.width, y: hitBox.y, width: reach, height: hitBox.height };
+    }
   }
 
   getHealth() {

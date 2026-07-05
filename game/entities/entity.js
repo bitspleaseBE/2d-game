@@ -19,6 +19,10 @@ class Entity {
     return { ...this._position };
   }
 
+  setPosition(x, y) {
+    this._position = { x, y };
+  }
+
   getType() {
     return this._type;
   }

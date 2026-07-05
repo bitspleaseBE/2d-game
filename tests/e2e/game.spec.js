@@ -163,9 +163,124 @@ test('losing all health costs a life, respawns, and eventually ends the game', a
   expect(state.isGameOver).toBe(false);
 });
 
+// ---------------------------------------------------------------------------
+// Regression tests
+// One test per fixed bug, so a fixed bug can never silently come back.
+// These use the test hooks on window.__wandertrap.game (teleportPlayer,
+// spawnGuard, step) to build exact scenarios without walking the maze.
+// ---------------------------------------------------------------------------
+
+test('regression: obstacles (trees, boulders) block the player like walls', async ({ page }) => {
+  await startNewGame(page);
+
+  // Level 1 has a boulder ('O') at column 7, row 4 => pixel (448, 256).
+  // Put the player in the free cell directly above it and push down.
+  const after = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.teleportPlayer(448, 192);
+    for (let i = 0; i < 30; i++) game.movePlayer('down');
+    return game.player.getPosition();
+  });
+
+  // The player's hitbox must be stopped before entering the boulder's cell
+  expect(after.x).toBe(448);
+  expect(after.y).toBeLessThan(256);
+});
+
+test('regression: attacking damages and defeats an adjacent guard', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    // Clear pre-placed guards so the assertion only sees our scenario
+    game.guards = [];
+    game.teleportPlayer(300, 300);
+    game.spawnGuard(300, 360); // directly below the player
+    game.player.movement = 'down'; // face the guard
+
+    const scoreBefore = game.score;
+    game.playerAttack(); // guard has 100 health, attackPower is 50
+    const guardsAfterOneHit = game.guards.length;
+    game.playerAttack();
+
+    return {
+      guardsAfterOneHit,
+      guardsAfterTwoHits: game.guards.length,
+      scoreGained: game.score - scoreBefore,
+    };
+  });
+
+  expect(result.guardsAfterOneHit).toBe(1); // survives the first hit
+  expect(result.guardsAfterTwoHits).toBe(0); // defeated and removed
+  expect(result.scoreGained).toBe(100); // defeat awards score
+});
+
+test('regression: attack only hits in the direction the player is facing', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.teleportPlayer(300, 300);
+    game.spawnGuard(300, 360); // below the player
+    game.player.movement = 'up'; // facing away from the guard
+
+    game.playerAttack();
+    game.playerAttack();
+    return { guards: game.guards.length };
+  });
+
+  expect(result.guards).toBe(1); // guard behind the player is untouched
+});
+
+test('the same seed produces an identical level setup', async ({ page }) => {
+  const loadSeeded = async () => {
+    await page.goto('/?seed=42');
+    await expect(page.locator('#welcome-screen')).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'New Game' }).click();
+    await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
+    return page.evaluate(() => ({
+      guards: window.__wandertrap.game.guards.map((g) => g.getType()),
+      powerups: window.__wandertrap.game.powerups.map((p) => p.getType()),
+    }));
+  };
+
+  const first = await loadSeeded();
+  const second = await loadSeeded();
+  expect(first.guards.length).toBeGreaterThan(0);
+  expect(second).toEqual(first);
+});
+
+test('step(frames) advances the simulation deterministically while paused', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause(); // no requestAnimationFrame loop interference
+    const frameBefore = game.player.currentFrame;
+    game.step(60); // one simulated second at 60 FPS
+    return {
+      frameBefore,
+      frameAfter: game.player.currentFrame,
+      isGameOver: game.isGameOver,
+    };
+  });
+
+  // The player animation advances one sprite frame every 10 game frames,
+  // so 60 stepped frames must land exactly 6 frames further (mod 6 = same
+  // frame index after a full cycle)
+  expect(result.frameAfter).toBe(result.frameBefore);
+  expect(result.isGameOver).toBe(false);
+});
+
 test('reaching the exit completes level 1 and advances to level 2', async ({ page }) => {
   test.setTimeout(120_000);
   await startNewGame(page);
+
+  // A tree blocks the corridor right of the spawn since obstacles became
+  // solid: face it and chop it down (2 hits at 50 damage each)
+  await press(page, 'ArrowRight', 1);
+  await press(page, ' ', 2, 100);
 
   // Walk the level 1 maze: east along the top corridor, south along the
   // right corridor, west along the bottom corridor, then north to the exit.

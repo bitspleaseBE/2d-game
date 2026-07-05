@@ -1,6 +1,7 @@
 import Entity from "./entity.js";
 import { canvasSettings, entitySettings } from "../utils/settings.js";
 import { isColliding } from "../utils/game.js";
+import { randomInt } from "../utils/rng.js";
 
 // Guard entity class
 // - Represents the guards in the game
@@ -17,6 +18,7 @@ class Guard extends Entity {
   #speed;
   #detectionRange;
   #currentSprite;
+  #health;
 
   constructor(x, y, type, assets) {
     super(
@@ -28,10 +30,9 @@ class Guard extends Entity {
       entitySettings.enemyHeight
     );
     this.action = "idle";
-    this.movement = ["down", "up", "left", "right"][
-      Math.floor(Math.random() * 4)
-    ];
+    this.movement = ["down", "up", "left", "right"][randomInt(0, 3)];
     this.damage = 10;
+    this.#health = 100;
     this.#speed = 1;
     this.#detectionRange = 5 * canvasSettings.cellWidth;
     this.#currentSprite = this._sprites.idle;
@@ -147,6 +148,27 @@ class Guard extends Entity {
   attack() {
     this.action = "attack";
     this.#currentSprite = this._sprites.attack;
+  }
+
+  hurt() {
+    this.action = "hurt";
+    this.#currentSprite = this._sprites.hurt;
+  }
+
+  // Apply damage from the player. Returns true when the guard is defeated.
+  takeDamage(amount) {
+    if (this.#health <= 0) return false;
+    this.#health -= amount;
+    if (this.#health <= 0) {
+      this.defeat();
+      return true;
+    }
+    this.hurt();
+    return false;
+  }
+
+  isDefeated() {
+    return this.#health <= 0;
   }
 
   defeat() {

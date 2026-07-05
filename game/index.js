@@ -3,6 +3,7 @@ import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets,
 import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.js';
 import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
+import { setSeed } from './utils/rng.js';
 
 // Entry point of the game
 // - Initialize the game engine
@@ -60,6 +61,9 @@ class GameEngine {
             this.setupGameControls();
         } catch (error) {
             console.error('Error initializing game:', error);
+            // Re-throw so the splash screen can surface the failure instead of
+            // transitioning to a welcome screen backed by an uninitialized game.
+            throw error;
         }
     }
 
@@ -96,6 +100,10 @@ class GameEngine {
                 break;
             case 'game':
                 console.log('Starting game...');
+                if (!this.game) {
+                    console.error('Cannot start game: assets are still loading or failed to load.');
+                    return;
+                }
                 if (!this.game.started) {
                     this.game.start();
                 } else {
@@ -150,5 +158,8 @@ class GameEngine {
 const gameEngine = new GameEngine('game-container');
 gameEngine.showScreen('splash');
 
-// Exposed for automated (Playwright) tests to inspect game state
+// Exposed for automated (Playwright) tests to inspect game state.
+// setSeed makes randomness reproducible mid-run; ?seed=N in the URL
+// seeds the RNG at load time.
 window.__wandertrap = gameEngine;
+window.__wandertrap.setSeed = setSeed;

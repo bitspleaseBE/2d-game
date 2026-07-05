@@ -1,4 +1,5 @@
 import Entity from "./entity.js";
+import { randomInt } from "../utils/rng.js";
 
 // Obstacle entity class
 // - Represents the obstacles in the game
@@ -17,7 +18,7 @@ class Obstacle extends Entity {
     if (type === "boulder") {
       this._sprite = assets.rock;
     } else if (type === "tree") {
-      const randomTree = Math.floor(Math.random() * 2) + 1;
+      const randomTree = randomInt(1, 2);
       this._sprite = assets[`palm${randomTree}`];
     }
   }
@@ -28,6 +29,10 @@ class Obstacle extends Entity {
       return this.destroy();
     }
     return null;
+  }
+
+  isDestroyed() {
+    return this.#health <= 0;
   }
 
   destroy() {

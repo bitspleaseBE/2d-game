@@ -1,4 +1,5 @@
 import Entity from "./entity.js";
+import { random } from "../utils/rng.js";
 
 // Exit entity class
 // - Represents the exit in the game
@@ -18,9 +19,9 @@ class Exit extends Entity {
     const sparkles = [];
     for (let i = 0; i < sparkleCount; i++) {
       sparkles.push({
-        x: this._position.x + Math.random() * this._width,
-        y: this._position.y + Math.random() * this._height,
-        vy: -0.5 + Math.random() * 0.5 // vertical velocity
+        x: this._position.x + random() * this._width,
+        y: this._position.y + random() * this._height,
+        vy: -0.5 + random() * 0.5 // vertical velocity
       });
     }
     return sparkles;

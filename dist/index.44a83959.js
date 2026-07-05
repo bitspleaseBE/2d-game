@@ -589,6 +589,7 @@ var _assetsJs = require("./assets.js");
 var _splashJs = require("./screens/splash.js");
 var _indexJs = require("./screens/index.js");
 var _settingsJs = require("./utils/settings.js");
+var _rngJs = require("./utils/rng.js");
 // Entry point of the game
 // - Initialize the game engine
 // - Load assets (images, sounds, etc.)
@@ -619,7 +620,6 @@ class GameEngine {
             const totalAssets = 34;
             let loadedAssets = 0;
             const onProgress = (src, img)=>{
-                console.log("Progress:", src, img);
                 loadedAssets++;
                 const progress = Math.floor(loadedAssets / totalAssets * 100);
                 (0, _splashJs.updateSplashScreenProgress)(progress);
@@ -634,17 +634,25 @@ class GameEngine {
                 guardAssets,
                 powerupsAssets
             };
-            this.game = new (0, _gameJs.Game)(this.container.id, this.canvas, this.context, this.assets);
+            this.game = new (0, _gameJs.Game)(this.container.id, this.canvas, this.context, this.assets, {
+                onGameOver: ()=>this.showScreen("gameOver"),
+                onLevelCompleted: ()=>this.showScreen("levelCompleted"),
+                onGameWon: ()=>this.showScreen("gameWon")
+            });
             this.showScreen("welcome");
             this.setupGameControls();
         } catch (error) {
             console.error("Error initializing game:", error);
+            // Re-throw so the splash screen can surface the failure instead of
+            // transitioning to a welcome screen backed by an uninitialized game.
+            throw error;
         }
     }
     setupGameControls() {
         window.addEventListener("keydown", (event)=>{
             switch(event.key){
                 case (0, _settingsJs.controlSettings).esc:
+                    if (this.game && this.game.started) this.game.pause();
                     this.showScreen("welcome");
                     break;
             }
@@ -664,13 +672,20 @@ class GameEngine {
                 break;
             case "game":
                 console.log("Starting game...");
+                if (!this.game) {
+                    console.error("Cannot start game: assets are still loading or failed to load.");
+                    return;
+                }
                 if (!this.game.started) this.game.start();
                 else this.game.continue();
                 break;
             case "gameOver":
+                this.game.pause();
                 this.game.started = false;
-                this.game.gameOver = true;
                 (0, _indexJs.showGameOverScreen)(this.game.score, ()=>this.startGame(), ()=>this.showScreen("welcome"));
+                break;
+            case "gameWon":
+                (0, _indexJs.showGameWonScreen)(this.game.score, ()=>this.startGame(), ()=>this.showScreen("welcome"));
                 break;
             case "highScore":
                 (0, _indexJs.showHighScoreScreen)(()=>this.showScreen("welcome"));
@@ -705,8 +720,13 @@ class GameEngine {
 }
 const gameEngine = new GameEngine("game-container");
 gameEngine.showScreen("splash");
+// Exposed for automated (Playwright) tests to inspect game state.
+// setSeed makes randomness reproducible mid-run; ?seed=N in the URL
+// seeds the RNG at load time.
+window.__wandertrap = gameEngine;
+window.__wandertrap.setSeed = (0, _rngJs.setSeed);
 
-},{"./game.js":"7sRy4","./assets.js":"2MtDO","./screens/index.js":"2Rkrn","./utils/settings.js":"hBndc","./screens/splash.js":"kNfRL"}],"7sRy4":[function(require,module,exports) {
+},{"./game.js":"7sRy4","./assets.js":"2MtDO","./screens/splash.js":"kNfRL","./screens/index.js":"2Rkrn","./utils/settings.js":"hBndc","./utils/rng.js":"7uRsi"}],"7sRy4":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Main game logic
@@ -724,6 +744,7 @@ var _levelDataJs = require("./levels/level-data.js");
 var _levelDataJsDefault = parcelHelpers.interopDefault(_levelDataJs);
 var _canvasJs = require("./utils/canvas.js");
 var _gameJs = require("./utils/game.js");
+var _rngJs = require("./utils/rng.js");
 var _wallJs = require("./entities/wall.js");
 var _wallJsDefault = parcelHelpers.interopDefault(_wallJs);
 var _explosiveJs = require("./entities/explosive.js");
@@ -737,7 +758,7 @@ var _powerupJsDefault = parcelHelpers.interopDefault(_powerupJs);
 var _exitJs = require("./entities/exit.js");
 var _exitJsDefault = parcelHelpers.interopDefault(_exitJs);
 class Game {
-    constructor(containerId, canvas, context, assets){
+    constructor(containerId, canvas, context, assets, callbacks = {}){
         this.container = document.getElementById(containerId);
         this.canvas = canvas;
         this.context = context;
@@ -751,16 +772,27 @@ class Game {
         this.currentLevel = (0, _settingsJs.gameSettings).initialLevel;
         this.isGameOver = false;
         this.started = false;
+        this.paused = false;
         this.assets = assets;
         this.explosives = [];
         this.guards = [];
         this.obstacles = [];
         this.powerups = [];
+        this.playerStart = {
+            x: 0,
+            y: 0
+        };
+        this.onGameOver = callbacks.onGameOver || (()=>{});
+        this.onLevelCompleted = callbacks.onLevelCompleted || (()=>{});
+        this.onGameWon = callbacks.onGameWon || (()=>{});
+        this.rafId = null;
+        this.inputSetup = false;
     }
     initializeBoard() {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
         if (level) {
             this.walls = [];
+            this.exit = null;
             this.board = level.layout;
             for(let y = 0; y < level.layout.length; y++)for(let x = 0; x < level.layout[y].length; x++){
                 if (level.layout[y][x] === "#") this.walls.push(new (0, _wallJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, "normal", this.assets.levelAssets));
@@ -772,13 +804,21 @@ class Game {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
         if (level) for(let y = 0; y < level.layout.length; y++){
             for(let x = 0; x < level.layout[y].length; x++)if (level.layout[y][x] === "P") {
-                this.player = new (0, _playerJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, this.assets.playerAssets);
+                this.playerStart = {
+                    x: x * (0, _settingsJs.canvasSettings).cellWidth,
+                    y: y * (0, _settingsJs.canvasSettings).cellHeight
+                };
+                this.player = new (0, _playerJsDefault.default)(this.playerStart.x, this.playerStart.y, this.assets.playerAssets);
                 this.setupInput();
                 return;
             }
         }
     }
     setupInput() {
+        // Only register the listener once; initializePlayer runs again on every
+        // level change and would otherwise stack duplicate handlers
+        if (this.inputSetup) return;
+        this.inputSetup = true;
         let actionTimeout;
         const debounceAction = (callback, delay)=>{
             return ()=>{
@@ -790,24 +830,24 @@ class Game {
             };
         };
         window.addEventListener("keydown", (event)=>{
+            if (!this.started || this.paused || this.isGameOver) return;
+            // Stop the space bar (and arrow keys) from scrolling the page
+            if (event.key === " " || event.key.startsWith("Arrow")) event.preventDefault();
             switch(event.key){
                 case (0, _settingsJs.controlSettings).up:
-                    debounceAction(()=>this.player.moveUp(), 1000)();
+                    debounceAction(()=>this.movePlayer("up"), 1000)();
                     break;
                 case (0, _settingsJs.controlSettings).down:
-                    debounceAction(()=>this.player.moveDown(), 1000)();
+                    debounceAction(()=>this.movePlayer("down"), 1000)();
                     break;
                 case (0, _settingsJs.controlSettings).left:
-                    debounceAction(()=>this.player.moveLeft(), 1000)();
+                    debounceAction(()=>this.movePlayer("left"), 1000)();
                     break;
                 case (0, _settingsJs.controlSettings).right:
-                    debounceAction(()=>this.player.moveRight(), 1000)();
-                    break;
-                case (0, _settingsJs.controlSettings).jump:
-                    debounceAction(()=>this.player.jump(), 1000)();
+                    debounceAction(()=>this.movePlayer("right"), 1000)();
                     break;
                 case (0, _settingsJs.controlSettings).attack:
-                    debounceAction(()=>this.player.attack(), 250)();
+                    debounceAction(()=>this.playerAttack(), 250)();
                     break;
                 case (0, _settingsJs.controlSettings).pick:
                     debounceAction(()=>this.player.pick(), 150)();
@@ -819,6 +859,61 @@ class Game {
                     debounceAction(()=>this.player.potion(), 500)();
                     break;
             }
+        });
+    }
+    movePlayer(direction) {
+        const next = this.player.checkCollision(direction);
+        const hitBox = this.player.getHitBox();
+        const current = this.player.getPosition();
+        const nextHitBox = {
+            x: next.x + (hitBox.x - current.x),
+            y: next.y + (hitBox.y - current.y),
+            width: hitBox.width,
+            height: hitBox.height
+        };
+        const blocked = next.x < 0 || next.y < 0 || next.x > this.canvas.width - (0, _settingsJs.canvasSettings).cellWidth || next.y > this.canvas.height - (0, _settingsJs.canvasSettings).cellHeight || this.walls.some((wall)=>(0, _gameJs.isColliding)(nextHitBox, wall.getHitBox())) || this.obstacles.some((obstacle)=>(0, _gameJs.isColliding)(nextHitBox, obstacle.getHitBox()));
+        if (blocked) {
+            // Face the direction anyway so the player can turn in place
+            this.player.movement = direction;
+            this.player.action = "idle";
+            return;
+        }
+        switch(direction){
+            case "up":
+                this.player.moveUp();
+                break;
+            case "down":
+                this.player.moveDown();
+                break;
+            case "left":
+                this.player.moveLeft();
+                break;
+            case "right":
+                this.player.moveRight();
+                break;
+        }
+    }
+    playerAttack() {
+        this.player.attack();
+        const attackBox = this.player.getAttackBox();
+        // Damage guards caught in the swing and remove any that are defeated
+        this.guards = this.guards.filter((guard)=>{
+            if ((0, _gameJs.isColliding)(attackBox, guard.getHitBox())) {
+                const defeated = guard.takeDamage(this.player.attackPower);
+                if (defeated) {
+                    this.score += (0, _settingsJs.gameSettings).scoreIncrement;
+                    return false;
+                }
+            }
+            return true;
+        });
+        // Chop down obstacles (trees, boulders) that are struck
+        this.obstacles = this.obstacles.filter((obstacle)=>{
+            if ((0, _gameJs.isColliding)(attackBox, obstacle.getHitBox())) {
+                obstacle.takeDamage(this.player.attackPower);
+                return !obstacle.isDestroyed();
+            }
+            return true;
         });
     }
     initializeEntities() {
@@ -839,8 +934,7 @@ class Game {
                         this.explosives.push(new (0, _explosiveJsDefault.default)(position.x, position.y, this.assets));
                         break;
                     case "G":
-                        const randomOrc = Math.floor(Math.random() * 3) + 1;
-                        console.log(`orc${randomOrc}`);
+                        const randomOrc = (0, _rngJs.randomInt)(1, 3);
                         this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets));
                         break;
                     case "O":
@@ -850,7 +944,7 @@ class Game {
                         this.obstacles.push(new (0, _obstacleJsDefault.default)(position.x, position.y, "tree", this.assets.levelAssets));
                         break;
                     case "C":
-                        const randomPowerup = Math.floor(Math.random() * 2) + 1;
+                        const randomPowerup = (0, _rngJs.randomInt)(1, 2);
                         this.powerups.push(new (0, _powerupJsDefault.default)(position.x, position.y, randomPowerup == 1 ? "health" : "mana", this.assets.powerupsAssets));
                         break;
                 }
@@ -858,7 +952,9 @@ class Game {
         }
     }
     updateGameState() {
-        this.checkCollisions(); // Move this before player update
+        this.checkCollisions();
+        this.checkPlayerDeath();
+        if (this.isGameOver) return;
         this.player.update();
         this.explosives.forEach((explosive)=>explosive.update());
         this.guards.forEach((guard)=>guard.update(this.player.getHitBox(), this.walls));
@@ -866,34 +962,21 @@ class Game {
         this.powerups.forEach((powerup)=>powerup.update());
         this.checkLevelCompletion();
     }
+    checkPlayerDeath() {
+        if (this.player.getHealth() > 0) return;
+        this.lives -= 1;
+        if (this.lives <= 0) {
+            this.isGameOver = true;
+            this.started = false;
+            this.onGameOver(this.score);
+            return;
+        }
+        this.player.respawn(this.playerStart.x, this.playerStart.y);
+    }
     checkCollisions() {
         const playerPosition = this.player.getHitBox();
-        // Check collisions for each direction
-        [
-            "left",
-            "right",
-            "up",
-            "down"
-        ].forEach((direction)=>{
-            const nextPosition = this.player.checkCollision(this.movement);
-            const willCollide = this.walls.some((wall)=>(0, _gameJs.isColliding)({
-                    ...playerPosition,
-                    x: nextPosition.x + playerPosition.width * 0.25,
-                    y: nextPosition.y + playerPosition.height * 0.25
-                }, wall.getHitBox()));
-            if (willCollide) this.player.collide({
-                type: "wall",
-                getPosition: ()=>nextPosition
-            });
-        });
-        this.walls.forEach((wall)=>{
-            if ((0, _gameJs.isColliding)(playerPosition, wall.getHitBox())) {
-                console.log("colliding with wall");
-                this.player.collide(wall);
-            }
-        });
         this.explosives.forEach((explosive, index)=>{
-            if ((0, _gameJs.isColliding)(playerPosition, explosive.getPosition())) {
+            if ((0, _gameJs.isColliding)(playerPosition, explosive.getHitBox())) {
                 if (explosive.isActive()) ;
                 else if (!explosive.isHidden()) {
                     this.player.collectExplosive(explosive);
@@ -901,33 +984,42 @@ class Game {
                 }
             }
         });
-        this.guards.forEach((guard, index)=>{
-            if ((0, _gameJs.isColliding)(playerPosition, guard.getPosition())) // Handle player-guard interaction
-            this.player.collide(guard);
+        this.guards.forEach((guard)=>{
+            if ((0, _gameJs.isColliding)(playerPosition, guard.getHitBox())) this.player.takeDamage(guard.damage);
         });
         this.obstacles.forEach((obstacle, index)=>{
-            (0, _gameJs.isColliding)(playerPosition, obstacle.getPosition());
+            (0, _gameJs.isColliding)(playerPosition, obstacle.getHitBox());
         });
         this.powerups.forEach((powerup, index)=>{
-            if ((0, _gameJs.isColliding)(this.player.getPickupRange(), powerup.getPosition())) {
+            if ((0, _gameJs.isColliding)(this.player.getPickupRange(), powerup.getHitBox())) {
                 const effect = powerup.collect();
                 this.player.applyPowerup(effect);
                 this.powerups.splice(index, 1);
+                this.score += (0, _settingsJs.gameSettings).scoreIncrement;
             }
         });
     }
     checkLevelCompletion() {
-        // Handle level completion (transition to next level or game over)
-        if (this.isLevelComplete()) {
+        if (!this.isLevelComplete()) return;
+        this.score += (0, _settingsJs.gameSettings).scoreIncrement;
+        const nextLevel = (0, _levelDataJsDefault.default).getLevel(this.currentLevel + 1);
+        if (nextLevel) {
             this.currentLevel += 1;
             this.initializeBoard();
             this.initializePlayer();
             this.initializeEntities();
+            this.pause();
+            this.onLevelCompleted(this.score);
+        } else {
+            // Last level cleared: the player won the game
+            this.isGameOver = true;
+            this.started = false;
+            this.onGameWon(this.score);
         }
     }
     isLevelComplete() {
-        // Game ends when player reaches the exit
-        return (0, _gameJs.isColliding)(this.player.getHitBox(), this.exit.getHitBox());
+        // A level is complete when the player reaches the exit
+        return this.exit && (0, _gameJs.isColliding)(this.player.getHitBox(), this.exit.getHitBox());
     }
     render() {
         // Render the game board and entities (player, obstacles, powerups, guards)
@@ -946,6 +1038,33 @@ class Game {
         if (this.exit) this.exit.draw(this.context);
         // Draw the player
         this.player.draw(this.context);
+        // Draw the HUD on top of everything
+        this.drawHUD();
+    }
+    drawHUD() {
+        const ctx = this.context;
+        ctx.save();
+        // Background strip
+        ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+        ctx.fillRect(8, 8, 300, 40);
+        ctx.font = "bold 18px monospace";
+        ctx.textBaseline = "middle";
+        // Score
+        ctx.fillStyle = "#ffd54f";
+        ctx.fillText(`Score: ${this.score}`, 18, 28);
+        // Lives
+        ctx.fillStyle = "#ff5252";
+        ctx.fillText(`${"\u2665".repeat(Math.max(0, this.lives))}`, 160, 28);
+        // Health bar
+        const health = Math.max(0, this.player.getHealth());
+        ctx.fillStyle = "#444";
+        ctx.fillRect(226, 20, 70, 14);
+        ctx.fillStyle = health > 30 ? "#4caf50" : "#c62828";
+        ctx.fillRect(226, 20, health / 100 * 70, 14);
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(226, 20, 70, 14);
+        ctx.restore();
     }
     drawGrid() {
         // Create a gradient for the background
@@ -974,13 +1093,28 @@ class Game {
     }
     gameLoop() {
         // Main game loop
-        if (this.isGameOver) return;
+        if (this.isGameOver || this.paused) return;
         this.updateGameState();
+        if (this.isGameOver || this.paused) return;
         this.render();
-        requestAnimationFrame(this.gameLoop.bind(this));
+        this.rafId = requestAnimationFrame(this.gameLoop.bind(this));
+    }
+    pause() {
+        this.paused = true;
+        if (this.rafId) {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = null;
+        }
     }
     start() {
+        // Fresh run: reset all progress
         this.started = true;
+        this.paused = false;
+        this.isGameOver = false;
+        this.lives = (0, _settingsJs.playerSettings).initialLives;
+        this.score = 0;
+        this.currentLevel = (0, _settingsJs.gameSettings).initialLevel;
+        if (this.rafId) cancelAnimationFrame(this.rafId);
         (0, _canvasJs.clearContainer)(this.container);
         this.container.appendChild(this.canvas);
         this.initializeBoard();
@@ -990,13 +1124,104 @@ class Game {
     }
     continue() {
         this.started = true;
+        this.paused = false;
         (0, _canvasJs.clearContainer)(this.container);
         this.container.appendChild(this.canvas);
+        if (this.rafId) cancelAnimationFrame(this.rafId);
+        this.gameLoop();
+    }
+    // ---------------------------------------------------------------------
+    // Test hooks
+    // The methods below exist so automated (Playwright) tests can build exact
+    // scenarios and advance the simulation deterministically. They are not
+    // part of regular gameplay and should not be called from game code.
+    // ---------------------------------------------------------------------
+    // Advance the simulation a fixed number of frames, synchronously and
+    // independently of requestAnimationFrame, then render the result
+    step(frames = 1) {
+        if (!this.player) return;
+        for(let i = 0; i < frames; i++){
+            if (this.isGameOver) break;
+            this.updateGameState();
+        }
+        if (!this.isGameOver) this.render();
+    }
+    // Place the player at an exact pixel position
+    teleportPlayer(x, y) {
+        this.player.setPosition(x, y);
+    }
+    // Add a guard at an exact pixel position
+    spawnGuard(x, y, type = "orc1") {
+        const guard = new (0, _guardJsDefault.default)(x, y, type, this.assets.guardAssets);
+        this.guards.push(guard);
+        return guard;
+    }
+    // Jump straight to a given level with a fresh board
+    startAtLevel(levelNumber) {
+        this.currentLevel = levelNumber;
+        this.initializeBoard();
+        this.initializePlayer();
+        this.initializeEntities();
     }
 }
 exports.default = Game;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./utils/settings.js":"hBndc","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe"}],"gkKU3":[function(require,module,exports) {
+},{"./utils/settings.js":"hBndc","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
+// Game settings and configurations
+// - This file contains global settings and configurations for the game
+// - These settings can be adjusted to change the game's behavior and appearance
+// Canvas settings
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "canvasSettings", ()=>canvasSettings);
+parcelHelpers.export(exports, "playerSettings", ()=>playerSettings);
+parcelHelpers.export(exports, "gameSettings", ()=>gameSettings);
+parcelHelpers.export(exports, "entitySettings", ()=>entitySettings);
+parcelHelpers.export(exports, "soundSettings", ()=>soundSettings);
+parcelHelpers.export(exports, "controlSettings", ()=>controlSettings);
+const canvasSettings = {
+    width: 1280,
+    height: 640,
+    backgroundColor: "#2c2c2c",
+    cellWidth: 64,
+    cellHeight: 64
+};
+const playerSettings = {
+    initialLives: 3,
+    speed: 5,
+    color: "#ff69b4"
+};
+const gameSettings = {
+    initialLevel: 1,
+    maxLevels: 5,
+    scoreIncrement: 100
+};
+const entitySettings = {
+    enemyWidth: 91,
+    enemyHeight: 91,
+    obstacleColor: "#c62828",
+    powerupColor: "#1565c0",
+    guardColor: "#ff69b4",
+    explosiveColor: "#ffd54f",
+    exitColor: "#4caf50"
+};
+const soundSettings = {
+    mute: false,
+    volume: 0.5
+};
+const controlSettings = {
+    up: "ArrowUp",
+    down: "ArrowDown",
+    left: "ArrowLeft",
+    right: "ArrowRight",
+    attack: " ",
+    esc: "Escape",
+    pick: "p",
+    axe: "x",
+    potion: "u"
+}; // Add more settings as needed for other aspects of the game
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"gkKU3":[function(require,module,exports) {
 exports.interopDefault = function(a) {
     return a && a.__esModule ? a : {
         default: a
@@ -1026,63 +1251,7 @@ exports.export = function(dest, destName, get) {
     });
 };
 
-},{}],"hBndc":[function(require,module,exports) {
-// Game settings and configurations
-// - This file contains global settings and configurations for the game
-// - These settings can be adjusted to change the game's behavior and appearance
-// Canvas settings
-var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
-parcelHelpers.defineInteropFlag(exports);
-parcelHelpers.export(exports, "canvasSettings", ()=>canvasSettings);
-parcelHelpers.export(exports, "playerSettings", ()=>playerSettings);
-parcelHelpers.export(exports, "gameSettings", ()=>gameSettings);
-parcelHelpers.export(exports, "entitySettings", ()=>entitySettings);
-parcelHelpers.export(exports, "soundSettings", ()=>soundSettings);
-parcelHelpers.export(exports, "controlSettings", ()=>controlSettings);
-const canvasSettings = {
-    width: 1280,
-    height: 640,
-    backgroundColor: "#2c2c2c",
-    cellWidth: 64,
-    cellHeight: 64
-};
-const playerSettings = {
-    initialLives: 3,
-    speed: 5,
-    color: "#ff69b4"
-};
-const gameSettings = {
-    initialLevel: 1,
-    maxLevels: 10,
-    scoreIncrement: 100
-};
-const entitySettings = {
-    enemyWidth: 91,
-    enemyHeight: 91,
-    obstacleColor: "#c62828",
-    powerupColor: "#1565c0",
-    guardColor: "#ff69b4",
-    explosiveColor: "#ffd54f",
-    exitColor: "#4caf50"
-};
-const soundSettings = {
-    mute: false,
-    volume: 0.5
-};
-const controlSettings = {
-    up: "ArrowUp",
-    down: "ArrowDown",
-    left: "ArrowLeft",
-    right: "ArrowRight",
-    attack: "a",
-    space: " ",
-    esc: "Escape",
-    pick: "p",
-    axe: "x",
-    potion: "u"
-}; // Add more settings as needed for other aspects of the game
-
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"1uqza":[function(require,module,exports) {
+},{}],"1uqza":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -1091,22 +1260,16 @@ var _settingsJs = require("../utils/settings.js");
 class Player extends (0, _entityJsDefault.default) {
     #health;
     #speed;
-    #blockedDirections;
     #isHurt = false;
     #hurtInterval = null;
     constructor(x, y, assets){
         super(x, y, "player", assets);
         this.#health = 100;
         this.#speed = 5;
+        this.attackPower = 50;
         this.explosives = [];
         this.keys = [];
         this.powerups = [];
-        this.#blockedDirections = {
-            left: false,
-            right: false,
-            up: false,
-            down: false
-        };
         this.currentFrame = 0;
         this.frameCount = 0;
         this.movement = "down";
@@ -1135,114 +1298,103 @@ class Player extends (0, _entityJsDefault.default) {
             height: this._height * 0.5
         };
     }
-    collide(entity) {
-        if (this.action === "walk" && entity.type === "wall") {
-            console.log("Colliding", this.action, entity.getPosition());
-            this.action = "idle";
-            // Determine which direction is blocked
-            const entityPos = entity.getPosition();
-            const playerPos = this.getPosition();
-            if (entityPos.x < playerPos.x) this.#blockedDirections.left = true;
-            else if (entityPos.x > playerPos.x) this.#blockedDirections.right = true;
-            if (entityPos.y < playerPos.y) this.#blockedDirections.up = true;
-            else if (entityPos.y > playerPos.y) this.#blockedDirections.down = true;
-            console.log("blocked directions", this.#blockedDirections);
-        } else if (entity.type === "guard") {
-            this.#health -= entity.damage;
-            //   this.hurtAnimation();
-            console.log("Player health:", this.#health);
+    // Area in front of the player that an attack sweeps over
+    getAttackBox() {
+        const hitBox = this.getHitBox();
+        const reach = this._width * 0.6;
+        switch(this.movement){
+            case "up":
+                return {
+                    x: hitBox.x,
+                    y: hitBox.y - reach,
+                    width: hitBox.width,
+                    height: reach
+                };
+            case "down":
+                return {
+                    x: hitBox.x,
+                    y: hitBox.y + hitBox.height,
+                    width: hitBox.width,
+                    height: reach
+                };
+            case "left":
+                return {
+                    x: hitBox.x - reach,
+                    y: hitBox.y,
+                    width: reach,
+                    height: hitBox.height
+                };
+            case "right":
+            default:
+                return {
+                    x: hitBox.x + hitBox.width,
+                    y: hitBox.y,
+                    width: reach,
+                    height: hitBox.height
+                };
         }
     }
-    canMove(direction) {
-        return !this.#blockedDirections[direction];
+    getHealth() {
+        return this.#health;
+    }
+    takeDamage(amount) {
+        // Ignore hits during the invulnerability window after being hurt
+        if (this.#isHurt || this.#health <= 0) return;
+        this.#health -= amount;
+        this.hurtAnimation();
+    }
+    respawn(x, y) {
+        this._position = {
+            x,
+            y
+        };
+        this.#health = 100;
+        this.#isHurt = false;
+        if (this.#hurtInterval) {
+            clearInterval(this.#hurtInterval);
+            this.#hurtInterval = null;
+        }
+        this.visible = true;
+        this.action = "idle";
+        this.movement = "down";
     }
     moveLeft() {
-        if (this.canMove("left")) {
-            this._position.x -= this.#speed;
-            this.action = "walk";
-            this.movement = "left";
-            this.#blockedDirections.right = false;
-            this.#blockedDirections.up = false;
-            this.#blockedDirections.down = false;
-        }
+        this._position.x -= this.#speed;
+        this.action = "walk";
+        this.movement = "left";
     }
     moveRight() {
-        if (this.canMove("right")) {
-            this._position.x += this.#speed;
-            this.action = "walk";
-            this.movement = "right";
-            this.#blockedDirections.left = false;
-            this.#blockedDirections.up = false;
-            this.#blockedDirections.down = false;
-        }
+        this._position.x += this.#speed;
+        this.action = "walk";
+        this.movement = "right";
     }
     moveUp() {
-        if (this.canMove("up")) {
-            this._position.y -= this.#speed;
-            this.action = "walk";
-            this.movement = "up";
-            this.#blockedDirections.down = false;
-            this.#blockedDirections.left = false;
-            this.#blockedDirections.right = false;
-        }
+        this._position.y -= this.#speed;
+        this.action = "walk";
+        this.movement = "up";
     }
     moveDown() {
-        if (this.canMove("down")) {
-            this._position.y += this.#speed;
-            this.action = "walk";
-            this.movement = "down";
-            this.#blockedDirections.up = false;
-            this.#blockedDirections.left = false;
-            this.#blockedDirections.right = false;
-        }
+        this._position.y += this.#speed;
+        this.action = "walk";
+        this.movement = "down";
     }
     attack() {
         this.action = "attack";
-        // Implement attack logic here
-        console.log("Attacking");
+    // Implement attack logic here
     }
     pick() {
         this.action = "pick";
-        // Implement pick logic here
-        console.log("Picking");
-        // Determine which object we are trying to pick based on player's position and direction
-        const pickRange = 32; // Assuming a pick range of 32 pixels (half a cell)
-        let pickPosition = {
-            x: this._position.x,
-            y: this._position.y
-        };
-        // Adjust pick position based on player's movement direction
-        switch(this.movement){
-            case "left":
-                pickPosition.x -= pickRange;
-                break;
-            case "right":
-                pickPosition.x += pickRange;
-                break;
-            case "up":
-                pickPosition.y -= pickRange;
-                break;
-            case "down":
-                pickPosition.y += pickRange;
-                break;
-        }
-        // Check for pickable objects at the determined position
-        // This part would typically interact with the game's entity management system
-        // For now, we'll just log the position where we're trying to pick
-        console.log(`Attempting to pick at position: (${pickPosition.x}, ${pickPosition.y})`);
     // TODO: Implement actual object detection and picking logic
     // This would involve checking for collisions with pickable entities
     // and handling the pickup if a valid object is found
     }
     axe() {
         this.action = "axe";
-        // Implement axe logic here
-        console.log("Axe");
+    // Implement axe logic here
     }
     potion() {
         this.action = "potion";
-        // Implement potion logic here
-        console.log("Potion");
+    // Implement potion logic here
     }
     collectExplosive(explosive) {
         this.explosives.push(explosive);
@@ -1252,11 +1404,12 @@ class Player extends (0, _entityJsDefault.default) {
     }
     collectPowerup(powerup) {
         this.powerups.push(powerup);
-        // Implement powerup effect here
-        console.log(`Collected powerup: ${powerup}`);
+    }
+    applyPowerup(effect) {
+        this.powerups.push(effect);
+        if (effect === "health") this.#health = Math.min(100, this.#health + 25);
     }
     update() {
-        // Don't reset blocked directions here
         this.frameCount++;
         if (this.frameCount >= 10) {
             // Adjust frame rate as needed
@@ -1300,7 +1453,8 @@ class Player extends (0, _entityJsDefault.default) {
             this.visible = !this.visible; // Toggle visibility
             flickerCount++;
             if (flickerCount >= maxFlickers) {
-                clearInterval(this.#isHurt);
+                clearInterval(this.#hurtInterval);
+                this.#hurtInterval = null;
                 this.#isHurt = false;
                 this.visible = true; // Ensure player is visible after flickering
             }
@@ -1427,7 +1581,6 @@ class Player extends (0, _entityJsDefault.default) {
                 }
                 break;
         }
-        console.log("drawing player", this.action, spriteX, spriteY);
         spriteX = this.currentFrame * spriteWidth;
         ctx.save();
         if (this.movement === "left") {
@@ -1454,7 +1607,7 @@ class Player extends (0, _entityJsDefault.default) {
 }
 exports.default = Player;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./entity.js":"4kBdl","../utils/settings.js":"hBndc"}],"4kBdl":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"4kBdl":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _settingsJs = require("../utils/settings.js");
@@ -1477,6 +1630,12 @@ class Entity {
     getPosition() {
         return {
             ...this._position
+        };
+    }
+    setPosition(x, y) {
+        this._position = {
+            x,
+            y
         };
     }
     getType() {
@@ -1503,7 +1662,7 @@ class Entity {
 }
 exports.default = Entity;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","../utils/settings.js":"hBndc"}],"57eJ8":[function(require,module,exports) {
+},{"../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"57eJ8":[function(require,module,exports) {
 // Level data
 // - Define the structure of each level (layout of the labyrinth)
 // - Specify positions of obstacles, powerups, explosives, guards
@@ -2665,6 +2824,44 @@ function isColliding(rect1, rect2) {
     return rect1.x < rect2.x + rect2.width && rect1.x + rect1.width > rect2.x && rect1.y < rect2.y + rect2.height && rect1.y + rect1.height > rect2.y;
 }
 
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"7uRsi":[function(require,module,exports) {
+// Seedable random number generator (mulberry32)
+// - Drop-in replacement for Math.random so game runs can be reproduced
+// - Pass ?seed=123 in the URL (used by automated tests) for deterministic runs
+// - Without a seed the generator is seeded randomly, as before
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "setSeed", ()=>setSeed);
+// Returns a float in [0, 1), like Math.random
+parcelHelpers.export(exports, "random", ()=>random);
+// Returns an integer in [min, max] (inclusive)
+parcelHelpers.export(exports, "randomInt", ()=>randomInt);
+let state = 0;
+function mulberry32() {
+    state |= 0;
+    state = state + 0x6d2b79f5 | 0;
+    let t = Math.imul(state ^ state >>> 15, 1 | state);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+function setSeed(seed) {
+    state = seed | 0;
+}
+function random() {
+    return mulberry32();
+}
+function randomInt(min, max) {
+    return Math.floor(random() * (max - min + 1)) + min;
+}
+function initialSeed() {
+    if (typeof window !== "undefined") {
+        const seedParam = new URLSearchParams(window.location.search).get("seed");
+        if (seedParam !== null && seedParam !== "" && !Number.isNaN(Number(seedParam))) return Number(seedParam);
+    }
+    return Math.floor(Math.random() * 2 ** 31);
+}
+setSeed(initialSeed());
+
 },{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d9RxC":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
@@ -2710,7 +2907,7 @@ class Wall extends (0, _entityJsDefault.default) {
 }
 exports.default = Wall;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./entity.js":"4kBdl","../utils/settings.js":"hBndc"}],"590U3":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"590U3":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -2755,13 +2952,14 @@ class Explosive extends (0, _entityJsDefault.default) {
 }
 exports.default = Explosive;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./entity.js":"4kBdl"}],"bFjVQ":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"bFjVQ":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
 var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
 var _settingsJs = require("../utils/settings.js");
 var _gameJs = require("../utils/game.js");
+var _rngJs = require("../utils/rng.js");
 // Guard entity class
 // - Represents the guards in the game
 // - Can move towards the player
@@ -2776,6 +2974,7 @@ class Guard extends (0, _entityJsDefault.default) {
     #speed;
     #detectionRange;
     #currentSprite;
+    #health;
     constructor(x, y, type, assets){
         super(x, y, type, assets, (0, _settingsJs.entitySettings).enemyWidth, (0, _settingsJs.entitySettings).enemyHeight);
         this.action = "idle";
@@ -2784,8 +2983,9 @@ class Guard extends (0, _entityJsDefault.default) {
             "up",
             "left",
             "right"
-        ][Math.floor(Math.random() * 4)];
+        ][(0, _rngJs.randomInt)(0, 3)];
         this.damage = 10;
+        this.#health = 100;
         this.#speed = 1;
         this.#detectionRange = 5 * (0, _settingsJs.canvasSettings).cellWidth;
         this.#currentSprite = this._sprites.idle;
@@ -2833,19 +3033,14 @@ class Guard extends (0, _entityJsDefault.default) {
         const willCollideWithWalls = walls.some((wall)=>(0, _gameJs.isColliding)(nextPosition, wall.getHitBox()));
         const willCollideWithPlayer = (0, _gameJs.isColliding)(nextPosition, target);
         if (willCollideWithPlayer) {
-            console.log("Attacking player");
             // Determine guard's facing direction based on target position
             if (Math.abs(dx) > Math.abs(dy)) this.movement = dx > 0 ? "right" : "left";
             else this.movement = dy > 0 ? "down" : "up";
             this.attack();
         } else if (!willCollideWithWalls) {
-            console.log("Moving towards player");
             this._position = nextPosition;
             this.walk();
-        } else {
-            console.log("Idle");
-            this.idle();
-        }
+        } else this.idle();
     }
     detectPlayer(playerPosition, walls) {
         const dx = playerPosition.x - this._position.x;
@@ -2882,6 +3077,24 @@ class Guard extends (0, _entityJsDefault.default) {
     attack() {
         this.action = "attack";
         this.#currentSprite = this._sprites.attack;
+    }
+    hurt() {
+        this.action = "hurt";
+        this.#currentSprite = this._sprites.hurt;
+    }
+    // Apply damage from the player. Returns true when the guard is defeated.
+    takeDamage(amount) {
+        if (this.#health <= 0) return false;
+        this.#health -= amount;
+        if (this.#health <= 0) {
+            this.defeat();
+            return true;
+        }
+        this.hurt();
+        return false;
+    }
+    isDefeated() {
+        return this.#health <= 0;
     }
     defeat() {
         this.action = "dead";
@@ -2939,11 +3152,12 @@ class Guard extends (0, _entityJsDefault.default) {
 }
 exports.default = Guard;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./entity.js":"4kBdl","../utils/settings.js":"hBndc","../utils/game.js":"jBBaN"}],"14cf6":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","../utils/game.js":"jBBaN","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"14cf6":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
 var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
+var _rngJs = require("../utils/rng.js");
 // Obstacle entity class
 // - Represents the obstacles in the game
 // - Can be destroyed by the player
@@ -2958,7 +3172,7 @@ class Obstacle extends (0, _entityJsDefault.default) {
         this.#health = 100;
         if (type === "boulder") this._sprite = assets.rock;
         else if (type === "tree") {
-            const randomTree = Math.floor(Math.random() * 2) + 1;
+            const randomTree = (0, _rngJs.randomInt)(1, 2);
             this._sprite = assets[`palm${randomTree}`];
         }
     }
@@ -2966,6 +3180,9 @@ class Obstacle extends (0, _entityJsDefault.default) {
         this.#health -= amount;
         if (this.#health <= 0) return this.destroy();
         return null;
+    }
+    isDestroyed() {
+        return this.#health <= 0;
     }
     destroy() {
         // Implement destruction logic
@@ -2981,7 +3198,7 @@ class Obstacle extends (0, _entityJsDefault.default) {
 }
 exports.default = Obstacle;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./entity.js":"4kBdl"}],"7DUBa":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"7DUBa":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -3026,9 +3243,9 @@ class Powerup extends (0, _entityJsDefault.default) {
     collect() {
         if (!this.#collected) {
             this.#collected = true;
-            console.log(`Powerup collected: ${this._type}`);
-        // Return the powerup effect
+            return this._type;
         }
+        return null;
     }
     // ... rest of the Powerup class methods ...
     draw(ctx) {
@@ -3037,11 +3254,12 @@ class Powerup extends (0, _entityJsDefault.default) {
 }
 exports.default = Powerup;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./entity.js":"4kBdl"}],"lIWLe":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"lIWLe":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
 var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
+var _rngJs = require("../utils/rng.js");
 // Exit entity class
 // - Represents the exit in the game
 // - Can be collected by the player
@@ -3057,9 +3275,9 @@ class Exit extends (0, _entityJsDefault.default) {
         const sparkleCount = 20;
         const sparkles = [];
         for(let i = 0; i < sparkleCount; i++)sparkles.push({
-            x: this._position.x + Math.random() * this._width,
-            y: this._position.y + Math.random() * this._height,
-            vy: -0.5 + Math.random() * 0.5 // vertical velocity
+            x: this._position.x + (0, _rngJs.random)() * this._width,
+            y: this._position.y + (0, _rngJs.random)() * this._height,
+            vy: -0.5 + (0, _rngJs.random)() * 0.5 // vertical velocity
         });
         return sparkles;
     }
@@ -3092,7 +3310,7 @@ class Exit extends (0, _entityJsDefault.default) {
 }
 exports.default = Exit;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./entity.js":"4kBdl"}],"2MtDO":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2MtDO":[function(require,module,exports) {
 // handle the assets
 // Load player sprite sheets
 // Load enemy sprite sheets
@@ -3100,6 +3318,10 @@ exports.default = Exit;
 // Load explosive sprite sheets
 // Load guard sprite sheets
 // Load obstacle images
+// NOTE: asset URLs must be written inline as `new URL('literal', import.meta.url)`.
+// Parcel only bundles the referenced file when the first argument is a string
+// literal at the call site. Wrapping it in a helper (variable argument) defeats
+// static analysis, leaving an unbundled `file://` path that the browser blocks.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "loadPlayerAssets", ()=>loadPlayerAssets);
@@ -3109,11 +3331,9 @@ parcelHelpers.export(exports, "loadPowerUpsAssets", ()=>loadPowerUpsAssets);
 function loadImage(src, onProgress) {
     return new Promise((resolve, reject)=>{
         try {
-            console.log("Loading image:", src);
             const img = new Image();
             img.src = src;
             img.onload = ()=>{
-                console.log("Image loaded:", src);
                 onProgress(src, img);
                 resolve(img);
             };
@@ -3129,8 +3349,8 @@ function loadImage(src, onProgress) {
 }
 async function loadPlayerAssets(onProgress) {
     console.log("Loading player assets...");
-    const playerMovement = await loadImage(require("ffc3baa9235e162b"), onProgress);
-    const playerActions = await loadImage(require("6915836cedfae963"), onProgress);
+    const playerMovement = await loadImage(new URL(require("93fa132a23469ad3")).href, onProgress);
+    const playerActions = await loadImage(new URL(require("24d061bc9070758b")).href, onProgress);
     return {
         playerMovement,
         playerActions
@@ -3139,32 +3359,32 @@ async function loadPlayerAssets(onProgress) {
 async function loadGuardAssets(onProgress) {
     console.log("Loading guard assets...");
     // ORC 1
-    const orc1_Attack = await loadImage(require("f70cd4a8ff0a8d02"), onProgress);
-    const orc1_Death = await loadImage(require("5cf01bbc91516dbb"), onProgress);
-    const orc1_Hurt = await loadImage(require("202dc8c92444ad57"), onProgress);
-    const orc1_Idle = await loadImage(require("d7024fe610707c36"), onProgress);
-    const orc1_Run = await loadImage(require("5abc540859d41f95"), onProgress);
-    const orc1_Run_Attack = await loadImage(require("aaac5e5366b9fde5"), onProgress);
-    const orc1_Walk = await loadImage(require("2f1b1416420a5c92"), onProgress);
-    const orc1_Walk_Attack = await loadImage(require("8a9f0d1e02dfa966"), onProgress);
+    const orc1_Attack = await loadImage(new URL(require("da839ad1c17fe6f0")).href, onProgress);
+    const orc1_Death = await loadImage(new URL(require("e0bc205cb3c5c0bf")).href, onProgress);
+    const orc1_Hurt = await loadImage(new URL(require("9fcd0329138ebc13")).href, onProgress);
+    const orc1_Idle = await loadImage(new URL(require("fff618a47255eb1a")).href, onProgress);
+    const orc1_Run = await loadImage(new URL(require("9f26a3e4a159b554")).href, onProgress);
+    const orc1_Run_Attack = await loadImage(new URL(require("2222dfe21f9016a6")).href, onProgress);
+    const orc1_Walk = await loadImage(new URL(require("37fab219c2e3438d")).href, onProgress);
+    const orc1_Walk_Attack = await loadImage(new URL(require("297e02e827843629")).href, onProgress);
     // ORC 2
-    const orc2_Attack = await loadImage(require("c02f1eb15682d91d"), onProgress);
-    const orc2_Death = await loadImage(require("30a05e2bcba13203"), onProgress);
-    const orc2_Hurt = await loadImage(require("def253f2f2d2bc53"), onProgress);
-    const orc2_Idle = await loadImage(require("acd29df19ce3e3e4"), onProgress);
-    const orc2_Run = await loadImage(require("2cfeca510e6eae4c"), onProgress);
-    const orc2_Run_Attack = await loadImage(require("32c57fb936144880"), onProgress);
-    const orc2_Walk = await loadImage(require("7709cc45827beb90"), onProgress);
-    const orc2_Walk_Attack = await loadImage(require("51f81d013677be12"), onProgress);
+    const orc2_Attack = await loadImage(new URL(require("6c2f82508ca9a3bb")).href, onProgress);
+    const orc2_Death = await loadImage(new URL(require("47ee9c0f63ff8828")).href, onProgress);
+    const orc2_Hurt = await loadImage(new URL(require("4b946ae5fc174647")).href, onProgress);
+    const orc2_Idle = await loadImage(new URL(require("301431c8769f658")).href, onProgress);
+    const orc2_Run = await loadImage(new URL(require("f462afe302c8f41b")).href, onProgress);
+    const orc2_Run_Attack = await loadImage(new URL(require("cd1068d2a2c15560")).href, onProgress);
+    const orc2_Walk = await loadImage(new URL(require("37ea3b9efefea7e6")).href, onProgress);
+    const orc2_Walk_Attack = await loadImage(new URL(require("f524f9f30597b7c3")).href, onProgress);
     // ORC 3
-    const orc3_Attack = await loadImage(require("200f72c5877ed0d8"), onProgress);
-    const orc3_Death = await loadImage(require("f290015800b27214"), onProgress);
-    const orc3_Hurt = await loadImage(require("26248b814d1d0230"), onProgress);
-    const orc3_Idle = await loadImage(require("2865eb8b28846633"), onProgress);
-    const orc3_Run = await loadImage(require("10434cc75d76f263"), onProgress);
-    const orc3_Run_Attack = await loadImage(require("b9b88f301505d030"), onProgress);
-    const orc3_Walk = await loadImage(require("4f6e25873e93995b"), onProgress);
-    const orc3_Walk_Attack = await loadImage(require("e1e3de3a415df265"), onProgress);
+    const orc3_Attack = await loadImage(new URL(require("4af006d8495d5804")).href, onProgress);
+    const orc3_Death = await loadImage(new URL(require("4bfabeb171e83a78")).href, onProgress);
+    const orc3_Hurt = await loadImage(new URL(require("a88858287bda9b00")).href, onProgress);
+    const orc3_Idle = await loadImage(new URL(require("8aa376bb259420aa")).href, onProgress);
+    const orc3_Run = await loadImage(new URL(require("f060f8a5fdaac71f")).href, onProgress);
+    const orc3_Run_Attack = await loadImage(new URL(require("1926d3b5d1463658")).href, onProgress);
+    const orc3_Walk = await loadImage(new URL(require("798831562a8c99b4")).href, onProgress);
+    const orc3_Walk_Attack = await loadImage(new URL(require("d7a60630e255c457")).href, onProgress);
     return {
         orc1_Attack,
         orc1_Death,
@@ -3194,15 +3414,15 @@ async function loadGuardAssets(onProgress) {
 }
 async function loadLevelAssets(onProgress) {
     console.log("Loading level assets...");
-    const rock = await loadImage(require("a8b07ecaa51caa55"), onProgress);
-    const tree1 = await loadImage(require("b82cb42109b39d38"), onProgress);
-    const tree2 = await loadImage(require("8636378bbe94b63c"), onProgress);
-    const tree3 = await loadImage(require("b98fabc2cc15de8c"), onProgress);
-    const palm1 = await loadImage(require("ce5e3ea4ece636de"), onProgress);
-    const palm2 = await loadImage(require("286c97dc7397b8ba"), onProgress);
-    const sandRuin = await loadImage(require("97bbccd58cba9e23"), onProgress);
-    const snowRuin = await loadImage(require("edc2ee74d657bfaa"), onProgress);
-    const yellowRuin = await loadImage(require("42a6703981e2e019"), onProgress);
+    const rock = await loadImage(new URL(require("1090cc123f927509")).href, onProgress);
+    const tree1 = await loadImage(new URL(require("3f5ed577d5909e0d")).href, onProgress);
+    const tree2 = await loadImage(new URL(require("58ff784648728cf8")).href, onProgress);
+    const tree3 = await loadImage(new URL(require("6d9a56da4d55f52c")).href, onProgress);
+    const palm1 = await loadImage(new URL(require("693e9f0751fa86d2")).href, onProgress);
+    const palm2 = await loadImage(new URL(require("bc4f5cc8883c7693")).href, onProgress);
+    const sandRuin = await loadImage(new URL(require("80e7c00fdd98ae89")).href, onProgress);
+    const snowRuin = await loadImage(new URL(require("a7b3d39a650d1b88")).href, onProgress);
+    const yellowRuin = await loadImage(new URL(require("d558afb41645e81d")).href, onProgress);
     return {
         rock,
         tree1,
@@ -3217,10 +3437,10 @@ async function loadLevelAssets(onProgress) {
 }
 async function loadPowerUpsAssets(onProgress) {
     console.log("Loading powerups assets...");
-    const greenCrystal = await loadImage(require("88cc111fac492ee4"), onProgress);
-    const redCrystal = await loadImage(require("fd213ace0dca5523"), onProgress);
-    const blueCrystal = await loadImage(require("9af7a1dac7731770"), onProgress);
-    const yellowCrystal = await loadImage(require("ed7d6f8fd7cd82b4"), onProgress);
+    const greenCrystal = await loadImage(new URL(require("3d27847b46809984")).href, onProgress);
+    const redCrystal = await loadImage(new URL(require("d64a48fa1826a640")).href, onProgress);
+    const blueCrystal = await loadImage(new URL(require("66d083ceb4ac7a4e")).href, onProgress);
+    const yellowCrystal = await loadImage(new URL(require("9ae2d2d58e4ae0ee")).href, onProgress);
     return {
         greenCrystal,
         redCrystal,
@@ -3229,7 +3449,7 @@ async function loadPowerUpsAssets(onProgress) {
     };
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","ffc3baa9235e162b":"b9nou","6915836cedfae963":"kYVSU","f70cd4a8ff0a8d02":"fncWE","5cf01bbc91516dbb":"2LeDo","202dc8c92444ad57":"aZY6N","d7024fe610707c36":"4gAdv","5abc540859d41f95":"2cwK4","aaac5e5366b9fde5":"knb3E","2f1b1416420a5c92":"eGy9D","8a9f0d1e02dfa966":"54hki","a8b07ecaa51caa55":"3Ukfr","88cc111fac492ee4":"kAqHG","fd213ace0dca5523":"gWXxV","9af7a1dac7731770":"aYPiB","ed7d6f8fd7cd82b4":"9uNQt","c02f1eb15682d91d":"d6fML","30a05e2bcba13203":"cquXn","def253f2f2d2bc53":"4rHea","acd29df19ce3e3e4":"8MUvf","2cfeca510e6eae4c":"lTjNI","7709cc45827beb90":"aWofU","32c57fb936144880":"jY0H7","51f81d013677be12":"afDNE","97bbccd58cba9e23":"lQQEY","edc2ee74d657bfaa":"jkJ9x","42a6703981e2e019":"jyGU7","200f72c5877ed0d8":"he3z7","f290015800b27214":"9fl4N","26248b814d1d0230":"dNbts","2865eb8b28846633":"i9DT0","10434cc75d76f263":"fG8bj","b9b88f301505d030":"5MSBS","4f6e25873e93995b":"fzXLE","e1e3de3a415df265":"bMo3R","b82cb42109b39d38":"iXpK1","8636378bbe94b63c":"cwnaC","b98fabc2cc15de8c":"jXnPG","ce5e3ea4ece636de":"1fs7o","286c97dc7397b8ba":"i7jn0"}],"b9nou":[function(require,module,exports) {
+},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","693e9f0751fa86d2":"1fs7o","bc4f5cc8883c7693":"i7jn0","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","d558afb41645e81d":"jyGU7","3d27847b46809984":"kAqHG","d64a48fa1826a640":"gWXxV","66d083ceb4ac7a4e":"aYPiB","9ae2d2d58e4ae0ee":"9uNQt","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
 module.exports = require("59afba6ea444a216").getBundleURL("aAnGP") + "Player.89df9642.png" + "?" + Date.now();
 
 },{"59afba6ea444a216":"lgJ39"}],"lgJ39":[function(require,module,exports) {
@@ -3294,22 +3514,7 @@ module.exports = require("23fb3b55dc999612").getBundleURL("aAnGP") + "orc1_walk_
 },{"23fb3b55dc999612":"lgJ39"}],"54hki":[function(require,module,exports) {
 module.exports = require("c37c4d0419d8c36e").getBundleURL("aAnGP") + "orc1_walk_attack_front_full.26d7ffca.png" + "?" + Date.now();
 
-},{"c37c4d0419d8c36e":"lgJ39"}],"3Ukfr":[function(require,module,exports) {
-module.exports = require("b5aa8aaf9302a118").getBundleURL("aAnGP") + "Rock6_1.7bba883a.png" + "?" + Date.now();
-
-},{"b5aa8aaf9302a118":"lgJ39"}],"kAqHG":[function(require,module,exports) {
-module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
-
-},{"f6b1d88be3588622":"lgJ39"}],"gWXxV":[function(require,module,exports) {
-module.exports = require("de3274c789035aa").getBundleURL("aAnGP") + "Red_crystal2.bbb9761d.png" + "?" + Date.now();
-
-},{"de3274c789035aa":"lgJ39"}],"aYPiB":[function(require,module,exports) {
-module.exports = require("ca884f5db4bf1cf2").getBundleURL("aAnGP") + "Blue_crystal2.33de1225.png" + "?" + Date.now();
-
-},{"ca884f5db4bf1cf2":"lgJ39"}],"9uNQt":[function(require,module,exports) {
-module.exports = require("b88e1a35592b6077").getBundleURL("aAnGP") + "Yellow_crystal2.0ed15310.png" + "?" + Date.now();
-
-},{"b88e1a35592b6077":"lgJ39"}],"d6fML":[function(require,module,exports) {
+},{"c37c4d0419d8c36e":"lgJ39"}],"d6fML":[function(require,module,exports) {
 module.exports = require("997aed43d61de1c4").getBundleURL("aAnGP") + "orc2_attack_full.5d55d5be.png" + "?" + Date.now();
 
 },{"997aed43d61de1c4":"lgJ39"}],"cquXn":[function(require,module,exports) {
@@ -3324,25 +3529,16 @@ module.exports = require("41a871a655c7d0e5").getBundleURL("aAnGP") + "orc2_idle_
 },{"41a871a655c7d0e5":"lgJ39"}],"lTjNI":[function(require,module,exports) {
 module.exports = require("308fd37f428b7bb9").getBundleURL("aAnGP") + "orc2_run_full.d549ca5a.png" + "?" + Date.now();
 
-},{"308fd37f428b7bb9":"lgJ39"}],"aWofU":[function(require,module,exports) {
-module.exports = require("f5d6110a9506bb61").getBundleURL("aAnGP") + "orc2_walk_full.5b172897.png" + "?" + Date.now();
-
-},{"f5d6110a9506bb61":"lgJ39"}],"jY0H7":[function(require,module,exports) {
+},{"308fd37f428b7bb9":"lgJ39"}],"jY0H7":[function(require,module,exports) {
 module.exports = require("bbef9922df28b32a").getBundleURL("aAnGP") + "orc2_run_attack_full.adf2fe89.png" + "?" + Date.now();
 
-},{"bbef9922df28b32a":"lgJ39"}],"afDNE":[function(require,module,exports) {
+},{"bbef9922df28b32a":"lgJ39"}],"aWofU":[function(require,module,exports) {
+module.exports = require("f5d6110a9506bb61").getBundleURL("aAnGP") + "orc2_walk_full.5b172897.png" + "?" + Date.now();
+
+},{"f5d6110a9506bb61":"lgJ39"}],"afDNE":[function(require,module,exports) {
 module.exports = require("ea7aa875f42242d4").getBundleURL("aAnGP") + "orc2_walk_attack_full.32a7b7fd.png" + "?" + Date.now();
 
-},{"ea7aa875f42242d4":"lgJ39"}],"lQQEY":[function(require,module,exports) {
-module.exports = require("5a2d54e811bdc200").getBundleURL("aAnGP") + "Sand_ruins3.1f0a3c59.png" + "?" + Date.now();
-
-},{"5a2d54e811bdc200":"lgJ39"}],"jkJ9x":[function(require,module,exports) {
-module.exports = require("d7584db4a4d9b947").getBundleURL("aAnGP") + "Snow_ruins3.0b4f0802.png" + "?" + Date.now();
-
-},{"d7584db4a4d9b947":"lgJ39"}],"jyGU7":[function(require,module,exports) {
-module.exports = require("79a6f32243245a3e").getBundleURL("aAnGP") + "Yellow_ruins3.e4eb5c38.png" + "?" + Date.now();
-
-},{"79a6f32243245a3e":"lgJ39"}],"he3z7":[function(require,module,exports) {
+},{"ea7aa875f42242d4":"lgJ39"}],"he3z7":[function(require,module,exports) {
 module.exports = require("e5e14d289bfdabd0").getBundleURL("aAnGP") + "orc3_attack_full.3880e5cd.png" + "?" + Date.now();
 
 },{"e5e14d289bfdabd0":"lgJ39"}],"9fl4N":[function(require,module,exports) {
@@ -3366,7 +3562,10 @@ module.exports = require("35425eb199dd73d6").getBundleURL("aAnGP") + "orc3_walk_
 },{"35425eb199dd73d6":"lgJ39"}],"bMo3R":[function(require,module,exports) {
 module.exports = require("4789fa1a7eb3f7ec").getBundleURL("aAnGP") + "orc3_walk_attack_full.46776ad5.png" + "?" + Date.now();
 
-},{"4789fa1a7eb3f7ec":"lgJ39"}],"iXpK1":[function(require,module,exports) {
+},{"4789fa1a7eb3f7ec":"lgJ39"}],"3Ukfr":[function(require,module,exports) {
+module.exports = require("b5aa8aaf9302a118").getBundleURL("aAnGP") + "Rock6_1.7bba883a.png" + "?" + Date.now();
+
+},{"b5aa8aaf9302a118":"lgJ39"}],"iXpK1":[function(require,module,exports) {
 module.exports = require("25a52dc75a382c0e").getBundleURL("aAnGP") + "Tree1.e05f2c99.png" + "?" + Date.now();
 
 },{"25a52dc75a382c0e":"lgJ39"}],"cwnaC":[function(require,module,exports) {
@@ -3381,22 +3580,84 @@ module.exports = require("c847ba28193751af").getBundleURL("aAnGP") + "Palm_tree1
 },{"c847ba28193751af":"lgJ39"}],"i7jn0":[function(require,module,exports) {
 module.exports = require("84aac258d2873666").getBundleURL("aAnGP") + "Palm_tree2_2.2dae9864.png" + "?" + Date.now();
 
-},{"84aac258d2873666":"lgJ39"}],"2Rkrn":[function(require,module,exports) {
+},{"84aac258d2873666":"lgJ39"}],"lQQEY":[function(require,module,exports) {
+module.exports = require("5a2d54e811bdc200").getBundleURL("aAnGP") + "Sand_ruins3.1f0a3c59.png" + "?" + Date.now();
+
+},{"5a2d54e811bdc200":"lgJ39"}],"jkJ9x":[function(require,module,exports) {
+module.exports = require("d7584db4a4d9b947").getBundleURL("aAnGP") + "Snow_ruins3.0b4f0802.png" + "?" + Date.now();
+
+},{"d7584db4a4d9b947":"lgJ39"}],"jyGU7":[function(require,module,exports) {
+module.exports = require("79a6f32243245a3e").getBundleURL("aAnGP") + "Yellow_ruins3.e4eb5c38.png" + "?" + Date.now();
+
+},{"79a6f32243245a3e":"lgJ39"}],"kAqHG":[function(require,module,exports) {
+module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
+
+},{"f6b1d88be3588622":"lgJ39"}],"gWXxV":[function(require,module,exports) {
+module.exports = require("de3274c789035aa").getBundleURL("aAnGP") + "Red_crystal2.bbb9761d.png" + "?" + Date.now();
+
+},{"de3274c789035aa":"lgJ39"}],"aYPiB":[function(require,module,exports) {
+module.exports = require("ca884f5db4bf1cf2").getBundleURL("aAnGP") + "Blue_crystal2.33de1225.png" + "?" + Date.now();
+
+},{"ca884f5db4bf1cf2":"lgJ39"}],"9uNQt":[function(require,module,exports) {
+module.exports = require("b88e1a35592b6077").getBundleURL("aAnGP") + "Yellow_crystal2.0ed15310.png" + "?" + Date.now();
+
+},{"b88e1a35592b6077":"lgJ39"}],"kNfRL":[function(require,module,exports) {
+// Splash screen
+// - Display game logo or animation
+// - Briefly show before transitioning to the welcome screen
+// - Style: background color, logo/animation size and position
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "showSplashScreen", ()=>showSplashScreen);
+parcelHelpers.export(exports, "updateSplashScreenProgress", ()=>updateSplashScreenProgress);
+function showSplashScreen(initialise, onComplete) {
+    const splashScreen = document.createElement("div");
+    splashScreen.id = "splash-screen";
+    splashScreen.style.position = "absolute";
+    splashScreen.style.top = "0";
+    splashScreen.style.left = "0";
+    splashScreen.style.width = "100%";
+    splashScreen.style.height = "100%";
+    splashScreen.style.backgroundColor = "#000";
+    splashScreen.style.display = "flex";
+    splashScreen.style.justifyContent = "center";
+    splashScreen.style.alignItems = "center";
+    splashScreen.style.color = "#fff";
+    splashScreen.style.fontSize = "24px";
+    splashScreen.innerText = "Loading... 0%";
+    document.body.appendChild(splashScreen);
+    initialise().then(()=>{
+        onComplete();
+        document.body.removeChild(splashScreen);
+    }).catch((error)=>{
+        console.error("Failed to initialize game:", error);
+        splashScreen.innerText = "Failed to load game. Please refresh the page.";
+    });
+}
+function updateSplashScreenProgress(progress) {
+    console.log("Updating splash screen progress:", progress);
+    const splashScreen = document.getElementById("splash-screen");
+    if (splashScreen) splashScreen.innerText = `Loading... ${progress}%`;
+}
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2Rkrn":[function(require,module,exports) {
 // handle the screens
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "showWelcomeScreen", ()=>(0, _welcomeJs.showWelcomeScreen));
 parcelHelpers.export(exports, "showGameOverScreen", ()=>(0, _gameOverJs.showGameOverScreen));
+parcelHelpers.export(exports, "showGameWonScreen", ()=>(0, _gameWonJs.showGameWonScreen));
 parcelHelpers.export(exports, "showHighScoreScreen", ()=>(0, _highScoreJs.showHighScoreScreen));
 parcelHelpers.export(exports, "showLevelCompletedScreen", ()=>(0, _levelCompletedJs.showLevelCompletedScreen));
 parcelHelpers.export(exports, "showStoryScreen", ()=>(0, _storyJs.showStoryScreen));
 var _welcomeJs = require("./welcome.js");
 var _gameOverJs = require("./game-over.js");
+var _gameWonJs = require("./game-won.js");
 var _highScoreJs = require("./high-score.js");
 var _levelCompletedJs = require("./level-completed.js");
 var _storyJs = require("./story.js");
 
-},{"./welcome.js":"cZkQX","./game-over.js":"92Yef","./high-score.js":"4usRq","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./level-completed.js":"9FY8c","./story.js":"2HIwu"}],"cZkQX":[function(require,module,exports) {
+},{"./welcome.js":"cZkQX","./game-over.js":"92Yef","./game-won.js":"12l5K","./high-score.js":"4usRq","./level-completed.js":"9FY8c","./story.js":"2HIwu","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"cZkQX":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Welcome screen logic
@@ -3460,7 +3721,7 @@ function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit
     (0, _themeJs.styleButton)(exitButton);
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","../utils/theme.js":"6OzmZ"}],"6OzmZ":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"6OzmZ":[function(require,module,exports) {
 // Theme configuration for the game
 // This file contains styles and colors used across different screens
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -3546,7 +3807,7 @@ function showGameOverScreen(finalScore, onTryAgain, onMainMenu) {
     title.textContent = "Game Over";
     gameOverScreen.appendChild(title);
     const message = document.createElement("p");
-    message.textContent = "Oops! Looks like you hit a wall. Better luck next time!";
+    message.textContent = "Theo ran out of lives. Better luck next time!";
     gameOverScreen.appendChild(message);
     const scoreDisplay = document.createElement("p");
     scoreDisplay.textContent = `Your Score: ${finalScore}`;
@@ -3572,7 +3833,49 @@ function showGameOverScreen(finalScore, onTryAgain, onMainMenu) {
     (0, _themeJs.styleButton)(mainMenuButton, (0, _themeJs.theme).colors.secondary);
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","../utils/theme.js":"6OzmZ"}],"4usRq":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"12l5K":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+// Game Won screen
+// - Shown when the player clears the final level
+// - Displays the final score and options to play again or return to the menu
+parcelHelpers.export(exports, "showGameWonScreen", ()=>showGameWonScreen);
+var _themeJs = require("../utils/theme.js");
+function showGameWonScreen(finalScore, onPlayAgain, onMainMenu) {
+    const container = document.getElementById("game-container");
+    container.innerHTML = "";
+    const gameWonScreen = document.createElement("div");
+    gameWonScreen.id = "game-won-screen";
+    const title = document.createElement("h1");
+    title.textContent = "You Escaped the Wandertrap!";
+    gameWonScreen.appendChild(title);
+    const message = document.createElement("p");
+    message.textContent = "Theo found his way out. Well played!";
+    gameWonScreen.appendChild(message);
+    const scoreDisplay = document.createElement("p");
+    scoreDisplay.textContent = `Final Score: ${finalScore}`;
+    gameWonScreen.appendChild(scoreDisplay);
+    const playAgainButton = document.createElement("button");
+    playAgainButton.textContent = "Play Again";
+    playAgainButton.onclick = onPlayAgain;
+    gameWonScreen.appendChild(playAgainButton);
+    const mainMenuButton = document.createElement("button");
+    mainMenuButton.textContent = "Main Menu";
+    mainMenuButton.onclick = onMainMenu;
+    gameWonScreen.appendChild(mainMenuButton);
+    container.appendChild(gameWonScreen);
+    (0, _themeJs.applyContainerStyles)(container);
+    title.style.fontSize = (0, _themeJs.theme).fontSize.title;
+    title.style.marginBottom = "20px";
+    message.style.fontSize = (0, _themeJs.theme).fontSize.subtitle;
+    message.style.marginBottom = "20px";
+    scoreDisplay.style.fontSize = (0, _themeJs.theme).fontSize.subtitle;
+    scoreDisplay.style.marginBottom = "20px";
+    (0, _themeJs.styleButton)(playAgainButton, (0, _themeJs.theme).colors.accent);
+    (0, _themeJs.styleButton)(mainMenuButton, (0, _themeJs.theme).colors.secondary);
+}
+
+},{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"4usRq":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "showHighScoreScreen", ()=>showHighScoreScreen);
@@ -3713,7 +4016,7 @@ function showHighScoreScreen(onBack) {
     (0, _themeJs.styleButton)(backButton, (0, _themeJs.theme).colors.primary);
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","../utils/theme.js":"6OzmZ","../utils/date.js":"5EBGj"}],"5EBGj":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","../utils/date.js":"5EBGj","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"5EBGj":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "timeAgo", ()=>timeAgo);
@@ -3891,42 +4194,6 @@ function styleStoryScreen(storyScreen, textContainer) {
     textContainer.style.borderRadius = "10px";
 }
 
-},{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"kNfRL":[function(require,module,exports) {
-// Splash screen
-// - Display game logo or animation
-// - Briefly show before transitioning to the welcome screen
-// - Style: background color, logo/animation size and position
-var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
-parcelHelpers.defineInteropFlag(exports);
-parcelHelpers.export(exports, "showSplashScreen", ()=>showSplashScreen);
-parcelHelpers.export(exports, "updateSplashScreenProgress", ()=>updateSplashScreenProgress);
-function showSplashScreen(initialise, onComplete) {
-    const splashScreen = document.createElement("div");
-    splashScreen.id = "splash-screen";
-    splashScreen.style.position = "absolute";
-    splashScreen.style.top = "0";
-    splashScreen.style.left = "0";
-    splashScreen.style.width = "100%";
-    splashScreen.style.height = "100%";
-    splashScreen.style.backgroundColor = "#000";
-    splashScreen.style.display = "flex";
-    splashScreen.style.justifyContent = "center";
-    splashScreen.style.alignItems = "center";
-    splashScreen.style.color = "#fff";
-    splashScreen.style.fontSize = "24px";
-    splashScreen.innerText = "Loading... 0%";
-    document.body.appendChild(splashScreen);
-    initialise().then(()=>{
-        onComplete();
-        document.body.removeChild(splashScreen);
-    });
-}
-function updateSplashScreenProgress(progress) {
-    console.log("Updating splash screen progress:", progress);
-    const splashScreen = document.getElementById("splash-screen");
-    if (splashScreen) splashScreen.innerText = `Loading... ${progress}%`;
-}
-
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}]},["aAwE2","6JHOc"], "6JHOc", "parcelRequire6d7b")
+},{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}]},["aAwE2","6JHOc"], "6JHOc", "parcelRequire6d7b")
 
 //# sourceMappingURL=index.44a83959.js.map

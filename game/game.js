@@ -8,6 +8,7 @@ import Player from "./entities/player.js";
 import levelData from "./levels/level-data.js";
 import { clearContainer } from "./utils/canvas.js";
 import { isColliding } from "./utils/game.js";
+import { randomInt } from "./utils/rng.js";
 import Wall from "./entities/wall.js";
 import Explosive from "./entities/explosive.js";
 import Guard from "./entities/guard.js";
@@ -125,6 +126,10 @@ export class Game {
 
     window.addEventListener("keydown", (event) => {
       if (!this.started || this.paused || this.isGameOver) return;
+      // Stop the space bar (and arrow keys) from scrolling the page
+      if (event.key === " " || event.key.startsWith("Arrow")) {
+        event.preventDefault();
+      }
       switch (event.key) {
         case controlSettings.up:
           debounceAction(() => this.movePlayer("up"), 1000)();
@@ -139,7 +144,7 @@ export class Game {
           debounceAction(() => this.movePlayer("right"), 1000)();
           break;
         case controlSettings.attack:
-          debounceAction(() => this.player.attack(), 250)();
+          debounceAction(() => this.playerAttack(), 250)();
           break;
         case controlSettings.pick:
           debounceAction(() => this.player.pick(), 150)();
@@ -170,7 +175,10 @@ export class Game {
       next.y < 0 ||
       next.x > this.canvas.width - canvasSettings.cellWidth ||
       next.y > this.canvas.height - canvasSettings.cellHeight ||
-      this.walls.some((wall) => isColliding(nextHitBox, wall.getHitBox()));
+      this.walls.some((wall) => isColliding(nextHitBox, wall.getHitBox())) ||
+      this.obstacles.some((obstacle) =>
+        isColliding(nextHitBox, obstacle.getHitBox())
+      );
 
     if (blocked) {
       // Face the direction anyway so the player can turn in place
@@ -193,6 +201,32 @@ export class Game {
         this.player.moveRight();
         break;
     }
+  }
+
+  playerAttack() {
+    this.player.attack();
+    const attackBox = this.player.getAttackBox();
+
+    // Damage guards caught in the swing and remove any that are defeated
+    this.guards = this.guards.filter((guard) => {
+      if (isColliding(attackBox, guard.getHitBox())) {
+        const defeated = guard.takeDamage(this.player.attackPower);
+        if (defeated) {
+          this.score += gameSettings.scoreIncrement;
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Chop down obstacles (trees, boulders) that are struck
+    this.obstacles = this.obstacles.filter((obstacle) => {
+      if (isColliding(attackBox, obstacle.getHitBox())) {
+        obstacle.takeDamage(this.player.attackPower);
+        return !obstacle.isDestroyed();
+      }
+      return true;
+    });
   }
 
   initializeEntities() {
@@ -219,7 +253,7 @@ export class Game {
               );
               break;
             case "G":
-              const randomOrc = Math.floor(Math.random() * 3) + 1;
+              const randomOrc = randomInt(1, 3);
               this.guards.push(new Guard(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets));
               break;
             case "O":
@@ -233,7 +267,7 @@ export class Game {
               );
               break;
             case "C":
-              const randomPowerup = Math.floor(Math.random() * 2) + 1;
+              const randomPowerup = randomInt(1, 2);
               this.powerups.push(
                 new Powerup(position.x, position.y, randomPowerup == 1 ? "health" : "mana", this.assets.powerupsAssets)
               );
@@ -467,6 +501,44 @@ export class Game {
     this.container.appendChild(this.canvas);
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.gameLoop();
+  }
+
+  // ---------------------------------------------------------------------
+  // Test hooks
+  // The methods below exist so automated (Playwright) tests can build exact
+  // scenarios and advance the simulation deterministically. They are not
+  // part of regular gameplay and should not be called from game code.
+  // ---------------------------------------------------------------------
+
+  // Advance the simulation a fixed number of frames, synchronously and
+  // independently of requestAnimationFrame, then render the result
+  step(frames = 1) {
+    if (!this.player) return;
+    for (let i = 0; i < frames; i++) {
+      if (this.isGameOver) break;
+      this.updateGameState();
+    }
+    if (!this.isGameOver) this.render();
+  }
+
+  // Place the player at an exact pixel position
+  teleportPlayer(x, y) {
+    this.player.setPosition(x, y);
+  }
+
+  // Add a guard at an exact pixel position
+  spawnGuard(x, y, type = "orc1") {
+    const guard = new Guard(x, y, type, this.assets.guardAssets);
+    this.guards.push(guard);
+    return guard;
+  }
+
+  // Jump straight to a given level with a fresh board
+  startAtLevel(levelNumber) {
+    this.currentLevel = levelNumber;
+    this.initializeBoard();
+    this.initializePlayer();
+    this.initializeEntities();
   }
 }
 

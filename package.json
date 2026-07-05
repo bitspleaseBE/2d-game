@@ -4,7 +4,7 @@
   "description": "Cool 2d platform game for bedtime",
   "scripts": {
     "start": "parcel index.html",
-    "build": "parcel build index.html",
+    "build": "parcel build index.html --public-url ./",
     "test": "playwright test"
   },
   "author": "Emiel Masyn",
