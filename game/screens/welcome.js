@@ -61,7 +61,7 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
     welcomeScreen.appendChild(exitButton);
 
     const controlsHint = document.createElement('p');
-    controlsHint.textContent = 'Arrow keys: move · Space: attack · Esc: pause · Watch out for hidden traps!';
+    controlsHint.textContent = 'Arrows: move · Space: sword · X: axe · P: disarm trap · U: potion · Esc: pause';
     controlsHint.style.color = theme.colors.text;
     controlsHint.style.fontFamily = theme.fonts.subtitle;
     controlsHint.style.fontSize = '18px';

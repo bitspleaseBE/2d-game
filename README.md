@@ -16,7 +16,8 @@ Wandertrap is an exciting 2D top-down maze game that challenges players to navig
 - Five distinct, themed levels (forest, desert, snow, dark) with increasing difficulty — all verified solvable by automated tests
 - Sword combat with an attack cooldown, guard hurt/death animations, and a final boss guarding the last exit
 - Hidden explosive traps that arm on approach and damage player and guards alike
-- Four powerups: health, speed, strength, and invincibility (timed effects shown in the HUD)
+- Four powerups — health, speed, strength, invincibility (timed effects shown in the HUD) — plus healing potions you carry between levels
+- Keys and locked doors gate the later exits; hidden traps can be disarmed with a well-timed pick
 - Guards with line-of-sight detection that chase, attack, and sometimes drop powerups
 - Pixel art graphics for a retro gaming feel, plus synthesized sound effects
 - Score tracking with a persistent local high score table
@@ -27,7 +28,12 @@ Wandertrap is an exciting 2D top-down maze game that challenges players to navig
 | --- | --- |
 | Arrow keys | Move (hold for continuous movement) |
 | Space | Sword attack |
+| X | Axe — fells an obstacle in one swing |
+| P | Pick — disarm an armed trap next to you |
+| U | Drink a healing potion |
 | Escape | Pause / back to menu |
+
+On touch devices an on-screen D-pad and action buttons appear automatically.
 
 Embark on this thrilling adventure and see if you can outsmart the Wandertrap!
 

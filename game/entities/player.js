@@ -13,6 +13,8 @@ class Player extends Entity {
   constructor(x, y, assets) {
     super(x, y, 'player', assets);
     this.#health = 100;
+    this.keys = 0; // keys held (opens locked doors on bump)
+    this.potions = 1; // start each run with one healing potion
 
     this.currentFrame = 0;
     this.frameCount = 0;
@@ -165,18 +167,42 @@ class Player extends Entity {
     this.#transientAction("pick");
   }
 
+  // Swings the axe (one-shots obstacles; shares the attack cooldown).
+  // Returns false while cooling down so callers know not to chop.
   axe() {
+    if (!this.canAttack()) return false;
     this.#transientAction("axe");
+    this.#attackCooldown = playerSettings.attackCooldown;
+    return true;
   }
 
+  // Drinks a carried potion. Returns true when one was actually consumed.
   potion() {
+    if (this.potions <= 0 || this.#health >= 100) return false;
+    this.potions--;
+    this.#health = Math.min(100, this.#health + 50);
     this.#transientAction("potion");
+    return true;
+  }
+
+  collectKey() {
+    this.keys++;
+  }
+
+  // Spends a key (when bumping a locked door). Returns true if one was spent.
+  useKey() {
+    if (this.keys <= 0) return false;
+    this.keys--;
+    return true;
   }
 
   applyPowerup(effect) {
     switch (effect) {
       case "health":
         this.#health = Math.min(100, this.#health + 25);
+        break;
+      case "potion":
+        this.potions++;
         break;
       case "speed":
       case "strength":

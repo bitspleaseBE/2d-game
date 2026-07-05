@@ -83,6 +83,16 @@ export const sfx = {
     tone({ type: 'sine', from: 100, to: 30, duration: 0.5, volume: 0.4 });
   },
   guardDown: () => tone({ type: 'sawtooth', from: 200, to: 40, duration: 0.35, volume: 0.3 }),
+  unlock: () => {
+    tone({ type: 'square', from: 500, to: 500, duration: 0.06, volume: 0.2 });
+    tone({ type: 'square', from: 750, to: 750, duration: 0.1, volume: 0.2, delay: 0.08 });
+  },
+  disarm: () => tone({ type: 'sine', from: 900, to: 300, duration: 0.25, volume: 0.2 }),
+  gulp: () => {
+    tone({ type: 'sine', from: 300, to: 150, duration: 0.1, volume: 0.25 });
+    tone({ type: 'sine', from: 350, to: 180, duration: 0.12, volume: 0.25, delay: 0.12 });
+  },
+  chop: () => tone({ type: 'square', from: 120, to: 50, duration: 0.15, volume: 0.3 }),
   levelComplete: () => {
     [523, 659, 784, 1047].forEach((f, i) =>
       tone({ type: 'triangle', from: f, to: f, duration: 0.15, volume: 0.25, delay: i * 0.12 })

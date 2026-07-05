@@ -391,22 +391,13 @@ test('all levels are distinct and solvable', async ({ page }) => {
   const result = await page.evaluate(() => {
     const levels = window.__wandertrap.levelData.levels;
 
-    const solvable = (layout) => {
-      let start, exit;
-      for (let y = 0; y < layout.length; y++) {
-        for (let x = 0; x < layout[y].length; x++) {
-          if (layout[y][x] === 'P') start = [x, y];
-          if (layout[y][x] === 'X') exit = [x, y];
-        }
-      }
-      if (!start || !exit) return false;
-      // Obstacles (O/T) are choppable, so only walls truly block the path
-      const blocked = ['#'];
+    // BFS over the layout. Obstacles (O/T) are choppable, so only walls —
+    // and optionally locked doors — truly block the path.
+    const reachableCells = (layout, start, blocked) => {
       const seen = new Set([start.join()]);
       const queue = [start];
       while (queue.length) {
         const [x, y] = queue.shift();
-        if (x === exit[0] && y === exit[1]) return true;
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const nx = x + dx, ny = y + dy;
           if (ny < 0 || ny >= layout.length || nx < 0 || nx >= layout[ny].length) continue;
@@ -415,7 +406,29 @@ test('all levels are distinct and solvable', async ({ page }) => {
           if (!seen.has(key)) { seen.add(key); queue.push([nx, ny]); }
         }
       }
-      return false;
+      return seen;
+    };
+
+    const solvable = (layout) => {
+      let start, exit;
+      const keys = [];
+      for (let y = 0; y < layout.length; y++) {
+        for (let x = 0; x < layout[y].length; x++) {
+          if (layout[y][x] === 'P') start = [x, y];
+          if (layout[y][x] === 'X') exit = [x, y];
+          if (layout[y][x] === 'K') keys.push([x, y]);
+        }
+      }
+      if (!start || !exit) return false;
+
+      const hasDoors = layout.some((row) => row.includes('D'));
+      // Phase 1: what is reachable with doors still locked?
+      const lockedReach = reachableCells(layout, start, ['#', 'D']);
+      if (!hasDoors) return lockedReach.has(exit.join());
+      // With doors: a key must be reachable before any door...
+      if (!keys.some((k) => lockedReach.has(k.join()))) return false;
+      // ...and the exit reachable once doors can be opened
+      return reachableCells(layout, start, ['#']).has(exit.join());
     };
 
     const serialized = levels.map((level) => JSON.stringify(level.layout));
@@ -431,6 +444,150 @@ test('all levels are distinct and solvable', async ({ page }) => {
   expect(result.allSolvable).toBe(true);
   expect(result.allDistinct).toBe(true); // levels 3-5 used to be identical copies
   expect(new Set(result.themes).size).toBeGreaterThan(1); // themed levels
+});
+
+test('keys open locked doors, which block until then', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.startAtLevel(4); // level 4 has a door at (15,4) => pixel (960, 256)
+    game.guards = [];
+    game.explosives = [];
+
+    const doorsBefore = game.doors.length;
+    const keysOnMap = game.keys.length;
+
+    // Without a key the door blocks like a wall
+    game.teleportPlayer(960, 192); // cell directly above the door
+    for (let i = 0; i < 30; i++) game.movePlayer('down');
+    const blockedY = game.player.getPosition().y;
+
+    // With a key, bumping the door opens it and consumes the key
+    game.player.collectKey();
+    for (let i = 0; i < 30; i++) game.movePlayer('down');
+    const passedY = game.player.getPosition().y;
+
+    return {
+      doorsBefore,
+      keysOnMap,
+      blockedY,
+      passedY,
+      doorsAfter: game.doors.length,
+      keysHeld: game.player.keys,
+    };
+  });
+
+  expect(result.doorsBefore).toBe(1);
+  expect(result.keysOnMap).toBe(1);
+  expect(result.blockedY).toBeLessThan(256); // stopped before the door cell
+  expect(result.passedY).toBeGreaterThan(result.blockedY); // moved through
+  expect(result.doorsAfter).toBe(0); // door opened
+  expect(result.keysHeld).toBe(0); // key consumed
+});
+
+test('the axe destroys an obstacle in one swing but never hurts guards', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    // Level 1 spawn faces a tree at (512, 128); face it and swing the axe
+    game.player.movement = 'right';
+    const obstaclesBefore = game.obstacles.length;
+    game.playerAxe();
+    const obstaclesAfterAxe = game.obstacles.length;
+
+    // The axe must not damage guards
+    game.step(30); // wait out the shared cooldown
+    game.spawnGuard(448 + 64, 128);
+    game.playerAxe();
+    return {
+      obstaclesBefore,
+      obstaclesAfterAxe,
+      guardsAlive: game.guards.filter((g) => !g.isDefeated()).length,
+    };
+  });
+
+  expect(result.obstaclesAfterAxe).toBe(result.obstaclesBefore - 1); // one-shot chop
+  expect(result.guardsAlive).toBe(1); // axe is for wood, not orcs
+});
+
+test('potions are carried and drinking one heals the player', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.explosives = [];
+    const player = game.player;
+
+    const startingPotions = player.potions; // every run starts with one
+    player.takeDamage(60);
+    const healthHurt = player.getHealth();
+    game.step(70); // wait out the hurt invulnerability window
+
+    const drank = game.playerDrinkPotion();
+    const healthHealed = player.getHealth();
+    // A second drink must fail: no potions left
+    game.playerDrinkPotion();
+
+    return {
+      startingPotions,
+      healthHurt,
+      healthHealed,
+      potionsLeft: player.potions,
+    };
+  });
+
+  expect(result.startingPotions).toBe(1);
+  expect(result.healthHurt).toBe(40);
+  expect(result.healthHealed).toBe(90); // +50, capped at 100
+  expect(result.potionsLeft).toBe(0);
+});
+
+test('pick disarms an armed explosive for bonus score', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    // Stand next to the level 1 explosive at (704, 448) so it arms
+    game.teleportPlayer(640, 448);
+    game.step(1);
+    const armed = game.explosives[0].isArmed();
+    const scoreBefore = game.score;
+    game.playerPick();
+    return {
+      armed,
+      explosivesLeft: game.explosives.length,
+      scoreGained: game.score - scoreBefore,
+      health: game.player.getHealth(),
+    };
+  });
+
+  expect(result.armed).toBe(true);
+  expect(result.explosivesLeft).toBe(0); // trap safely removed
+  expect(result.scoreGained).toBe(50); // disarm bonus
+  expect(result.health).toBe(100); // no explosion happened
+});
+
+test('touch controls appear with ?touch=1 and drive the player', async ({ page }) => {
+  await page.goto('/?touch=1');
+  await expect(page.locator('#welcome-screen')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'New Game' }).click();
+  await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
+
+  await expect(page.locator('#touch-controls')).toBeVisible();
+  const before = await gameState(page);
+
+  // Hold the on-screen down button for a moment
+  await page.locator('#touch-btn-down').dispatchEvent('pointerdown');
+  await page.waitForTimeout(300);
+  await page.locator('#touch-btn-down').dispatchEvent('pointerup');
+
+  const after = await gameState(page);
+  expect(after.position.y).toBeGreaterThan(before.position.y + 30); // continuous movement
 });
 
 test('level 5 has a boss guarding the exit', async ({ page }) => {

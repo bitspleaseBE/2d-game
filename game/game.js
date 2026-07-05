@@ -18,6 +18,8 @@ import Guard from "./entities/guard.js";
 import Obstacle from "./entities/obstacle.js";
 import Powerup from "./entities/powerup.js";
 import Exit from "./entities/exit.js";
+import Door from "./entities/door.js";
+import Key from "./entities/key.js";
 
 // Main game logic
 // - Initialize the game board (labyrinth)
@@ -51,6 +53,8 @@ export class Game {
     this.guards = [];
     this.obstacles = [];
     this.powerups = [];
+    this.doors = [];
+    this.keys = [];
     this.playerStart = { x: 0, y: 0 };
     this.onGameOver = callbacks.onGameOver || (() => {});
     this.onLevelCompleted = callbacks.onLevelCompleted || (() => {});
@@ -157,13 +161,13 @@ export class Game {
           this.playerAttack(); // cooldown-gated, safe to fire on repeats
           break;
         case controlSettings.pick:
-          if (!event.repeat) this.player.pick();
+          if (!event.repeat) this.playerPick();
           break;
         case controlSettings.axe:
-          if (!event.repeat) this.player.axe();
+          if (!event.repeat) this.playerAxe();
           break;
         case controlSettings.potion:
-          if (!event.repeat) this.player.potion();
+          if (!event.repeat) this.playerDrinkPotion();
           break;
       }
     });
@@ -201,12 +205,22 @@ export class Game {
       height: hitBox.height,
     };
 
+    // Bumping a locked door with a key in hand opens it
+    const bumpedDoor = this.doors.find((door) =>
+      isColliding(nextHitBox, door.getHitBox())
+    );
+    if (bumpedDoor && this.player.useKey()) {
+      this.doors = this.doors.filter((door) => door !== bumpedDoor);
+      sfx.unlock();
+    }
+
     const blocked =
       next.x < 0 ||
       next.y < 0 ||
       next.x > this.canvas.width - canvasSettings.cellWidth ||
       next.y > this.canvas.height - canvasSettings.cellHeight ||
       this.walls.some((wall) => isColliding(nextHitBox, wall.getHitBox())) ||
+      this.doors.some((door) => isColliding(nextHitBox, door.getHitBox())) ||
       this.obstacles.some((obstacle) =>
         isColliding(nextHitBox, obstacle.getHitBox())
       );
@@ -265,17 +279,50 @@ export class Game {
     if (hitSomething) sfx.hit();
   }
 
+  // Axe swing: instantly destroys obstacles in front (but never hurts guards)
+  playerAxe() {
+    if (!this.player.axe()) return;
+    const attackBox = this.player.getAttackBox();
+    const before = this.obstacles.length;
+    this.obstacles = this.obstacles.filter(
+      (obstacle) => !isColliding(attackBox, obstacle.getHitBox())
+    );
+    if (this.obstacles.length < before) sfx.chop();
+  }
+
+  // Pick: disarm a revealed (armed) explosive the player is standing near
+  playerPick() {
+    this.player.pick();
+    const playerBox = this.player.getHitBox();
+    const px = playerBox.x + playerBox.width / 2;
+    const py = playerBox.y + playerBox.height / 2;
+    const index = this.explosives.findIndex((explosive) => {
+      if (!explosive.isArmed()) return false;
+      const center = explosive.getCenter();
+      return Math.hypot(px - center.x, py - center.y) <= canvasSettings.cellWidth * 1.25;
+    });
+    if (index === -1) return;
+    this.explosives.splice(index, 1);
+    this.score += gameSettings.disarmScore;
+    sfx.disarm();
+  }
+
+  playerDrinkPotion() {
+    if (this.player.potion()) sfx.gulp();
+  }
+
   #onGuardDefeated(guard) {
     this.score += guard.isBoss ? gameSettings.bossScore : gameSettings.scoreIncrement;
     sfx.guardDown();
     // Defeated guards sometimes drop a powerup where they fell
     if (random() < gameSettings.guardDropChance) {
       const position = guard.getPosition();
+      const dropTypes = [...POWERUP_TYPES, "potion"];
       this.powerups.push(
         new Powerup(
           position.x,
           position.y,
-          POWERUP_TYPES[randomInt(0, POWERUP_TYPES.length - 1)],
+          dropTypes[randomInt(0, dropTypes.length - 1)],
           this.assets.powerupsAssets
         )
       );
@@ -290,6 +337,8 @@ export class Game {
       this.guards = [];
       this.obstacles = [];
       this.powerups = [];
+      this.doors = [];
+      this.keys = [];
 
       for (let y = 0; y < level.layout.length; y++) {
         for (let x = 0; x < level.layout[y].length; x++) {
@@ -302,6 +351,12 @@ export class Game {
           switch (cell) {
             case "E":
               this.explosives.push(new Explosive(position.x, position.y));
+              break;
+            case "D":
+              this.doors.push(new Door(position.x, position.y));
+              break;
+            case "K":
+              this.keys.push(new Key(position.x, position.y));
               break;
             case "G": {
               const randomOrc = randomInt(1, 3);
@@ -341,11 +396,13 @@ export class Game {
     this.checkPlayerDeath();
     if (this.isGameOver) return;
     this.player.update();
-    this.guards.forEach((guard) => guard.update(this.player.getHitBox(), this.walls));
+    const guardBlockers = [...this.walls, ...this.doors];
+    this.guards.forEach((guard) => guard.update(this.player.getHitBox(), guardBlockers));
     // Remove corpses whose death animation has finished
     this.guards = this.guards.filter((guard) => !guard.isReadyToRemove());
     this.obstacles.forEach((obstacle) => obstacle.update());
     this.powerups.forEach((powerup) => powerup.update());
+    this.keys.forEach((key) => key.update());
     if (this.controlsHintTimer > 0) this.controlsHintTimer--;
     this.checkLevelCompletion();
   }
@@ -408,6 +465,16 @@ export class Game {
     if (this.player.getHealth() < healthBefore) sfx.hurt();
 
     const pickupRange = this.player.getPickupRange();
+    this.keys = this.keys.filter((key) => {
+      if (!isColliding(pickupRange, key.getHitBox())) return true;
+      if (key.collect()) {
+        this.player.collectKey();
+        this.score += gameSettings.powerupScore;
+        sfx.pickup();
+      }
+      return false;
+    });
+
     this.powerups = this.powerups.filter((powerup) => {
       if (!isColliding(pickupRange, powerup.getHitBox())) return true;
       const effect = powerup.collect();
@@ -428,9 +495,11 @@ export class Game {
 
     const nextLevel = levelData.getLevel(this.currentLevel + 1);
     if (nextLevel) {
+      const carriedPotions = this.player.potions; // keys stay behind, potions travel
       this.currentLevel += 1;
       this.initializeBoard();
       this.initializePlayer();
+      this.player.potions = carriedPotions;
       this.initializeEntities();
       this.pause();
       this.onLevelCompleted(this.score);
@@ -461,6 +530,8 @@ export class Game {
     // Draw the entities
     this.obstacles.forEach((obstacle) => obstacle.draw(this.context));
     this.powerups.forEach((powerup) => powerup.draw(this.context));
+    this.doors.forEach((door) => door.draw(this.context));
+    this.keys.forEach((key) => key.draw(this.context));
     this.guards.forEach((guard) => guard.draw(this.context));
     this.explosives.forEach((explosive) => explosive.draw(this.context));
 
@@ -519,16 +590,25 @@ export class Game {
       effectX += 62;
     }
 
+    // Inventory (keys and potions), top-right
+    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.fillRect(this.canvas.width - 168, 8, 160, 40);
+    ctx.font = "bold 18px monospace";
+    ctx.fillStyle = "#ffd54f";
+    ctx.fillText(`Keys:${this.player.keys}`, this.canvas.width - 158, 28);
+    ctx.fillStyle = "#ef9a9a";
+    ctx.fillText(`Pot:${this.player.potions}`, this.canvas.width - 78, 28);
+
     // Controls hint, shown briefly at the start of each level
     if (this.controlsHintTimer > 0) {
       const alpha = Math.min(1, this.controlsHintTimer / 60);
       ctx.globalAlpha = alpha;
       ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.fillRect(8, this.canvas.height - 40, 560, 32);
+      ctx.fillRect(8, this.canvas.height - 40, 700, 32);
       ctx.fillStyle = "#fff";
       ctx.font = "16px monospace";
       ctx.fillText(
-        "Arrows: move   Space: attack   Esc: menu — reach the glowing ruin!",
+        "Arrows move · Space attack · X axe · P disarm trap · U potion · Esc menu",
         16,
         this.canvas.height - 24
       );

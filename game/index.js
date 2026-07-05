@@ -5,6 +5,7 @@ import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.j
 import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
 import { setSeed } from './utils/rng.js';
+import { createTouchControls, shouldShowTouchControls } from './utils/touch.js';
 
 // Entry point of the game
 // - Initialize the game engine
@@ -16,6 +17,7 @@ import { setSeed } from './utils/rng.js';
 class GameEngine {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
+        this.container.style.position = 'relative';
         this.canvas = document.createElement('canvas');
         this.context = this.canvas.getContext('2d');
         this.canvas.width = canvasSettings.width;
@@ -113,6 +115,7 @@ class GameEngine {
                 } else {
                     this.game.continue();
                 }
+                this.attachTouchControls();
                 break;
             case 'gameOver':
                 this.game.pause();
@@ -131,6 +134,14 @@ class GameEngine {
             default:
                 console.error('Unknown screen:', screen);
         }
+    }
+
+    attachTouchControls() {
+        if (!shouldShowTouchControls()) return;
+        if (!this.touchControls) {
+            this.touchControls = createTouchControls(this.game);
+        }
+        this.container.appendChild(this.touchControls);
     }
 
     story() {

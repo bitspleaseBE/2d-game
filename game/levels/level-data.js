@@ -101,7 +101,9 @@ levelData.addLevel(new Level(
     'sand'
 ));
 
-// Level 4 — frozen halls: tighter corridors, more guards, more traps
+// Level 4 — frozen halls: tighter corridors, more guards, more traps.
+// The exit pocket is behind a locked door; the key lies in the guarded
+// south-west corner.
 levelData.addLevel(new Level(
     4,
     'hard',
@@ -110,29 +112,30 @@ levelData.addLevel(new Level(
         '#P  #      E   G  ##',
         '###   #C#####E### ##',
         '# # # #  G C#O#   ##',
-        '# # # ##  # # # ####',
+        '# # # ##  # # #D####',
         '#   # #   # # #   ##',
         '#E ## # # # # ##OC##',
-        '#G    # #G    #  X##',
+        '#GK   # #G    #  X##',
         '####################',
         '####################',
     ],
     'snow'
 ));
 
-// Level 5 — the dark heart of the labyrinth: the exit is guarded by the boss
+// Level 5 — the dark heart of the labyrinth: the boss corridor sits behind
+// a locked door (key in the south corridor), and the boss guards the exit
 levelData.addLevel(new Level(
     5,
     'expert',
     [
         '####################',
-        '#P  # C #     #  G##',
+        '#P  # C #     #D G##',
         '### # # # ### #B#C##',
         '#     # #  E#G#X# ##',
         '#  ####C### # ### ##',
         '#        G E#   # ##',
         '# ### ######### # ##',
-        '#GE    C          ##',
+        '#GE K  C          ##',
         '####################',
         '####################',
     ],

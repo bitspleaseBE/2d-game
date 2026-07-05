@@ -25,7 +25,8 @@ export const playerSettings = {
 export const gameSettings = {
     initialLevel: 1, // Initial level of the game
     scoreIncrement: 100, // Points for defeating a guard
-    powerupScore: 50, // Points for collecting a powerup
+    powerupScore: 50, // Points for collecting a powerup or key
+    disarmScore: 50, // Points for disarming an armed explosive trap
     bossScore: 500, // Points for defeating the boss
     levelBonus: 100, // Level-completion bonus, multiplied by the level number
     guardDropChance: 0.4, // Chance a defeated guard drops a powerup

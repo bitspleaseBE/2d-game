@@ -31,11 +31,22 @@ This document provides an overview of the entities in "Wandertrap" and the lette
     - **Speed** (blue): +60% movement speed for ~8 seconds.
     - **Strength** (green): double attack damage for ~8 seconds.
     - **Invincibility** (yellow): blocks all damage for ~8 seconds (golden aura).
+    - **Potion** (flask, dropped by guards): adds a potion to the inventory instead of an instant effect.
   - Active timed effects are shown in the HUD with seconds remaining.
 
 - **Explosive (E)**
   - A hidden trap. Invisible until the player comes within 1.5 cells, then it reveals itself and arms: the fuse burns for ~1.5 seconds with an accelerating red warning flash.
   - On detonation it damages everything in the blast radius — 30 to the player, 100 to guards (enough to kill a regular guard). Traps can be used tactically against pursuers.
+  - An armed trap can be defused: stand next to it and press **P** (pick) to disarm it for +50 points — if you're quick enough.
+
+- **Key (K)**
+  - A golden key collected on touch (+50 points).
+  - Spent automatically when the player bumps into a locked door.
+
+- **Door (D)**
+  - Blocks movement like a wall until the player bumps into it while carrying a key (the key is consumed and the door swings open).
+  - Guards cannot pass locked doors either.
+  - Appears on levels 4 and 5, gating the exit area.
 
 - **Wall (#)**
   - Cannot be destroyed by the player.
@@ -64,6 +75,13 @@ Levels are 20×10 grids declared in `game/levels/level-data.js`; rows can be wri
 
 An automated test BFS-checks every level for solvability and asserts that no two levels share a layout.
 
-## Planned / not yet implemented
+## Player actions
 
-- **Key (K)** — doors and keys are not in the game yet; `pick` (p), `axe` (x) and `potion` (u) currently only play their animations.
+- **Sword (Space)** — damages guards and chops obstacles (2 hits), cooldown-gated.
+- **Axe (X)** — destroys an obstacle in a single swing (shares the sword cooldown) but never hurts guards.
+- **Pick (P)** — disarms an armed explosive trap the player is standing next to (+50 points).
+- **Potion (U)** — drinks a carried potion, restoring 50 health. Every run starts with one potion; more drop from guards. Potions carry over between levels; keys do not.
+
+## Touch controls
+
+On touch devices (or with `?touch=1` in the URL) an on-screen D-pad and action buttons (ATK / AXE / POT / PICK) overlay the game, driving the same input paths as the keyboard.

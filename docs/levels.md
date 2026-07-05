@@ -2,7 +2,7 @@
 
 This document provides an overview of the five levels in "Wandertrap," including their theme, the entities present, and a brief story for each.
 
-Layout legend: `#` wall · `P` player spawn · `X` exit · `G` guard · `B` boss · `E` hidden explosive trap · `C` powerup crystal · `O` boulder · `T` tree
+Layout legend: `#` wall · `P` player spawn · `X` exit · `G` guard · `B` boss · `E` hidden explosive trap · `C` powerup crystal · `K` key · `D` locked door · `O` boulder · `T` tree
 
 ## Level 1: Easy — Forest clearing
 
@@ -38,24 +38,24 @@ Player, walls, a tree, a boulder, 3 guards, 3 powerups, 2 explosive traps, exit 
 
 ### Story
 
-Snow blankets the fourth level. The corridors tighten, four guards patrol the halls, and three traps lie buried in the ice. Every wrong turn costs time and health; the powerup crystals along the way are the difference between freezing and escaping.
+Snow blankets the fourth level. The corridors tighten, four guards patrol the halls, and three traps lie buried in the ice. For the first time the exit pocket is sealed behind a locked door — the key lies in the guarded south-west corner, so escaping means crossing the whole maze twice.
 
 ### Entities
 
-Player, walls, 2 boulders, 4 guards, 3 powerups, 3 explosive traps, exit (snow ruin).
+Player, walls, 2 boulders, 4 guards, 3 powerups, 3 explosive traps, 1 key, 1 locked door, exit (snow ruin).
 
 ## Level 5: Expert — The dark heart
 
 ### Story
 
-The final level. In the labyrinth's darkest depths, the exit is guarded by the labyrinth's most formidable guardian — a hulking boss with triple health, heavier blows, and a longer reach for spotting intruders. Theo must fight his way past four guards, dodge three traps, and bring the guardian down (or lure it onto a trap...) to escape the Wandertrap.
+The final level. In the labyrinth's darkest depths, the boss corridor is sealed behind a locked door whose key lies in the southern passage. Beyond the door waits the labyrinth's most formidable guardian — a hulking boss with triple health, heavier blows, and a longer reach for spotting intruders. Theo must fight his way past four guards, dodge three traps, claim the key, and bring the guardian down (or lure it onto a trap...) to escape the Wandertrap.
 
 ### Entities
 
-Player, walls, 4 guards, 1 boss, 4 powerups, 3 explosive traps, exit.
+Player, walls, 4 guards, 1 boss, 4 powerups, 3 explosive traps, 1 key, 1 locked door, exit.
 
 ## Design notes
 
 - Levels are declared in `game/levels/level-data.js`; rows can be written as plain strings for readability.
-- Every level is BFS-verified solvable by an automated test (`all levels are distinct and solvable`), which also asserts no two levels share a layout.
+- Every level is BFS-verified solvable by an automated test (`all levels are distinct and solvable`), which also asserts no two levels share a layout and that any key is reachable before its door.
 - Each level has a `theme` (`forest`, `sand`, `snow`, `dark`) that controls the background palette, the exit ruin sprite, and the tree sprite.
