@@ -4,7 +4,6 @@ import { canvasSettings } from "../utils/settings.js";
 class Player extends Entity {
   #health;
   #speed;
-  #blockedDirections;
   #isHurt = false;
   #hurtInterval = null;
 
@@ -15,12 +14,6 @@ class Player extends Entity {
     this.explosives = [];
     this.keys = [];
     this.powerups = [];
-    this.#blockedDirections = {
-      left: false,
-      right: false,
-      up: false,
-      down: false
-    };
 
     this.currentFrame = 0;
     this.frameCount = 0;
@@ -54,120 +47,61 @@ class Player extends Entity {
     };
   }
 
-  collide(entity) {
-    if (this.action === "walk" && entity.type === "wall") {
-      console.log("Colliding", this.action, entity.getPosition());
-      this.action = "idle";
-      
-      // Determine which direction is blocked
-      const entityPos = entity.getPosition();
-      const playerPos = this.getPosition();
-      
-      if (entityPos.x < playerPos.x) {
-        this.#blockedDirections.left = true;
-      } else if (entityPos.x > playerPos.x) {
-        this.#blockedDirections.right = true;
-      }
-      
-      if (entityPos.y < playerPos.y) {
-        this.#blockedDirections.up = true;
-      } else if (entityPos.y > playerPos.y) {
-        this.#blockedDirections.down = true;
-      }
-      console.log("blocked directions", this.#blockedDirections);
-    }
-    else if (entity.type === "guard") {
-      this.#health -= entity.damage;
-    //   this.hurtAnimation();
-      console.log("Player health:", this.#health);
-    }
+  getHealth() {
+    return this.#health;
   }
 
-  canMove(direction) {
-    return !this.#blockedDirections[direction];
+  takeDamage(amount) {
+    // Ignore hits during the invulnerability window after being hurt
+    if (this.#isHurt || this.#health <= 0) return;
+    this.#health -= amount;
+    this.hurtAnimation();
+  }
+
+  respawn(x, y) {
+    this._position = { x, y };
+    this.#health = 100;
+    this.#isHurt = false;
+    if (this.#hurtInterval) {
+      clearInterval(this.#hurtInterval);
+      this.#hurtInterval = null;
+    }
+    this.visible = true;
+    this.action = "idle";
+    this.movement = "down";
   }
 
   moveLeft() {
-    if (this.canMove('left')) {
-      this._position.x -= this.#speed;
-      this.action = "walk";
-      this.movement = "left";
-      this.#blockedDirections.right = false;
-      this.#blockedDirections.up = false;
-      this.#blockedDirections.down = false;
-    }
+    this._position.x -= this.#speed;
+    this.action = "walk";
+    this.movement = "left";
   }
 
   moveRight() {
-    if (this.canMove('right')) {
-      this._position.x += this.#speed;
-      this.action = "walk";
-      this.movement = "right";
-      this.#blockedDirections.left = false;
-      this.#blockedDirections.up = false;
-      this.#blockedDirections.down = false;
-    }
+    this._position.x += this.#speed;
+    this.action = "walk";
+    this.movement = "right";
   }
 
   moveUp() {
-    if (this.canMove('up')) {
-      this._position.y -= this.#speed;
-      this.action = "walk";
-      this.movement = "up";
-      this.#blockedDirections.down = false;
-      this.#blockedDirections.left = false;
-      this.#blockedDirections.right = false;
-    }
+    this._position.y -= this.#speed;
+    this.action = "walk";
+    this.movement = "up";
   }
 
   moveDown() {
-    if (this.canMove('down')) {
-      this._position.y += this.#speed;
-      this.action = "walk";
-      this.movement = "down";
-      this.#blockedDirections.up = false;
-      this.#blockedDirections.left = false;
-      this.#blockedDirections.right = false;
-    }
+    this._position.y += this.#speed;
+    this.action = "walk";
+    this.movement = "down";
   }
 
   attack() {
     this.action = "attack";
     // Implement attack logic here
-    console.log("Attacking");
   }
 
   pick() {
     this.action = "pick";
-    // Implement pick logic here
-    console.log("Picking");
-    // Determine which object we are trying to pick based on player's position and direction
-    const pickRange = 32; // Assuming a pick range of 32 pixels (half a cell)
-    let pickPosition = { x: this._position.x, y: this._position.y };
-
-    // Adjust pick position based on player's movement direction
-    switch (this.movement) {
-      case "left":
-        pickPosition.x -= pickRange;
-        break;
-      case "right":
-        pickPosition.x += pickRange;
-        break;
-      case "up":
-        pickPosition.y -= pickRange;
-        break;
-      case "down":
-        pickPosition.y += pickRange;
-        break;
-    }
-
-    // Check for pickable objects at the determined position
-    // This part would typically interact with the game's entity management system
-    // For now, we'll just log the position where we're trying to pick
-    console.log(
-      `Attempting to pick at position: (${pickPosition.x}, ${pickPosition.y})`
-    );
-
     // TODO: Implement actual object detection and picking logic
     // This would involve checking for collisions with pickable entities
     // and handling the pickup if a valid object is found
@@ -176,13 +110,11 @@ class Player extends Entity {
   axe() {
     this.action = "axe";
     // Implement axe logic here
-    console.log("Axe");
   }
 
   potion() {
     this.action = "potion";
     // Implement potion logic here
-    console.log("Potion");
   }
 
   collectExplosive(explosive) {
@@ -195,12 +127,16 @@ class Player extends Entity {
 
   collectPowerup(powerup) {
     this.powerups.push(powerup);
-    // Implement powerup effect here
-    console.log(`Collected powerup: ${powerup}`);
+  }
+
+  applyPowerup(effect) {
+    this.powerups.push(effect);
+    if (effect === "health") {
+      this.#health = Math.min(100, this.#health + 25);
+    }
   }
 
   update() {
-    // Don't reset blocked directions here
     this.frameCount++;
     if (this.frameCount >= 10) {
       // Adjust frame rate as needed
@@ -260,7 +196,8 @@ class Player extends Entity {
       flickerCount++;
 
       if (flickerCount >= maxFlickers) {
-        clearInterval(this.#isHurt);
+        clearInterval(this.#hurtInterval);
+        this.#hurtInterval = null;
         this.#isHurt = false;
         this.visible = true; // Ensure player is visible after flickering
       }
@@ -390,8 +327,6 @@ class Player extends Entity {
         }
         break;
     }
-
-    console.log("drawing player", this.action, spriteX, spriteY);
 
     spriteX = this.currentFrame * spriteWidth;
 

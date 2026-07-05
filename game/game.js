@@ -24,7 +24,7 @@ import Exit from "./entities/exit.js";
 // - Render the game board and entities (player, obstacles, powerups, guards)
 
 export class Game {
-  constructor(containerId, canvas, context, assets) {
+  constructor(containerId, canvas, context, assets, callbacks = {}) {
     this.container = document.getElementById(containerId);
     this.canvas = canvas;
     this.context = context;
@@ -38,17 +38,25 @@ export class Game {
     this.currentLevel = gameSettings.initialLevel;
     this.isGameOver = false;
     this.started = false;
+    this.paused = false;
     this.assets = assets;
     this.explosives = [];
     this.guards = [];
     this.obstacles = [];
     this.powerups = [];
+    this.playerStart = { x: 0, y: 0 };
+    this.onGameOver = callbacks.onGameOver || (() => {});
+    this.onLevelCompleted = callbacks.onLevelCompleted || (() => {});
+    this.onGameWon = callbacks.onGameWon || (() => {});
+    this.rafId = null;
+    this.inputSetup = false;
   }
 
   initializeBoard() {
     const level = levelData.getLevel(this.currentLevel);
     if (level) {
       this.walls = [];
+      this.exit = null;
       this.board = level.layout;
       for (let y = 0; y < level.layout.length; y++) {
         for (let x = 0; x < level.layout[y].length; x++) {
@@ -80,9 +88,13 @@ export class Game {
       for (let y = 0; y < level.layout.length; y++) {
         for (let x = 0; x < level.layout[y].length; x++) {
           if (level.layout[y][x] === "P") {
+            this.playerStart = {
+              x: x * canvasSettings.cellWidth,
+              y: y * canvasSettings.cellHeight,
+            };
             this.player = new Player(
-              x * canvasSettings.cellWidth,
-              y * canvasSettings.cellHeight,
+              this.playerStart.x,
+              this.playerStart.y,
               this.assets.playerAssets
             );
             this.setupInput();
@@ -94,6 +106,11 @@ export class Game {
   }
 
   setupInput() {
+    // Only register the listener once; initializePlayer runs again on every
+    // level change and would otherwise stack duplicate handlers
+    if (this.inputSetup) return;
+    this.inputSetup = true;
+
     let actionTimeout;
 
     const debounceAction = (callback, delay) => {
@@ -107,21 +124,19 @@ export class Game {
     };
 
     window.addEventListener("keydown", (event) => {
+      if (!this.started || this.paused || this.isGameOver) return;
       switch (event.key) {
         case controlSettings.up:
-          debounceAction(() => this.player.moveUp(), 1000)();
+          debounceAction(() => this.movePlayer("up"), 1000)();
           break;
         case controlSettings.down:
-          debounceAction(() => this.player.moveDown(), 1000)();
+          debounceAction(() => this.movePlayer("down"), 1000)();
           break;
         case controlSettings.left:
-          debounceAction(() => this.player.moveLeft(), 1000)();
+          debounceAction(() => this.movePlayer("left"), 1000)();
           break;
         case controlSettings.right:
-          debounceAction(() => this.player.moveRight(), 1000)();
-          break;
-        case controlSettings.jump:
-          debounceAction(() => this.player.jump(), 1000)();
+          debounceAction(() => this.movePlayer("right"), 1000)();
           break;
         case controlSettings.attack:
           debounceAction(() => this.player.attack(), 250)();
@@ -137,6 +152,47 @@ export class Game {
           break;
       }
     });
+  }
+
+  movePlayer(direction) {
+    const next = this.player.checkCollision(direction);
+    const hitBox = this.player.getHitBox();
+    const current = this.player.getPosition();
+    const nextHitBox = {
+      x: next.x + (hitBox.x - current.x),
+      y: next.y + (hitBox.y - current.y),
+      width: hitBox.width,
+      height: hitBox.height,
+    };
+
+    const blocked =
+      next.x < 0 ||
+      next.y < 0 ||
+      next.x > this.canvas.width - canvasSettings.cellWidth ||
+      next.y > this.canvas.height - canvasSettings.cellHeight ||
+      this.walls.some((wall) => isColliding(nextHitBox, wall.getHitBox()));
+
+    if (blocked) {
+      // Face the direction anyway so the player can turn in place
+      this.player.movement = direction;
+      this.player.action = "idle";
+      return;
+    }
+
+    switch (direction) {
+      case "up":
+        this.player.moveUp();
+        break;
+      case "down":
+        this.player.moveDown();
+        break;
+      case "left":
+        this.player.moveLeft();
+        break;
+      case "right":
+        this.player.moveRight();
+        break;
+    }
   }
 
   initializeEntities() {
@@ -164,7 +220,6 @@ export class Game {
               break;
             case "G":
               const randomOrc = Math.floor(Math.random() * 3) + 1;
-              console.log(`orc${randomOrc}`);
               this.guards.push(new Guard(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets));
               break;
             case "O":
@@ -190,7 +245,9 @@ export class Game {
   }
 
   updateGameState() {
-    this.checkCollisions(); // Move this before player update
+    this.checkCollisions();
+    this.checkPlayerDeath();
+    if (this.isGameOver) return;
     this.player.update();
     this.explosives.forEach((explosive) => explosive.update());
     this.guards.forEach((guard) => guard.update(this.player.getHitBox(), this.walls));
@@ -199,33 +256,23 @@ export class Game {
     this.checkLevelCompletion();
   }
 
+  checkPlayerDeath() {
+    if (this.player.getHealth() > 0) return;
+    this.lives -= 1;
+    if (this.lives <= 0) {
+      this.isGameOver = true;
+      this.started = false;
+      this.onGameOver(this.score);
+      return;
+    }
+    this.player.respawn(this.playerStart.x, this.playerStart.y);
+  }
+
   checkCollisions() {
     const playerPosition = this.player.getHitBox();
 
-    // Check collisions for each direction
-    ['left', 'right', 'up', 'down'].forEach(direction => {
-      const nextPosition = this.player.checkCollision(this.movement);
-      const willCollide = this.walls.some(wall => 
-        isColliding({
-          ...playerPosition,
-          x: nextPosition.x + playerPosition.width * 0.25,
-          y: nextPosition.y + playerPosition.height * 0.25
-        }, wall.getHitBox())
-      );
-      if (willCollide) {
-        this.player.collide({ type: "wall", getPosition: () => nextPosition });
-      }
-    });
-
-    this.walls.forEach((wall) => {
-      if (isColliding(playerPosition, wall.getHitBox())) {
-        console.log("colliding with wall");
-        this.player.collide(wall);
-      }
-    });
-
     this.explosives.forEach((explosive, index) => {
-      if (isColliding(playerPosition, explosive.getPosition())) {
+      if (isColliding(playerPosition, explosive.getHitBox())) {
         if (explosive.isActive()) {
           // Handle player damage
         } else if (!explosive.isHidden()) {
@@ -235,41 +282,52 @@ export class Game {
       }
     });
 
-    this.guards.forEach((guard, index) => {
-      if (isColliding(playerPosition, guard.getPosition())) {
-        // Handle player-guard interaction
-        this.player.collide(guard);
+    this.guards.forEach((guard) => {
+      if (isColliding(playerPosition, guard.getHitBox())) {
+        this.player.takeDamage(guard.damage);
       }
     });
 
     this.obstacles.forEach((obstacle, index) => {
-      if (isColliding(playerPosition, obstacle.getPosition())) {
+      if (isColliding(playerPosition, obstacle.getHitBox())) {
         // Handle player-obstacle interaction
       }
     });
 
     this.powerups.forEach((powerup, index) => {
-      if (isColliding(this.player.getPickupRange(), powerup.getPosition())) {
+      if (isColliding(this.player.getPickupRange(), powerup.getHitBox())) {
         const effect = powerup.collect();
         this.player.applyPowerup(effect);
         this.powerups.splice(index, 1);
+        this.score += gameSettings.scoreIncrement;
       }
     });
   }
 
   checkLevelCompletion() {
-    // Handle level completion (transition to next level or game over)
-    if (this.isLevelComplete()) {
+    if (!this.isLevelComplete()) return;
+
+    this.score += gameSettings.scoreIncrement;
+
+    const nextLevel = levelData.getLevel(this.currentLevel + 1);
+    if (nextLevel) {
       this.currentLevel += 1;
       this.initializeBoard();
       this.initializePlayer();
       this.initializeEntities();
+      this.pause();
+      this.onLevelCompleted(this.score);
+    } else {
+      // Last level cleared: the player won the game
+      this.isGameOver = true;
+      this.started = false;
+      this.onGameWon(this.score);
     }
   }
 
   isLevelComplete() {
-    // Game ends when player reaches the exit
-    return isColliding(this.player.getHitBox(), this.exit.getHitBox());
+    // A level is complete when the player reaches the exit
+    return this.exit && isColliding(this.player.getHitBox(), this.exit.getHitBox());
   }
 
   render() {
@@ -297,7 +355,40 @@ export class Game {
     // Draw the player
     this.player.draw(this.context);
 
-    
+    // Draw the HUD on top of everything
+    this.drawHUD();
+  }
+
+  drawHUD() {
+    const ctx = this.context;
+    ctx.save();
+
+    // Background strip
+    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.fillRect(8, 8, 300, 40);
+
+    ctx.font = "bold 18px monospace";
+    ctx.textBaseline = "middle";
+
+    // Score
+    ctx.fillStyle = "#ffd54f";
+    ctx.fillText(`Score: ${this.score}`, 18, 28);
+
+    // Lives
+    ctx.fillStyle = "#ff5252";
+    ctx.fillText(`${"♥".repeat(Math.max(0, this.lives))}`, 160, 28);
+
+    // Health bar
+    const health = Math.max(0, this.player.getHealth());
+    ctx.fillStyle = "#444";
+    ctx.fillRect(226, 20, 70, 14);
+    ctx.fillStyle = health > 30 ? "#4caf50" : "#c62828";
+    ctx.fillRect(226, 20, (health / 100) * 70, 14);
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(226, 20, 70, 14);
+
+    ctx.restore();
   }
 
   drawGrid() {
@@ -337,14 +428,30 @@ export class Game {
 
   gameLoop() {
     // Main game loop
-    if (this.isGameOver) return;
+    if (this.isGameOver || this.paused) return;
     this.updateGameState();
+    if (this.isGameOver || this.paused) return;
     this.render();
-    requestAnimationFrame(this.gameLoop.bind(this));
+    this.rafId = requestAnimationFrame(this.gameLoop.bind(this));
+  }
+
+  pause() {
+    this.paused = true;
+    if (this.rafId) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
   }
 
   start() {
+    // Fresh run: reset all progress
     this.started = true;
+    this.paused = false;
+    this.isGameOver = false;
+    this.lives = playerSettings.initialLives;
+    this.score = 0;
+    this.currentLevel = gameSettings.initialLevel;
+    if (this.rafId) cancelAnimationFrame(this.rafId);
     clearContainer(this.container);
     this.container.appendChild(this.canvas);
     this.initializeBoard();
@@ -355,8 +462,11 @@ export class Game {
 
   continue() {
     this.started = true;
+    this.paused = false;
     clearContainer(this.container);
     this.container.appendChild(this.canvas);
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+    this.gameLoop();
   }
 }
 

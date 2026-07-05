@@ -9,11 +9,9 @@
 function loadImage(src, onProgress) {
   return new Promise((resolve, reject) => {
     try {
-      console.log("Loading image:", src);
       const img = new Image();
       img.src = src;
       img.onload = () => {
-        console.log("Image loaded:", src);
         onProgress(src, img);
         resolve(img);
       };

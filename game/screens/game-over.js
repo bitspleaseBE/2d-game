@@ -18,7 +18,7 @@ export function showGameOverScreen(finalScore, onTryAgain, onMainMenu) {
     gameOverScreen.appendChild(title);
 
     const message = document.createElement('p');
-    message.textContent = 'Oops! Looks like you hit a wall. Better luck next time!';
+    message.textContent = 'Theo ran out of lives. Better luck next time!';
     gameOverScreen.appendChild(message);
 
     const scoreDisplay = document.createElement('p');

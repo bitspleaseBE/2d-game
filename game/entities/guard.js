@@ -86,7 +86,6 @@ class Guard extends Entity {
 
     const willCollideWithPlayer = isColliding(nextPosition, target);
     if (willCollideWithPlayer) {
-      console.log("Attacking player");
       // Determine guard's facing direction based on target position
       if (Math.abs(dx) > Math.abs(dy)) {
         this.movement = dx > 0 ? "right" : "left";
@@ -96,11 +95,9 @@ class Guard extends Entity {
       this.attack();
 
     } else if (!willCollideWithWalls) {
-      console.log("Moving towards player");
       this._position = nextPosition;
       this.walk();
     } else {
-      console.log("Idle");
       this.idle();
     }
   }
