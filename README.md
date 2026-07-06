@@ -1,6 +1,6 @@
 # Wandertrap
 
-Welcome to "Wandertrap," a 2D platform game where you navigate through a labyrinth filled with puzzles, traps, and mythical creatures.
+Welcome to "Wandertrap," a 2D top-down maze game where you navigate through a labyrinth filled with traps, powerups, and mythical creatures.
 
 *Help Theo the Wizard navigate through the Wandertrap and find the exit in each level*
 
@@ -8,16 +8,32 @@ Welcome to "Wandertrap," a 2D platform game where you navigate through a labyrin
 
 ## Overview
 
-Wandertrap is an exciting 2D platform game that challenges players to navigate through intricate labyrinths filled with puzzles, traps, and mythical creatures. As you progress through the levels, you'll encounter various obstacles, collect power-ups, and face off against cunning guards. Your goal is to find the exit in each level while maximizing your score and preserving your lives.
+Wandertrap is an exciting 2D top-down maze game that challenges players to navigate through intricate labyrinths filled with puzzles, traps, and mythical creatures. As you progress through the levels, you'll encounter various obstacles, collect power-ups, and face off against cunning guards. Your goal is to find the exit in each level while maximizing your score and preserving your lives.
 
 ### Key Features
 
-- Engaging 2D platformer gameplay
-- Multiple levels with increasing difficulty
-- Various entities including player, guards, explosives, and power-ups
-- Pixel art graphics for a retro gaming feel
-- Score tracking and high score system
-- Responsive controls for smooth navigation
+- Engaging top-down maze gameplay with smooth, frame-based movement (diagonals included)
+- Five distinct, themed levels (forest, desert, snow, dark) with increasing difficulty — all verified solvable by automated tests
+- Sword combat with an attack cooldown, guard hurt/death animations, and a final boss guarding the last exit
+- Hidden explosive traps that arm on approach and damage player and guards alike
+- Four powerups — health, speed, strength, invincibility (timed effects shown in the HUD) — plus healing potions you carry between levels
+- Keys and locked doors gate the later exits; hidden traps can be disarmed with a well-timed pick
+- Guards with line-of-sight detection that chase, attack, and sometimes drop powerups
+- Pixel art graphics for a retro gaming feel, plus synthesized sound effects
+- Score tracking with a persistent local high score table
+
+### Controls
+
+| Key | Action |
+| --- | --- |
+| Arrow keys | Move (hold for continuous movement) |
+| Space | Sword attack |
+| X | Axe — fells an obstacle in one swing |
+| P | Pick — disarm an armed trap next to you |
+| U | Drink a healing potion |
+| Escape | Pause / back to menu |
+
+On touch devices an on-screen D-pad and action buttons appear automatically.
 
 Embark on this thrilling adventure and see if you can outsmart the Wandertrap!
 

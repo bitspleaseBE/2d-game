@@ -1,4 +1,5 @@
 import { theme, applyContainerStyles, styleButton } from '../utils/theme.js';
+import { appendScoreEntry } from './score-entry.js';
 
 // Game Over screen
 // - Display "Game Over" message
@@ -24,6 +25,8 @@ export function showGameOverScreen(finalScore, onTryAgain, onMainMenu) {
     const scoreDisplay = document.createElement('p');
     scoreDisplay.textContent = `Your Score: ${finalScore}`;
     gameOverScreen.appendChild(scoreDisplay);
+
+    appendScoreEntry(gameOverScreen, finalScore);
 
     const tryAgainButton = document.createElement('button');
     tryAgainButton.textContent = 'Try Again';

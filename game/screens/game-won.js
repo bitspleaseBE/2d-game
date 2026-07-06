@@ -1,4 +1,5 @@
 import { theme, applyContainerStyles, styleButton } from '../utils/theme.js';
+import { appendScoreEntry } from './score-entry.js';
 
 // Game Won screen
 // - Shown when the player clears the final level
@@ -22,6 +23,8 @@ export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu) {
     const scoreDisplay = document.createElement('p');
     scoreDisplay.textContent = `Final Score: ${finalScore}`;
     gameWonScreen.appendChild(scoreDisplay);
+
+    appendScoreEntry(gameWonScreen, finalScore);
 
     const playAgainButton = document.createElement('button');
     playAgainButton.textContent = 'Play Again';
