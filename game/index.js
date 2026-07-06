@@ -1,5 +1,5 @@
 import { Game } from './game.js';
-import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, } from './assets.js';
+import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, loadItemAssets, } from './assets.js';
 import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.js';
 import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
@@ -37,7 +37,7 @@ class GameEngine {
     async initialize() {
         try {
             console.log('Initializing game...');
-            const totalAssets = 34;
+            const totalAssets = 51;
             let loadedAssets = 0;
 
             const onProgress = (src, img) => {
@@ -50,8 +50,9 @@ class GameEngine {
             const levelAssets = await loadLevelAssets(onProgress);
             const guardAssets = await loadGuardAssets(onProgress);
             const powerupsAssets = await loadPowerUpsAssets(onProgress);
+            const itemAssets = await loadItemAssets(onProgress);
 
-            this.assets = { playerAssets, levelAssets, guardAssets, powerupsAssets };
+            this.assets = { playerAssets, levelAssets, guardAssets, powerupsAssets, itemAssets };
             this.game = new Game(this.container.id, this.canvas, this.context, this.assets, {
                 onGameOver: () => this.showScreen('gameOver'),
                 onLevelCompleted: () => this.showScreen('levelCompleted'),

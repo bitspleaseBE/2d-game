@@ -1,7 +1,17 @@
 // Level data
 // - Define the structure of each level (layout of the labyrinth)
 // - Specify positions of obstacles, powerups, explosives, guards
-// - Include metadata (level number, difficulty, etc.)
+// - Include metadata (level number, difficulty, name)
+//
+// Layout legend:
+//   '#' wall          ' ' floor         'P' player spawn   'X' exit
+//   'T' tree (solid, choppable)         'O' boulder (solid, choppable)
+//   'G' guard         'B' boss          'C' crystal        'E' explosive
+//   'D' locked door (a defeated guard drops the key)
+//
+// Every layout is 10 rows of exactly 20 characters. Trees and boulders can
+// be chopped down (2 hits), so they make soft walls: a shortcut for players
+// willing to stop and swing, a detour for those who keep running.
 
 class LevelData {
     constructor() {
@@ -18,104 +28,170 @@ class LevelData {
 }
 
 class Level {
-    constructor(number, difficulty, layout, theme) {
+    constructor(number, difficulty, layout, name, options = {}) {
         this.number = number;
         this.difficulty = difficulty;
         this.layout = layout;
-        this.theme = theme;
+        this.name = name;
+        // With fog of war on, only explored parts of the map are visible
+        this.fogOfWar = Boolean(options.fogOfWar);
     }
 }
 
-// Example usage:
+// Rows are written as strings for readability and converted to the
+// character arrays the game consumes
+const parse = (rows) => rows.map((row) => row.split(''));
+
 const levelData = new LevelData();
 
-// Add levels
+// 1. The Glade — tutorial: a small maze inside a forest clearing. One tree
+// blocks a corridor (teaches chopping), one boulder guards a dead end.
+levelData.addLevel(new Level(1, 'easy', parse([
+    'TTTTTTTTTTTTTTTTTTTT',
+    'T##################T',
+    'T#  G #PT     C   #T',
+    'T# ## #   ####### #T',
+    'T#    #O#  C # ## #T',
+    'T# ## # ##   #    #T',
+    'T#  # #    #   ## #T',
+    'T# ##   ##G# X ## #T',
+    'T#    E #      T  #T',
+    'TTTTTTTTTTTTTTTTTTTT',
+]), 'The Glade'));
 
-levelData.addLevel(new Level(
-    1,
-    'easy',
-    [
-        ['T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T'],
-        ['T', 'T', 'T', 'T', 'T', 'T', '#', '#', '#', '#', '#', '#', '#', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
-        ['T', 'T', 'T', 'T', 'T', 'T', '#', 'P', 'T', ' ', ' ', ' ', ' ', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
-        ['T', 'T', 'T', 'T', 'T', 'T', '#', ' ', '#', '#', '#', ' ', ' ', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
-        ['T', 'T', 'T', 'T', 'T', 'T', '#', 'O', '#', 'X', '#', ' ', 'C', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
-        ['T', 'T', 'T', 'T', 'T', 'T', '#', ' ', '#', ' ', ' ', ' ', ' ', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
-        ['T', 'T', 'T', 'T', 'T', 'T', '#', '#', '#', ' ', '#', ' ', 'G', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
-        ['T', 'T', 'T', 'T', 'T', 'T', '#', ' ', 'C', 'G', ' ', 'E', ' ', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
-        ['T', 'T', 'T', 'T', 'T', 'T', '#', '#', '#', '#', '#', '#', '#', '#', 'T', 'T', 'T', 'T', 'T', 'T'],
-        ['T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T', 'T']
-    ]
-));
+// 2. The Gatehouse — first locked door: defeat a guard to find the key
+levelData.addLevel(new Level(2, 'easy', parse([
+    '####################',
+    '#P  #G  #####      #',
+    '# # # #   #   #### #',
+    '#     # # ## #     #',
+    '#########    #D#####',
+    '#X G    ######     #',
+    '# # ###    #G##### #',
+    '#     ###    #   # #',
+    '#   #     ##   #   #',
+    '####################',
+]), 'The Gatehouse'));
 
+// 3. The Orchard — rows of trees form choppable gates between corridors:
+// chop straight through or walk around via the side openings
+levelData.addLevel(new Level(3, 'medium', parse([
+    '####################',
+    '#P  TT   C  TT    C#',
+    '#   TT      TT     #',
+    '##T####T######T##T##',
+    '#   G     E    G   #',
+    '#C  TT      TT     #',
+    '##T####T######T# ###',
+    '#   G     C  G     #',
+    '#  TTT      TT    X#',
+    '####################',
+]), 'The Orchard'));
 
-levelData.addLevel(new Level(
-    2,
-    'easy',
-    [
-        ['#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#'],
-        ['#', 'P', ' ', ' ', '#', 'G', ' ', ' ', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' ', '#'],
-        ['#', ' ', '#', ' ', '#', ' ', '#', ' ', ' ', ' ', '#', ' ', ' ', ' ', '#', '#', '#', '#', ' ', '#'],
-        ['#', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', ' ', '#', '#', ' ', '#', ' ', ' ', ' ', ' ', ' ', '#'],
-        ['#', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', '#', ' ', '#', '#', '#', '#', '#'],
-        ['#', 'X', ' ', 'G', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', '#'],
-        ['#', ' ', '#', ' ', '#', '#', '#', ' ', ' ', ' ', ' ', '#', 'G', '#', '#', '#', '#', '#', ' ', '#'],
-        ['#', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', '#', ' ', '#'],
-        ['#', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', '#', '#', ' ', ' ', ' ', '#', ' ', ' ', ' ', '#'],
-        ['#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#', '#']
-    ]
-));
+// 4. The Quarry — boulders plug the wall gaps: every shortcut costs two
+// swings of the axe, every detour risks a patrol
+levelData.addLevel(new Level(4, 'medium', parse([
+    '####################',
+    '#P   #  C  O  G   C#',
+    '#    O     #       #',
+    '## ###### ####O### #',
+    '#  G   #     C   G #',
+    '#    O #  E #      #',
+    '# #### ##O### ###O##',
+    '#  C      #     G  #',
+    '#    G    O   C   X#',
+    '####################',
+]), 'The Quarry'));
 
+// 5. The Warden — the first boss guards the open eastern arena. It is slow:
+// keep moving, land a swing, and step away before it closes in.
+levelData.addLevel(new Level(5, 'medium', parse([
+    '####################',
+    '#P #  C    #      C#',
+    '#  # ## ## #  ### ##',
+    '# G#  #  # #       #',
+    '#  ## # ###    B   #',
+    '#     #            #',
+    '# ###### ###   ### #',
+    '# C #  G   #       #',
+    '#   #      ##  X   #',
+    '####################',
+]), 'The Warden'));
 
-levelData.addLevel(new Level(
-    3,
-    'medium',
-    [
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'P', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', '#', '#', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', ' ', '#', ' ', 'C', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'E', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', ' ', '#', ' ', 'G', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', 'C', 'G', ' ', 'E', ' ', 'X', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-    ]
-));
+// 6. Twin Halls — two halls behind two locked doors: the guards of each
+// hall carry the key to the next
+levelData.addLevel(new Level(6, 'hard', parse([
+    '####################',
+    '#P   #  G   #  C  G#',
+    '#  C #      #      #',
+    '# G  #  E   #  ##  #',
+    '#    D      D  ## X#',
+    '#  ###      #      #',
+    '#    #  C   #   G  #',
+    '# ## #      # ###  #',
+    '#  G #   G  #  C   #',
+    '####################',
+]), 'Twin Halls'));
 
-levelData.addLevel(new Level(
-    4,
-    'hard',
-    [
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'P', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', '#', '#', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', ' ', '#', ' ', 'C', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'E', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', ' ', '#', ' ', 'G', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', 'C', 'G', ' ', 'E', ' ', 'X', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-    ]
-));
+// 7. The Serpent — one long winding corridor walked in the dark: fog of
+// war hides what waits beyond the next bend. Gates of trees and boulders
+// plug the wall gaps.
+levelData.addLevel(new Level(7, 'hard', parse([
+    '####################',
+    '#P  C      G      G#',
+    '################## #',
+    '#    G     C      T#',
+    '#T##################',
+    '# G     E     C    #',
+    '##################O#',
+    '#  G     C    G    #',
+    '#X                T#',
+    '####################',
+]), 'The Serpent', { fogOfWar: true }));
 
-levelData.addLevel(new Level(
-    5,
-    'expert',
-    [
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'P', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', '#', '#', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', '#', ' ', '#', ' ', 'C', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', 'E', ' ', ' ', ' ', ' ', ' ', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', ' ', '#', ' ', 'G', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', ' ', 'C', 'G', ' ', 'E', ' ', 'X', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', '#', '#', '#', '#', '#', '#', '#', '#', ' ', ' ', ' ', ' ', ' ', ' '],
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-    ]
-));
+// 8. The Crossroads — four guarded quadrants around a central plaza where
+// a boss patrols the loot
+levelData.addLevel(new Level(8, 'hard', parse([
+    '####################',
+    '#P   #   C  #     G#',
+    '#  G #      #  C   #',
+    '#### ## ## ## # ####',
+    '#      G           #',
+    '#  C     B      E  #',
+    '#### ## ## ## # ####',
+    '#  G #      #   G  #',
+    '#    # C    #    X #',
+    '####################',
+]), 'The Crossroads'));
+
+// 9. The Gauntlet — four chambers in a row, each sealed by a locked door;
+// every chamber's guards carry the next key
+levelData.addLevel(new Level(9, 'expert', parse([
+    '####################',
+    '#P  #C  G#   G# C  #',
+    '#   #    #    #    #',
+    '# G D  G D  E D  G #',
+    '#   #    #    #    #',
+    '## ## ## # ## ## ###',
+    '#C  #  G #  G #   G#',
+    '#   #    #    #  ###',
+    '# G #  C #  C #  X##',
+    '####################',
+]), 'The Gauntlet', { fogOfWar: true }));
+
+// 10. The Throne — the final boss waits in an inner sanctum behind a locked
+// door, with the exit at its back. Sneak past it or bring it down for glory.
+levelData.addLevel(new Level(10, 'expert', parse([
+    '####################',
+    '#P   #     C    G  #',
+    '# G  # ##########  #',
+    '#    # #      X##  #',
+    '## # # #  B    ## C#',
+    '#  # # #       ##  #',
+    '#  #   ####D##### G#',
+    '#E ## G    C     ###',
+    '#C     ##     G   T#',
+    '####################',
+]), 'The Throne', { fogOfWar: true }));
 
 export default levelData;

@@ -16,7 +16,7 @@ class Obstacle extends Entity {
     super(x, y, type, assets);
     this.#health = 100;
     if (type === "boulder") {
-      this._sprite = assets.rock;
+      this._sprite = assets.boulder;
     } else if (type === "tree") {
       const randomTree = randomInt(1, 2);
       this._sprite = assets[`palm${randomTree}`];

@@ -1,43 +1,63 @@
 import Entity from "./entity.js";
-import { canvasSettings, entitySettings } from "../utils/settings.js";
+import { canvasSettings, entitySettings, combatSettings, bossSettings } from "../utils/settings.js";
 import { isColliding } from "../utils/game.js";
 import { randomInt } from "../utils/rng.js";
-
-// Guard entity class
-// - Represents the guards in the game
-// - Can move towards the player
-// - Can detect the player's position
-// - Can attack the player
-// - Can be defeated by the player
-// - Can drop powerups when defeated
-// - Can drop explosives when defeated
-// - Can drop keys when defeated
-// - Can drop keys when defeated
+import Animator from "./animator.js";
+import { guardSpriteManifest } from "../assets/sprite-manifest.js";
 
 class Guard extends Entity {
   #speed;
   #detectionRange;
-  #currentSprite;
   #health;
+  #maxHealth;
+  #currentSprite;
+  #defeatAwarded = false;
+  // Time the health bar stays visible after the last hit
+  #healthBarMs = 0;
+  // Active knockback push: direction vector plus remaining duration
+  #knockback = null;
 
-  constructor(x, y, type, assets) {
+  #isBoss;
+
+  constructor(x, y, type, assets, { boss = false } = {}) {
     super(
       x,
       y,
       type,
       assets,
-      entitySettings.enemyWidth,
-      entitySettings.enemyHeight
+      boss ? bossSettings.width : entitySettings.enemyWidth,
+      boss ? bossSettings.height : entitySettings.enemyHeight
     );
-    this.action = "idle";
+    this.#isBoss = boss;
+    this.animator = new Animator(guardSpriteManifest);
     this.movement = ["down", "up", "left", "right"][randomInt(0, 3)];
-    this.damage = 10;
-    this.#health = 100;
-    this.#speed = 1;
-    this.#detectionRange = 5 * canvasSettings.cellWidth;
+    this.animator.setDirection(this.movement);
+    this.action = "idle";
+    this.damage = boss ? bossSettings.damage : 10;
+    this.#maxHealth = boss ? bossSettings.health : 100;
+    this.#health = this.#maxHealth;
+    this.#speed = boss ? bossSettings.speed : 60; // pixels per second
+    this.#detectionRange = (boss ? bossSettings.detectionRangeCells : 5) * canvasSettings.cellWidth;
     this.#currentSprite = this._sprites.idle;
-    this.frameCount = 0;
     this.currentFrame = 0;
+  }
+
+  isBoss() {
+    return this.#isBoss;
+  }
+
+  // The sprite frame has generous transparent padding, so contact damage
+  // uses a tighter box that matches the visible body instead of the full
+  // drawn rectangle
+  getHitBox() {
+    const insetX = this._width * 0.2;
+    const insetY = this._height * 0.2;
+    return {
+      x: this._position.x + insetX,
+      y: this._position.y + insetY,
+      width: this._width - insetX * 2,
+      height: this._height - insetY * 2,
+    };
   }
 
   selectSprites(assets) {
@@ -53,31 +73,64 @@ class Guard extends Entity {
     };
   }
 
-  moveTowards(target, walls) {
+  #setSpriteForAction(action) {
+    switch (action) {
+      case "attack":
+        this.#currentSprite = this._sprites.attack;
+        break;
+      case "dead":
+        this.#currentSprite = this._sprites.death;
+        break;
+      case "hurt":
+        this.#currentSprite = this._sprites.hurt;
+        break;
+      case "walk":
+        this.#currentSprite = this._sprites.walk;
+        break;
+      case "idle":
+      default:
+        this.#currentSprite = this._sprites.idle;
+        break;
+    }
+  }
+
+  #syncAnimationState() {
+    this.action = this.animator.state;
+    this.currentFrame = this.animator.frame;
+    this.#setSpriteForAction(this.action);
+  }
+
+  moveTowards(target, walls, deltaMs = 1000 / 60) {
+    if (this.isDefeated()) return;
+
     const dx = target.x - this._position.x;
     const dy = target.y - this._position.y;
 
-    // Determine primary direction
     if (Math.abs(dx) > Math.abs(dy)) {
       this.movement = dx > 0 ? "right" : "left";
     } else {
       this.movement = dy > 0 ? "down" : "up";
     }
+    this.animator.setDirection(this.movement);
 
-    // Check if movement is possible (not blocked by a wall)
-    const nextPosition = { ...this._position, width: canvasSettings.cellWidth / 2, height: canvasSettings.cellHeight / 2 };
+    const distance = this.#speed * (deltaMs / 1000);
+    const nextPosition = {
+      ...this._position,
+      width: canvasSettings.cellWidth / 2,
+      height: canvasSettings.cellHeight / 2
+    };
     switch (this.movement) {
       case "up":
-        nextPosition.y -= this.#speed;
+        nextPosition.y -= distance;
         break;
       case "down":
-        nextPosition.y += this.#speed;
+        nextPosition.y += distance;
         break;
       case "left":
-        nextPosition.x -= this.#speed;
+        nextPosition.x -= distance;
         break;
       case "right":
-        nextPosition.x += this.#speed;
+        nextPosition.x += distance;
         break;
     }
 
@@ -87,16 +140,9 @@ class Guard extends Entity {
 
     const willCollideWithPlayer = isColliding(nextPosition, target);
     if (willCollideWithPlayer) {
-      // Determine guard's facing direction based on target position
-      if (Math.abs(dx) > Math.abs(dy)) {
-        this.movement = dx > 0 ? "right" : "left";
-      } else {
-        this.movement = dy > 0 ? "down" : "up";
-      }
       this.attack();
-
     } else if (!willCollideWithWalls) {
-      this._position = nextPosition;
+      this._position = { x: nextPosition.x, y: nextPosition.y };
       this.walk();
     } else {
       this.idle();
@@ -104,12 +150,12 @@ class Guard extends Entity {
   }
 
   detectPlayer(playerPosition, walls) {
+    if (this.isDefeated()) return false;
     const dx = playerPosition.x - this._position.x;
     const dy = playerPosition.y - this._position.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
     if (distance <= this.#detectionRange) {
-      // Check if there's a clear line of sight
       const step = {
         x: dx / distance,
         y: dy / distance,
@@ -122,128 +168,180 @@ class Guard extends Entity {
       };
       for (let i = 0; i < distance; i += canvasSettings.cellWidth / 2) {
         checkPosition.x += step.x * (canvasSettings.cellWidth / 2);
-        checkPosition.y += step.y * (canvasSettings.cellWidth / 2);
+        checkPosition.y += step.y * (canvasSettings.cellHeight / 2);
 
-        if (
-          walls.some((wall) => isColliding(checkPosition, wall.getHitBox()))
-        ) {
-          return false; // Wall blocking the line of sight
+        if (walls.some((wall) => isColliding(checkPosition, wall.getHitBox()))) {
+          return false;
         }
       }
-      return true; // Clear line of sight to the player
+      return true;
     }
-    return false; // Player out of detection range
+    return false;
   }
 
   idle() {
-    this.action = "idle";
-    this.#currentSprite = this._sprites.idle;
+    this.animator.setState("idle");
+    this.#syncAnimationState();
   }
 
   walk() {
-    this.action = "walk";
-    this.#currentSprite = this._sprites.walk;
+    this.animator.setState("walk");
+    this.#syncAnimationState();
   }
 
   attack() {
-    this.action = "attack";
-    this.#currentSprite = this._sprites.attack;
+    this.animator.play("attack", { restart: true, direction: this.movement });
+    this.#syncAnimationState();
   }
 
   hurt() {
-    this.action = "hurt";
-    this.#currentSprite = this._sprites.hurt;
+    this.animator.play("hurt", { restart: true, direction: this.movement });
+    this.#syncAnimationState();
   }
 
-  // Apply damage from the player. Returns true when the guard is defeated.
-  takeDamage(amount) {
+  // Apply damage from the player. `fromDirection` is the direction the
+  // player was facing, so the guard is knocked back away from the swing.
+  takeDamage(amount, fromDirection = null) {
     if (this.#health <= 0) return false;
-    this.#health -= amount;
+    this.#health = Math.max(0, this.#health - amount);
+    this.#healthBarMs = combatSettings.healthBarVisibleMs;
     if (this.#health <= 0) {
       this.defeat();
       return true;
     }
+    // Bosses are too heavy to be pushed around
+    if (fromDirection && !this.#isBoss) {
+      const push = {
+        up: { x: 0, y: -1 },
+        down: { x: 0, y: 1 },
+        left: { x: -1, y: 0 },
+        right: { x: 1, y: 0 },
+      }[fromDirection];
+      if (push) this.#knockback = { ...push, msLeft: combatSettings.knockbackDurationMs };
+    }
     this.hurt();
     return false;
+  }
+
+  getHealth() {
+    return this.#health;
+  }
+
+  getMaxHealth() {
+    return this.#maxHealth;
+  }
+
+  isHealthBarVisible() {
+    // A boss always shows its health bar, so the danger (and progress
+    // against it) is visible before the first hit lands
+    return !this.isDefeated() && (this.#isBoss || this.#healthBarMs > 0);
   }
 
   isDefeated() {
     return this.#health <= 0;
   }
 
+  consumeDefeatAward() {
+    if (!this.isDefeated() || this.#defeatAwarded) return false;
+    this.#defeatAwarded = true;
+    return true;
+  }
+
+  isReadyToRemove() {
+    return this.isDefeated() && this.animator.isComplete("dead");
+  }
+
   defeat() {
-    this.action = "dead";
-    this.#currentSprite = this._sprites.death;
-    // Return dropped items (powerups, explosives, keys)
+    this.#health = 0;
+    this.animator.play("dead", { restart: true, direction: this.movement });
+    this.#syncAnimationState();
   }
 
   lookAround() {
-    this.action = "idle";
-    this.#currentSprite = this._sprites.idle;
     const directions = ['up', 'right', 'down', 'left'];
     const currentIndex = directions.indexOf(this.movement);
-    if (currentIndex !== -1) {
-      this.movement = directions[(currentIndex + 1) % 4];
-    } else {
-      this.movement = 'up';
-    }
+    this.movement = currentIndex !== -1
+      ? directions[(currentIndex + 1) % 4]
+      : 'up';
+    this.animator.setDirection(this.movement);
+    this.idle();
   }
 
-  update(playerPosition, walls) {
-    const frames_per_action = 4;
-    const frames_per_look =  60*3; // Look around every 60 frames (about 1 second at 60 FPS)
-    const max_frame_count = this.action === 'idle' ? 60*3 : 20; 
-    this.frameCount++;
-    if (this.frameCount >= max_frame_count) {
-      this.frameCount = 0;
-      this.currentFrame = (this.currentFrame + 1) % frames_per_action;
+  update(playerPosition, walls, deltaMs = 1000 / 60) {
+    this.animator.update(deltaMs);
+    this.#syncAnimationState();
+    this.#healthBarMs = Math.max(0, this.#healthBarMs - deltaMs);
+
+    if (this.isDefeated()) return;
+
+    // A knockback push overrides normal movement while it lasts
+    if (this.#knockback) {
+      this.#applyKnockback(walls, deltaMs);
+      return;
     }
 
     if (this.detectPlayer(playerPosition, walls)) {
-      this.moveTowards(playerPosition, walls);
+      this.moveTowards(playerPosition, walls, deltaMs);
     } else {
-      if (this.frameCount % frames_per_look === 0) {
-        this.lookAround();
-      } else {
-        this.idle();
-      }
+      this.idle();
     }
   }
 
-  draw(ctx) {
-    let spriteHeight = 64;
-    let spriteWidth = 64;
-    let spriteX = this.currentFrame * spriteWidth;
-    let spriteY = 0;
-
-    // Determine spriteY based on movement direction
-    switch (this.movement) {
-      case "down":
-        spriteY = 0 * spriteHeight;
-        break;
-     case "up":
-        spriteY = 1 * spriteHeight;
-        break;
-      case "left":
-        spriteY = 2 * spriteHeight;
-        break;
-      case "right":
-        spriteY = 3 * spriteHeight;
-        break;
-      
+  #applyKnockback(walls, deltaMs) {
+    const distance = combatSettings.knockbackSpeed * (deltaMs / 1000);
+    const nextPosition = {
+      x: this._position.x + this.#knockback.x * distance,
+      y: this._position.y + this.#knockback.y * distance,
+      width: canvasSettings.cellWidth / 2,
+      height: canvasSettings.cellHeight / 2,
+    };
+    const blocked = walls.some((wall) => isColliding(nextPosition, wall.getHitBox()));
+    if (!blocked) {
+      this._position = { x: nextPosition.x, y: nextPosition.y };
     }
+    this.#knockback.msLeft -= deltaMs;
+    if (this.#knockback.msLeft <= 0 || blocked) this.#knockback = null;
+  }
+
+  draw(ctx) {
+    const frame = this.animator.getFrame(this.movement);
 
     ctx.drawImage(
-        this.#currentSprite,
-        spriteX,
-        spriteY,
-        spriteWidth,
-        spriteHeight,
-        this._position.x - 10,
-        this._position.y - 10,
-        this._width,
-        this._height
-      );
+      this.#currentSprite,
+      frame.sourceX,
+      frame.sourceY,
+      frame.frameWidth,
+      frame.frameHeight,
+      this._position.x - 10,
+      this._position.y - 10,
+      this._width,
+      this._height
+    );
+
+    this.#drawHealthBar(ctx);
+  }
+
+  // Small health bar above the guard, visible for a few seconds after a hit.
+  // A boss bar is wider and permanently visible.
+  #drawHealthBar(ctx) {
+    if (!this.isHealthBarVisible()) return;
+
+    const barWidth = this.#isBoss ? 96 : 48;
+    const barHeight = this.#isBoss ? 8 : 6;
+    const barX = this._position.x + (this._width - barWidth) / 2 - 10;
+    const barY = this._position.y - 20;
+    const ratio = this.#health / this.#maxHealth;
+
+    ctx.save();
+    // Fade out during the last second on screen (boss bars never fade)
+    ctx.globalAlpha = this.#isBoss ? 1 : Math.min(1, this.#healthBarMs / 1000);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+    ctx.fillStyle = "#555";
+    ctx.fillRect(barX, barY, barWidth, barHeight);
+    ctx.fillStyle = ratio > 0.5 ? "#4caf50" : ratio > 0.25 ? "#ff9800" : "#c62828";
+    ctx.fillRect(barX, barY, barWidth * ratio, barHeight);
+    ctx.restore();
   }
 }
 

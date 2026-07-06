@@ -617,7 +617,7 @@ class GameEngine {
     async initialize() {
         try {
             console.log("Initializing game...");
-            const totalAssets = 34;
+            const totalAssets = 51;
             let loadedAssets = 0;
             const onProgress = (src, img)=>{
                 loadedAssets++;
@@ -628,11 +628,13 @@ class GameEngine {
             const levelAssets = await (0, _assetsJs.loadLevelAssets)(onProgress);
             const guardAssets = await (0, _assetsJs.loadGuardAssets)(onProgress);
             const powerupsAssets = await (0, _assetsJs.loadPowerUpsAssets)(onProgress);
+            const itemAssets = await (0, _assetsJs.loadItemAssets)(onProgress);
             this.assets = {
                 playerAssets,
                 levelAssets,
                 guardAssets,
-                powerupsAssets
+                powerupsAssets,
+                itemAssets
             };
             this.game = new (0, _gameJs.Game)(this.container.id, this.canvas, this.context, this.assets, {
                 onGameOver: ()=>this.showScreen("gameOver"),
@@ -757,6 +759,11 @@ var _powerupJs = require("./entities/powerup.js");
 var _powerupJsDefault = parcelHelpers.interopDefault(_powerupJs);
 var _exitJs = require("./entities/exit.js");
 var _exitJsDefault = parcelHelpers.interopDefault(_exitJs);
+var _dropJs = require("./entities/drop.js");
+var _dropJsDefault = parcelHelpers.interopDefault(_dropJs);
+var _doorJs = require("./entities/door.js");
+var _doorJsDefault = parcelHelpers.interopDefault(_doorJs);
+var _itemsJs = require("./items.js");
 class Game {
     constructor(containerId, canvas, context, assets, callbacks = {}){
         this.container = document.getElementById(containerId);
@@ -782,20 +789,44 @@ class Game {
             x: 0,
             y: 0
         };
+        this.notifications = [];
+        this.drops = [];
+        this.doors = [];
+        this.inventoryOpen = false;
+        this.mouse = {
+            x: 0,
+            y: 0
+        };
+        this.inventorySlotRects = [];
         this.onGameOver = callbacks.onGameOver || (()=>{});
         this.onLevelCompleted = callbacks.onLevelCompleted || (()=>{});
         this.onGameWon = callbacks.onGameWon || (()=>{});
         this.rafId = null;
         this.inputSetup = false;
+        this.pressedDirections = new Set();
+        this.lastFrameTime = null;
+        this.pendingGameOverMs = null;
+        // Remaining time before the player may swing again
+        this.attackCooldownMs = 0;
+        // Fog of war (per-level option): explored[row][col] persists until the
+        // next level; the fog canvas is an offscreen buffer composited per frame
+        this.fogEnabled = false;
+        this.explored = [];
+        this.fogCanvas = null;
     }
     initializeBoard() {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
         if (level) {
             this.walls = [];
+            this.doors = [];
             this.exit = null;
             this.board = level.layout;
+            this.fogEnabled = level.fogOfWar;
+            this.explored = level.layout.map((row)=>row.map(()=>false));
+            if (this.fogEnabled) this.notify("Fog of war \u2014 explore to reveal the map!");
             for(let y = 0; y < level.layout.length; y++)for(let x = 0; x < level.layout[y].length; x++){
                 if (level.layout[y][x] === "#") this.walls.push(new (0, _wallJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, "normal", this.assets.levelAssets));
+                if (level.layout[y][x] === "D") this.doors.push(new (0, _doorJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, this.assets.itemAssets));
                 if (level.layout[y][x] === "X") this.exit = new (0, _exitJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, this.assets.levelAssets);
             }
         }
@@ -808,7 +839,18 @@ class Game {
                     x: x * (0, _settingsJs.canvasSettings).cellWidth,
                     y: y * (0, _settingsJs.canvasSettings).cellHeight
                 };
+                const previousPlayer = this.player;
                 this.player = new (0, _playerJsDefault.default)(this.playerStart.x, this.playerStart.y, this.assets.playerAssets);
+                // The pack and equipped gear travel with the player from level
+                // to level; a fresh run starts empty (start() clears the player)
+                if (previousPlayer) {
+                    this.player.inventory = {
+                        ...previousPlayer.inventory
+                    };
+                    this.player.equipment = {
+                        ...previousPlayer.equipment
+                    };
+                }
                 this.setupInput();
                 return;
             }
@@ -824,28 +866,41 @@ class Game {
             return ()=>{
                 clearTimeout(actionTimeout);
                 actionTimeout = setTimeout(()=>{
-                    this.player.action = "idle";
+                    this.player.setWalking(false);
                 }, delay);
                 callback();
             };
+        };
+        const directionForKey = (key)=>{
+            switch(key){
+                case (0, _settingsJs.controlSettings).up:
+                    return "up";
+                case (0, _settingsJs.controlSettings).down:
+                    return "down";
+                case (0, _settingsJs.controlSettings).left:
+                    return "left";
+                case (0, _settingsJs.controlSettings).right:
+                    return "right";
+                default:
+                    return null;
+            }
         };
         window.addEventListener("keydown", (event)=>{
             if (!this.started || this.paused || this.isGameOver) return;
             // Stop the space bar (and arrow keys) from scrolling the page
             if (event.key === " " || event.key.startsWith("Arrow")) event.preventDefault();
+            if (event.key === (0, _settingsJs.controlSettings).inventory) {
+                this.toggleInventory();
+                return;
+            }
+            // The world is frozen while the inventory is open
+            if (this.inventoryOpen) return;
+            const direction = directionForKey(event.key);
+            if (direction) {
+                this.pressedDirections.add(direction);
+                return;
+            }
             switch(event.key){
-                case (0, _settingsJs.controlSettings).up:
-                    debounceAction(()=>this.movePlayer("up"), 1000)();
-                    break;
-                case (0, _settingsJs.controlSettings).down:
-                    debounceAction(()=>this.movePlayer("down"), 1000)();
-                    break;
-                case (0, _settingsJs.controlSettings).left:
-                    debounceAction(()=>this.movePlayer("left"), 1000)();
-                    break;
-                case (0, _settingsJs.controlSettings).right:
-                    debounceAction(()=>this.movePlayer("right"), 1000)();
-                    break;
                 case (0, _settingsJs.controlSettings).attack:
                     debounceAction(()=>this.playerAttack(), 250)();
                     break;
@@ -853,16 +908,65 @@ class Game {
                     debounceAction(()=>this.player.pick(), 150)();
                     break;
                 case (0, _settingsJs.controlSettings).axe:
-                    debounceAction(()=>this.player.axe(), 150)();
+                    debounceAction(()=>this.playerAxe(), 250)();
                     break;
                 case (0, _settingsJs.controlSettings).potion:
-                    debounceAction(()=>this.player.potion(), 500)();
+                    debounceAction(()=>this.playerDrinkPotion(), 500)();
                     break;
             }
         });
+        window.addEventListener("keyup", (event)=>{
+            const direction = directionForKey(event.key);
+            if (direction) this.pressedDirections.delete(direction);
+        });
+        // Mouse support for the inventory screen (hover = tooltip, click = use)
+        this.canvas.addEventListener("mousemove", (event)=>{
+            const rect = this.canvas.getBoundingClientRect();
+            this.mouse = {
+                x: (event.clientX - rect.left) * (this.canvas.width / rect.width),
+                y: (event.clientY - rect.top) * (this.canvas.height / rect.height)
+            };
+        });
+        this.canvas.addEventListener("click", ()=>{
+            if (!this.inventoryOpen) return;
+            const slot = this.inventorySlotRects.find((r)=>this.mouse.x >= r.x && this.mouse.x <= r.x + r.size && this.mouse.y >= r.y && this.mouse.y <= r.y + r.size);
+            if (slot && slot.itemId) this.activateInventoryItem(slot.itemId);
+        });
     }
-    movePlayer(direction) {
-        const next = this.player.checkCollision(direction);
+    toggleInventory() {
+        if (!this.started || this.paused || this.isGameOver) return;
+        this.inventoryOpen = !this.inventoryOpen;
+        this.pressedDirections.clear();
+    }
+    // Click on an inventory slot: equip/unequip gear, drink potions
+    activateInventoryItem(itemId) {
+        const item = (0, _itemsJs.itemCatalog)[itemId];
+        if (item.kind === "weapon" || item.kind === "rune") {
+            const result = this.player.equip(itemId);
+            if (result === "equipped") this.notify(`${item.name} equipped`);
+            if (result === "unequipped") this.notify(`${item.name} unequipped`);
+        } else if (item.kind === "potion") this.playerDrinkPotion();
+    }
+    playerDrinkPotion() {
+        if (this.player.useItem("potion")) {
+            this.player.potion(); // drink animation
+            this.notify(`You drank a Health Potion (+${(0, _itemsJs.itemCatalog).potion.healAmount} health)`);
+        } else this.notifyOnce("You have no potions \u2014 defeated guards sometimes drop them.");
+    }
+    getMovementVector() {
+        const x = (this.pressedDirections.has("right") ? 1 : 0) - (this.pressedDirections.has("left") ? 1 : 0);
+        const y = (this.pressedDirections.has("down") ? 1 : 0) - (this.pressedDirections.has("up") ? 1 : 0);
+        if (x === 0 && y === 0) return {
+            x: 0,
+            y: 0
+        };
+        const length = Math.hypot(x, y);
+        return {
+            x: x / length,
+            y: y / length
+        };
+    }
+    canPlayerMoveTo(next) {
         const hitBox = this.player.getHitBox();
         const current = this.player.getPosition();
         const nextHitBox = {
@@ -871,43 +975,103 @@ class Game {
             width: hitBox.width,
             height: hitBox.height
         };
-        const blocked = next.x < 0 || next.y < 0 || next.x > this.canvas.width - (0, _settingsJs.canvasSettings).cellWidth || next.y > this.canvas.height - (0, _settingsJs.canvasSettings).cellHeight || this.walls.some((wall)=>(0, _gameJs.isColliding)(nextHitBox, wall.getHitBox())) || this.obstacles.some((obstacle)=>(0, _gameJs.isColliding)(nextHitBox, obstacle.getHitBox()));
-        if (blocked) {
-            // Face the direction anyway so the player can turn in place
-            this.player.movement = direction;
-            this.player.action = "idle";
+        return !(next.x < 0 || next.y < 0 || next.x > this.canvas.width - (0, _settingsJs.canvasSettings).cellWidth || next.y > this.canvas.height - (0, _settingsJs.canvasSettings).cellHeight || this.walls.some((wall)=>(0, _gameJs.isColliding)(nextHitBox, wall.getHitBox())) || this.lockedDoors().some((door)=>(0, _gameJs.isColliding)(nextHitBox, door.getHitBox())) || this.obstacles.some((obstacle)=>(0, _gameJs.isColliding)(nextHitBox, obstacle.getHitBox())));
+    }
+    // Doors that still block passage (an opened door is a free corridor)
+    lockedDoors() {
+        return this.doors.filter((door)=>door.locked);
+    }
+    applyMovementInput(deltaMs) {
+        const vector = this.getMovementVector();
+        if (vector.x === 0 && vector.y === 0) {
+            this.player.setWalking(false);
+            return;
+        }
+        const distance = this.player.getSpeed() * (deltaMs / 1000);
+        const deltaX = vector.x * distance;
+        const deltaY = vector.y * distance;
+        if (Math.abs(deltaX) > Math.abs(deltaY)) this.player.setMovement(deltaX > 0 ? "right" : "left");
+        else this.player.setMovement(deltaY > 0 ? "down" : "up");
+        const current = this.player.getPosition();
+        let moved = false;
+        const nextX = {
+            x: current.x + deltaX,
+            y: current.y
+        };
+        if (deltaX !== 0 && this.canPlayerMoveTo(nextX)) {
+            this.player.moveBy(deltaX, 0);
+            moved = true;
+        }
+        const afterX = this.player.getPosition();
+        const nextY = {
+            x: afterX.x,
+            y: afterX.y + deltaY
+        };
+        if (deltaY !== 0 && this.canPlayerMoveTo(nextY)) {
+            this.player.moveBy(0, deltaY);
+            moved = true;
+        }
+        this.player.setWalking(moved);
+    }
+    movePlayer(direction, deltaMs = 1000 / 60) {
+        const distance = this.player.getSpeed() * (deltaMs / 1000);
+        const next = this.player.checkCollision(direction, distance);
+        this.player.setMovement(direction);
+        if (!this.canPlayerMoveTo(next)) {
+            this.player.setWalking(false);
             return;
         }
         switch(direction){
             case "up":
-                this.player.moveUp();
+                this.player.moveUp(distance);
                 break;
             case "down":
-                this.player.moveDown();
+                this.player.moveDown(distance);
                 break;
             case "left":
-                this.player.moveLeft();
+                this.player.moveLeft(distance);
                 break;
             case "right":
-                this.player.moveRight();
+                this.player.moveRight(distance);
                 break;
         }
     }
     playerAttack() {
+        // Ignore swings while the previous one is still recovering, so holding
+        // the key down (auto-repeat) cannot land a hit every keyboard event
+        if (this.attackCooldownMs > 0) return;
+        this.attackCooldownMs = (0, _settingsJs.combatSettings).attackCooldownMs;
         this.player.attack();
+        if (!this.player.isActionActive("attack")) return;
         const attackBox = this.player.getAttackBox();
-        // Damage guards caught in the swing and remove any that are defeated
-        this.guards = this.guards.filter((guard)=>{
+        // Damage guards caught in the swing; defeated guards play their death
+        // animation before updateGameState removes them. Survivors are knocked
+        // back away from the swing and show their health bar for a few seconds.
+        this.guards.forEach((guard)=>{
+            if (guard.isDefeated()) return;
             if ((0, _gameJs.isColliding)(attackBox, guard.getHitBox())) {
-                const defeated = guard.takeDamage(this.player.attackPower);
-                if (defeated) {
-                    this.score += (0, _settingsJs.gameSettings).scoreIncrement;
-                    return false;
+                guard.takeDamage(this.player.attackPower, this.player.movement);
+                if (guard.consumeDefeatAward()) {
+                    this.score += guard.isBoss() ? (0, _settingsJs.bossSettings).scoreValue : (0, _settingsJs.gameSettings).scoreIncrement;
+                    this.spawnDrop(guard.getPosition());
                 }
+            }
+        });
+        // Chop down obstacles (trees, boulders) that are struck
+        this.obstacles = this.obstacles.filter((obstacle)=>{
+            if ((0, _gameJs.isColliding)(attackBox, obstacle.getHitBox())) {
+                obstacle.takeDamage(this.player.attackPower);
+                return !obstacle.isDestroyed();
             }
             return true;
         });
-        // Chop down obstacles (trees, boulders) that are struck
+    }
+    playerAxe() {
+        if (this.attackCooldownMs > 0) return;
+        this.attackCooldownMs = (0, _settingsJs.combatSettings).attackCooldownMs;
+        this.player.axe();
+        if (!this.player.isActionActive("axe")) return;
+        const attackBox = this.player.getAttackBox();
         this.obstacles = this.obstacles.filter((obstacle)=>{
             if ((0, _gameJs.isColliding)(attackBox, obstacle.getHitBox())) {
                 obstacle.takeDamage(this.player.attackPower);
@@ -923,6 +1087,7 @@ class Game {
             this.guards = [];
             this.obstacles = [];
             this.powerups = [];
+            this.drops = [];
             for(let y = 0; y < level.layout.length; y++)for(let x = 0; x < level.layout[y].length; x++){
                 const cell = level.layout[y][x];
                 const position = {
@@ -931,11 +1096,19 @@ class Game {
                 };
                 switch(cell){
                     case "E":
-                        this.explosives.push(new (0, _explosiveJsDefault.default)(position.x, position.y, this.assets));
+                        this.explosives.push(new (0, _explosiveJsDefault.default)(position.x, position.y, {
+                            explosiveSprite: this.assets.itemAssets.explosive
+                        }));
                         break;
                     case "G":
                         const randomOrc = (0, _rngJs.randomInt)(1, 3);
                         this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets));
+                        break;
+                    case "B":
+                        // A boss: bigger, tougher and harder-hitting than a guard
+                        this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${(0, _rngJs.randomInt)(1, 3)}`, this.assets.guardAssets, {
+                            boss: true
+                        }));
                         break;
                     case "O":
                         this.obstacles.push(new (0, _obstacleJsDefault.default)(position.x, position.y, "boulder", this.assets.levelAssets));
@@ -944,31 +1117,138 @@ class Game {
                         this.obstacles.push(new (0, _obstacleJsDefault.default)(position.x, position.y, "tree", this.assets.levelAssets));
                         break;
                     case "C":
-                        const randomPowerup = (0, _rngJs.randomInt)(1, 2);
-                        this.powerups.push(new (0, _powerupJsDefault.default)(position.x, position.y, randomPowerup == 1 ? "health" : "mana", this.assets.powerupsAssets));
+                        const powerupTypes = Object.keys((0, _powerupJs.powerupDescriptions));
+                        const randomPowerup = (0, _rngJs.randomInt)(1, powerupTypes.length);
+                        this.powerups.push(new (0, _powerupJsDefault.default)(position.x, position.y, powerupTypes[randomPowerup - 1], this.assets.powerupsAssets));
                         break;
                 }
             }
         }
     }
-    updateGameState() {
+    // Something a defeated guard leaves behind on the ground
+    spawnDrop({ x, y }) {
+        let itemId;
+        // While any door is still locked and no key is in reach (carried or on
+        // the ground), the defeated guard always carries one. This also covers
+        // levels with several locked doors: each door gets its key in turn.
+        const keyInReach = this.player.hasItem("key") || this.drops.some((drop)=>drop.getType() === "key");
+        if (this.lockedDoors().length > 0 && !keyInReach) itemId = "key";
+        else itemId = (0, _itemsJs.guardDropPool)[(0, _rngJs.randomInt)(1, (0, _itemsJs.guardDropPool).length) - 1];
+        this.drops.push(new (0, _dropJsDefault.default)(x, y, itemId, this.assets.itemAssets));
+    }
+    // Queue a short-lived message shown at the top of the canvas (e.g. what a
+    // picked-up item does); it fades out during its last second on screen
+    notify(text) {
+        this.notifications.push({
+            text,
+            msLeft: (0, _settingsJs.powerupSettings).notificationDurationMs
+        });
+    }
+    // Like notify, but skipped while the same message is still on screen
+    // (for messages that would otherwise repeat every frame)
+    notifyOnce(text) {
+        if (!this.notifications.some((n)=>n.text === text)) this.notify(text);
+    }
+    // Mark every cell within the light radius of the player as explored
+    revealAroundPlayer() {
+        if (!this.fogEnabled) return;
+        const center = this.playerCenter();
+        for(let y = 0; y < this.explored.length; y++)for(let x = 0; x < this.explored[y].length; x++){
+            if (this.explored[y][x]) continue;
+            const cellCenterX = x * (0, _settingsJs.canvasSettings).cellWidth + (0, _settingsJs.canvasSettings).cellWidth / 2;
+            const cellCenterY = y * (0, _settingsJs.canvasSettings).cellHeight + (0, _settingsJs.canvasSettings).cellHeight / 2;
+            const distance = Math.hypot(cellCenterX - center.x, cellCenterY - center.y);
+            if (distance <= (0, _settingsJs.fogSettings).revealRadius) this.explored[y][x] = true;
+        }
+    }
+    playerCenter() {
+        const position = this.player.getPosition();
+        return {
+            x: position.x + (0, _settingsJs.canvasSettings).cellWidth / 2,
+            y: position.y + (0, _settingsJs.canvasSettings).cellHeight / 2
+        };
+    }
+    isCellExplored(col, row) {
+        return Boolean(this.explored[row] && this.explored[row][col]);
+    }
+    updateGameState(deltaMs = 1000 / 60) {
+        this.attackCooldownMs = Math.max(0, this.attackCooldownMs - deltaMs);
+        this.applyMovementInput(deltaMs);
+        this.revealAroundPlayer();
         this.checkCollisions();
-        this.checkPlayerDeath();
+        this.checkPlayerDeath(deltaMs);
         if (this.isGameOver) return;
-        this.player.update();
+        this.notifications = this.notifications.filter((n)=>{
+            n.msLeft -= deltaMs;
+            return n.msLeft > 0;
+        });
+        this.player.update(deltaMs);
         this.explosives.forEach((explosive)=>explosive.update());
-        this.guards.forEach((guard)=>guard.update(this.player.getHitBox(), this.walls));
+        // Locked doors block guards (and their line of sight) like walls
+        const guardBlockers = [
+            ...this.walls,
+            ...this.lockedDoors()
+        ];
+        this.guards.forEach((guard)=>guard.update(this.player.getHitBox(), guardBlockers, deltaMs));
+        this.guards = this.guards.filter((guard)=>!guard.isReadyToRemove());
         this.obstacles.forEach((obstacle)=>obstacle.update());
         this.powerups.forEach((powerup)=>powerup.update());
+        this.drops.forEach((drop)=>drop.update(deltaMs));
+        this.checkDoorUnlock();
+        this.checkLockedDoorHint();
         this.checkLevelCompletion();
     }
-    checkPlayerDeath() {
+    // Rectangle around a door: touching it means "at the door", one cell of
+    // margin means "in front of the door"
+    static inflateBox(box, margin) {
+        return {
+            x: box.x - margin,
+            y: box.y - margin,
+            width: box.width + margin * 2,
+            height: box.height + margin * 2
+        };
+    }
+    // Walking up to a locked door while carrying a key opens it
+    checkDoorUnlock() {
+        if (!this.player.hasItem("key")) return;
+        const playerBox = this.player.getHitBox();
+        for (const door of this.lockedDoors()){
+            // The player is stopped flush against the door, so allow a small gap
+            const atDoor = (0, _gameJs.isColliding)(playerBox, Game.inflateBox(door.getHitBox(), 10));
+            if (atDoor) {
+                this.player.removeItem("key");
+                door.unlock();
+                this.notify("You unlocked the door with your key!");
+                return;
+            }
+        }
+    }
+    // Approaching a locked door without the key explains what is missing,
+    // before the player even touches it
+    checkLockedDoorHint() {
+        if (this.player.hasItem("key")) return;
+        const playerBox = this.player.getHitBox();
+        const nearDoor = this.lockedDoors().some((door)=>(0, _gameJs.isColliding)(playerBox, Game.inflateBox(door.getHitBox(), (0, _settingsJs.canvasSettings).cellWidth)));
+        if (!nearDoor) return;
+        const keyOnGround = this.drops.some((drop)=>drop.getType() === "key");
+        this.notifyOnce(keyOnGround ? "The door is locked \u2014 pick up the key first!" : "The door is locked \u2014 defeat a guard to find the key.");
+    }
+    checkPlayerDeath(deltaMs = 1000 / 60) {
         if (this.player.getHealth() > 0) return;
+        if (this.pendingGameOverMs !== null) {
+            this.pendingGameOverMs -= deltaMs;
+            if (this.pendingGameOverMs <= 0) {
+                this.isGameOver = true;
+                this.started = false;
+                this.pendingGameOverMs = null;
+                this.onGameOver(this.score);
+            }
+            return;
+        }
         this.lives -= 1;
         if (this.lives <= 0) {
-            this.isGameOver = true;
-            this.started = false;
-            this.onGameOver(this.score);
+            this.player.defeat();
+            this.pendingGameOverMs = 700;
             return;
         }
         this.player.respawn(this.playerStart.x, this.playerStart.y);
@@ -979,12 +1259,14 @@ class Game {
             if ((0, _gameJs.isColliding)(playerPosition, explosive.getHitBox())) {
                 if (explosive.isActive()) ;
                 else if (!explosive.isHidden()) {
-                    this.player.collectExplosive(explosive);
+                    this.player.addItem("explosive");
                     this.explosives.splice(index, 1);
+                    this.notifyPickup("explosive");
                 }
             }
         });
         this.guards.forEach((guard)=>{
+            if (guard.isDefeated()) return;
             if ((0, _gameJs.isColliding)(playerPosition, guard.getHitBox())) this.player.takeDamage(guard.damage);
         });
         this.obstacles.forEach((obstacle, index)=>{
@@ -994,10 +1276,24 @@ class Game {
             if ((0, _gameJs.isColliding)(this.player.getPickupRange(), powerup.getHitBox())) {
                 const effect = powerup.collect();
                 this.player.applyPowerup(effect);
+                if ((0, _powerupJs.powerupDescriptions)[effect]) this.notify((0, _powerupJs.powerupDescriptions)[effect]);
                 this.powerups.splice(index, 1);
                 this.score += (0, _settingsJs.gameSettings).scoreIncrement;
             }
         });
+        // Items dropped by defeated guards go into the inventory
+        this.drops = this.drops.filter((drop)=>{
+            if ((0, _gameJs.isColliding)(this.player.getPickupRange(), drop.getHitBox())) {
+                this.player.addItem(drop.getType());
+                this.notifyPickup(drop.getType());
+                return false;
+            }
+            return true;
+        });
+    }
+    notifyPickup(itemId) {
+        const item = (0, _itemsJs.itemCatalog)[itemId];
+        this.notify(`You picked up ${item.article} ${item.name} \u{2014} press 'i' to inspect your inventory.`);
     }
     checkLevelCompletion() {
         if (!this.isLevelComplete()) return;
@@ -1027,26 +1323,184 @@ class Game {
         this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
         // Draw the grid
         this.drawGrid();
-        // Draw the walls
+        // Draw the walls and doors
         this.walls.forEach((wall)=>wall.draw(this.context));
+        this.doors.forEach((door)=>door.draw(this.context));
         // Draw the entities
         this.obstacles.forEach((obstacle)=>obstacle.draw(this.context));
         this.powerups.forEach((powerup)=>powerup.draw(this.context));
+        this.drops.forEach((drop)=>drop.draw(this.context));
         this.guards.forEach((guard)=>guard.draw(this.context));
         this.explosives.forEach((explosive)=>explosive.draw(this.context));
         // Draw the exit
         if (this.exit) this.exit.draw(this.context);
         // Draw the player
         this.player.draw(this.context);
+        // Fog of war covers the world but never the HUD
+        this.drawFog();
         // Draw the HUD on top of everything
         this.drawHUD();
+        // The inventory screen covers the frozen world; notifications (e.g.
+        // "equipped") stay visible above it
+        if (this.inventoryOpen) this.drawInventory();
+        this.drawNotifications();
+    }
+    drawNotifications() {
+        const ctx = this.context;
+        ctx.save();
+        ctx.font = "bold 18px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        this.notifications.forEach((notification, i)=>{
+            // Fade out over the last second on screen
+            ctx.globalAlpha = Math.min(1, notification.msLeft / 1000);
+            const y = 72 + i * 30;
+            const width = ctx.measureText(notification.text).width + 24;
+            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+            ctx.fillRect(this.canvas.width / 2 - width / 2, y - 13, width, 26);
+            ctx.fillStyle = "#ffd54f";
+            ctx.fillText(notification.text, this.canvas.width / 2, y);
+        });
+        ctx.restore();
+    }
+    // Full-screen inventory: equipment slots on top, carried items below.
+    // Hovering a slot shows the item's description; clicking equips or drinks.
+    drawInventory() {
+        const ctx = this.context;
+        const panelWidth = 640;
+        const panelHeight = 400;
+        const panelX = (this.canvas.width - panelWidth) / 2;
+        const panelY = (this.canvas.height - panelHeight) / 2;
+        const slotSize = 56;
+        this.inventorySlotRects = [];
+        ctx.save();
+        // Dim the frozen world behind the panel
+        ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        // Panel
+        ctx.fillStyle = "#20222c";
+        ctx.strokeStyle = "#ffd54f";
+        ctx.lineWidth = 2;
+        ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+        ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+        // Title bar
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+        ctx.font = "bold 22px monospace";
+        ctx.fillStyle = "#ffd54f";
+        ctx.fillText("Inventory", panelX + 24, panelY + 30);
+        ctx.font = "14px monospace";
+        ctx.fillStyle = "#999";
+        ctx.textAlign = "right";
+        ctx.fillText("press 'i' to close", panelX + panelWidth - 24, panelY + 30);
+        ctx.textAlign = "left";
+        // Equipment slots
+        const equipY = panelY + 84;
+        [
+            {
+                label: "Weapon",
+                slot: "weapon"
+            },
+            {
+                label: "Rune",
+                slot: "rune"
+            }
+        ].forEach((equip, i)=>{
+            const x = panelX + 24 + i * 170;
+            ctx.font = "bold 14px monospace";
+            ctx.fillStyle = "#80d8ff";
+            ctx.fillText(equip.label, x, equipY - 12);
+            this.drawInventorySlot(x, equipY, slotSize, this.player.equipment[equip.slot], 0);
+        });
+        // Carried items
+        const gridY = equipY + slotSize + 44;
+        ctx.font = "bold 14px monospace";
+        ctx.fillStyle = "#80d8ff";
+        ctx.fillText("Items", panelX + 24, gridY - 12);
+        const entries = this.player.getInventoryEntries();
+        if (entries.length === 0) {
+            ctx.font = "14px monospace";
+            ctx.fillStyle = "#999";
+            ctx.fillText("Nothing yet \u2014 defeat guards to find weapons, runes and potions.", panelX + 24, gridY + 28);
+        }
+        entries.forEach((entry, i)=>{
+            const columns = 9;
+            const x = panelX + 24 + i % columns * (slotSize + 10);
+            const y = gridY + Math.floor(i / columns) * (slotSize + 10);
+            this.drawInventorySlot(x, y, slotSize, entry.id, entry.count);
+        });
+        // Footer hint
+        ctx.font = "14px monospace";
+        ctx.fillStyle = "#999";
+        ctx.fillText("Click a weapon or rune to equip it \u2014 click a potion to drink it.", panelX + 24, panelY + panelHeight - 24);
+        this.drawInventoryTooltip();
+        ctx.restore();
+    }
+    drawInventorySlot(x, y, size, itemId, count) {
+        const ctx = this.context;
+        this.inventorySlotRects.push({
+            x,
+            y,
+            size,
+            itemId
+        });
+        const hovered = this.mouse.x >= x && this.mouse.x <= x + size && this.mouse.y >= y && this.mouse.y <= y + size;
+        const item = itemId ? (0, _itemsJs.itemCatalog)[itemId] : null;
+        const equipped = item && this.player.equipment[item.kind] === itemId;
+        ctx.fillStyle = "#2c2f3d";
+        ctx.fillRect(x, y, size, size);
+        ctx.strokeStyle = hovered ? "#ffd54f" : equipped ? "#80d8ff" : "#4a4e63";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, size, size);
+        if (!item) return;
+        ctx.drawImage(this.assets.itemAssets[item.icon], x + 6, y + 6, size - 12, size - 12);
+        if (count > 1) {
+            ctx.font = "bold 13px monospace";
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "right";
+            ctx.fillText(`x${count}`, x + size - 4, y + size - 9);
+            ctx.textAlign = "left";
+        }
+        if (equipped) {
+            ctx.font = "bold 11px monospace";
+            ctx.fillStyle = "#80d8ff";
+            ctx.fillText("ON", x + 4, y + 10);
+        }
+    }
+    drawInventoryTooltip() {
+        const hoveredSlot = this.inventorySlotRects.find((r)=>r.itemId && this.mouse.x >= r.x && this.mouse.x <= r.x + r.size && this.mouse.y >= r.y && this.mouse.y <= r.y + r.size);
+        if (!hoveredSlot) return;
+        const ctx = this.context;
+        const item = (0, _itemsJs.itemCatalog)[hoveredSlot.itemId];
+        const hint = item.kind === "weapon" || item.kind === "rune" ? "Click to equip or take off" : item.kind === "potion" ? "Click to drink" : null;
+        const lines = [
+            item.name,
+            item.description
+        ];
+        if (hint) lines.push(hint);
+        ctx.font = "14px monospace";
+        const boxWidth = Math.max(...lines.map((l)=>ctx.measureText(l).width)) + 24;
+        const boxHeight = lines.length * 20 + 16;
+        // Keep the tooltip on screen, above-right of the cursor when possible
+        const boxX = Math.min(this.mouse.x + 14, this.canvas.width - boxWidth - 4);
+        const boxY = Math.max(4, this.mouse.y - boxHeight - 6);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
+        ctx.strokeStyle = "#ffd54f";
+        ctx.lineWidth = 1;
+        ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+        ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+        lines.forEach((line, i)=>{
+            ctx.fillStyle = i === 0 ? "#ffd54f" : i === lines.length - 1 && hint ? "#80d8ff" : "#eee";
+            ctx.font = i === 0 ? "bold 14px monospace" : "14px monospace";
+            ctx.fillText(line, boxX + 12, boxY + 18 + i * 20);
+        });
     }
     drawHUD() {
         const ctx = this.context;
         ctx.save();
         // Background strip
         ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-        ctx.fillRect(8, 8, 300, 40);
+        ctx.fillRect(8, 8, 452, 40);
         ctx.font = "bold 18px monospace";
         ctx.textBaseline = "middle";
         // Score
@@ -1064,43 +1518,86 @@ class Game {
         ctx.strokeStyle = "#fff";
         ctx.lineWidth = 1;
         ctx.strokeRect(226, 20, 70, 14);
+        // Keys and potions carried, as icons with a count
+        const icons = this.assets.itemAssets;
+        const iconSize = 26;
+        ctx.font = "bold 16px monospace";
+        ctx.fillStyle = "#fff";
+        ctx.drawImage(icons.key, 306, 15, iconSize, iconSize);
+        ctx.fillText(`${this.player.inventory.key || 0}`, 306 + iconSize + 2, 28);
+        ctx.drawImage(icons.potion, 356, 15, iconSize, iconSize);
+        ctx.fillText(`${this.player.inventory.potion || 0}`, 356 + iconSize + 2, 28);
+        // Reminder that the inventory exists
+        ctx.font = "14px monospace";
+        ctx.fillStyle = "#aaa";
+        ctx.fillText("(i)", 412, 28);
+        // Active powerup effects with their remaining time
+        const effects = this.player.getActiveEffects();
+        if (effects.length > 0) {
+            ctx.font = "bold 14px monospace";
+            ctx.fillStyle = "#80d8ff";
+            const label = effects.map((e)=>`${e.name} ${e.secondsLeft}s`).join("  ");
+            ctx.fillText(label, 18, 62);
+        }
         ctx.restore();
     }
     drawGrid() {
-        // Create a gradient for the background
-        const gradient = this.context.createRadialGradient(this.canvas.width / 2, this.canvas.height / 2, 0, this.canvas.width / 2, this.canvas.height / 2, Math.max(this.canvas.width, this.canvas.height) / 2);
-        gradient.addColorStop(0, "#3E8948"); // Center color (lighter green)
-        gradient.addColorStop(1, "#1A3B1F"); // Edge color (darker green)
-        // Fill background with gradient
-        this.context.fillStyle = gradient;
+        const grassPattern = this.context.createPattern(this.assets.levelAssets.grassTile, "repeat");
+        this.context.fillStyle = grassPattern || "#2f7d3b";
         this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
-        // Set grid style
-        this.context.strokeStyle = "rgba(0, 255, 0, 0.1)";
-        this.context.lineWidth = 1;
-        // Draw grid lines
-        this.context.beginPath();
-        // Vertical lines
-        for(let x = 0; x <= this.canvas.width; x += (0, _settingsJs.canvasSettings).cellWidth){
-            this.context.moveTo(x, 0);
-            this.context.lineTo(x, this.canvas.height);
-        }
-        // Horizontal lines
-        for(let y = 0; y <= this.canvas.height; y += (0, _settingsJs.canvasSettings).cellHeight){
-            this.context.moveTo(0, y);
-            this.context.lineTo(this.canvas.width, y);
-        }
-        this.context.stroke();
     }
-    gameLoop() {
+    // Fog of war: unexplored cells are pitch black, explored cells outside
+    // the light radius stay dimly visible (map memory), and a soft torchlight
+    // circle follows the player. Composed on an offscreen canvas so the
+    // torch can be erased out of the fog without touching the world below.
+    drawFog() {
+        if (!this.fogEnabled) return;
+        if (!this.fogCanvas) {
+            this.fogCanvas = document.createElement("canvas");
+            this.fogCanvas.width = this.canvas.width;
+            this.fogCanvas.height = this.canvas.height;
+        }
+        const fogCtx = this.fogCanvas.getContext("2d");
+        fogCtx.clearRect(0, 0, this.fogCanvas.width, this.fogCanvas.height);
+        for(let y = 0; y < this.explored.length; y++)for(let x = 0; x < this.explored[y].length; x++){
+            const alpha = this.explored[y][x] ? (0, _settingsJs.fogSettings).exploredAlpha : (0, _settingsJs.fogSettings).unexploredAlpha;
+            fogCtx.fillStyle = `rgba(8, 8, 16, ${alpha})`;
+            fogCtx.fillRect(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, (0, _settingsJs.canvasSettings).cellWidth, (0, _settingsJs.canvasSettings).cellHeight);
+        }
+        // Erase a soft-edged torchlight circle around the player
+        const center = this.playerCenter();
+        const radius = (0, _settingsJs.fogSettings).revealRadius;
+        const torch = fogCtx.createRadialGradient(center.x, center.y, radius * 0.5, center.x, center.y, radius);
+        torch.addColorStop(0, "rgba(0, 0, 0, 1)");
+        torch.addColorStop(1, "rgba(0, 0, 0, 0)");
+        fogCtx.globalCompositeOperation = "destination-out";
+        fogCtx.fillStyle = torch;
+        fogCtx.fillRect(center.x - radius, center.y - radius, radius * 2, radius * 2);
+        fogCtx.globalCompositeOperation = "source-over";
+        this.context.drawImage(this.fogCanvas, 0, 0);
+    }
+    gameLoop(timestamp = performance.now()) {
         // Main game loop
         if (this.isGameOver || this.paused) return;
-        this.updateGameState();
+        if (this.lastFrameTime === null) this.lastFrameTime = timestamp;
+        const deltaMs = Math.min(50, timestamp - this.lastFrameTime);
+        this.lastFrameTime = timestamp;
+        if (this.inventoryOpen) // The world stands still while the player inspects the inventory, but
+        // messages keep fading and the screen keeps rendering for hover effects
+        this.notifications = this.notifications.filter((n)=>{
+            n.msLeft -= deltaMs;
+            return n.msLeft > 0;
+        });
+        else this.updateGameState(deltaMs);
         if (this.isGameOver || this.paused) return;
         this.render();
         this.rafId = requestAnimationFrame(this.gameLoop.bind(this));
     }
     pause() {
         this.paused = true;
+        this.inventoryOpen = false;
+        this.pressedDirections.clear();
+        this.lastFrameTime = null;
         if (this.rafId) {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
@@ -1114,6 +1611,13 @@ class Game {
         this.lives = (0, _settingsJs.playerSettings).initialLives;
         this.score = 0;
         this.currentLevel = (0, _settingsJs.gameSettings).initialLevel;
+        this.notifications = [];
+        this.player = null; // a fresh run starts with an empty pack
+        this.inventoryOpen = false;
+        this.pendingGameOverMs = null;
+        this.attackCooldownMs = 0;
+        this.pressedDirections.clear();
+        this.lastFrameTime = null;
         if (this.rafId) cancelAnimationFrame(this.rafId);
         (0, _canvasJs.clearContainer)(this.container);
         this.container.appendChild(this.canvas);
@@ -1125,6 +1629,7 @@ class Game {
     continue() {
         this.started = true;
         this.paused = false;
+        this.lastFrameTime = null;
         (0, _canvasJs.clearContainer)(this.container);
         this.container.appendChild(this.canvas);
         if (this.rafId) cancelAnimationFrame(this.rafId);
@@ -1138,11 +1643,11 @@ class Game {
     // ---------------------------------------------------------------------
     // Advance the simulation a fixed number of frames, synchronously and
     // independently of requestAnimationFrame, then render the result
-    step(frames = 1) {
+    step(frames = 1, deltaMs = 1000 / 60) {
         if (!this.player) return;
         for(let i = 0; i < frames; i++){
             if (this.isGameOver) break;
-            this.updateGameState();
+            this.updateGameState(deltaMs);
         }
         if (!this.isGameOver) this.render();
     }
@@ -1150,9 +1655,9 @@ class Game {
     teleportPlayer(x, y) {
         this.player.setPosition(x, y);
     }
-    // Add a guard at an exact pixel position
-    spawnGuard(x, y, type = "orc1") {
-        const guard = new (0, _guardJsDefault.default)(x, y, type, this.assets.guardAssets);
+    // Add a guard (or boss) at an exact pixel position
+    spawnGuard(x, y, type = "orc1", options = {}) {
+        const guard = new (0, _guardJsDefault.default)(x, y, type, this.assets.guardAssets, options);
         this.guards.push(guard);
         return guard;
     }
@@ -1166,7 +1671,7 @@ class Game {
 }
 exports.default = Game;
 
-},{"./utils/settings.js":"hBndc","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
+},{"./utils/settings.js":"hBndc","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
 // Game settings and configurations
 // - This file contains global settings and configurations for the game
 // - These settings can be adjusted to change the game's behavior and appearance
@@ -1176,6 +1681,10 @@ parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "canvasSettings", ()=>canvasSettings);
 parcelHelpers.export(exports, "playerSettings", ()=>playerSettings);
 parcelHelpers.export(exports, "gameSettings", ()=>gameSettings);
+parcelHelpers.export(exports, "powerupSettings", ()=>powerupSettings);
+parcelHelpers.export(exports, "combatSettings", ()=>combatSettings);
+parcelHelpers.export(exports, "bossSettings", ()=>bossSettings);
+parcelHelpers.export(exports, "fogSettings", ()=>fogSettings);
 parcelHelpers.export(exports, "entitySettings", ()=>entitySettings);
 parcelHelpers.export(exports, "soundSettings", ()=>soundSettings);
 parcelHelpers.export(exports, "controlSettings", ()=>controlSettings);
@@ -1188,13 +1697,43 @@ const canvasSettings = {
 };
 const playerSettings = {
     initialLives: 3,
-    speed: 5,
+    speed: 300,
+    respawnProtectionMs: 2000,
     color: "#ff69b4"
 };
 const gameSettings = {
     initialLevel: 1,
-    maxLevels: 5,
+    maxLevels: 10,
     scoreIncrement: 100
+};
+const powerupSettings = {
+    healAmount: 25,
+    speedBoost: 180,
+    speedDurationMs: 10000,
+    strengthMultiplier: 2,
+    strengthDurationMs: 10000,
+    invincibilityDurationMs: 10000,
+    notificationDurationMs: 4000
+};
+const combatSettings = {
+    attackCooldownMs: 400,
+    knockbackSpeed: 300,
+    knockbackDurationMs: 120,
+    healthBarVisibleMs: 3000
+};
+const bossSettings = {
+    health: 300,
+    damage: 20,
+    speed: 45,
+    width: 128,
+    height: 128,
+    detectionRangeCells: 6,
+    scoreValue: 500
+};
+const fogSettings = {
+    revealRadius: 160,
+    exploredAlpha: 0.55,
+    unexploredAlpha: 1
 };
 const entitySettings = {
     enemyWidth: 91,
@@ -1218,7 +1757,8 @@ const controlSettings = {
     esc: "Escape",
     pick: "p",
     axe: "x",
-    potion: "u"
+    potion: "u",
+    inventory: "i"
 }; // Add more settings as needed for other aspects of the game
 
 },{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"gkKU3":[function(require,module,exports) {
@@ -1257,21 +1797,38 @@ parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
 var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
 var _settingsJs = require("../utils/settings.js");
+var _animatorJs = require("./animator.js");
+var _animatorJsDefault = parcelHelpers.interopDefault(_animatorJs);
+var _spriteManifestJs = require("../assets/sprite-manifest.js");
+var _itemsJs = require("../items.js");
 class Player extends (0, _entityJsDefault.default) {
     #health;
-    #speed;
+    #baseSpeed;
+    #attackPower;
     #isHurt = false;
     #hurtInterval = null;
+    #effectMs = {
+        speed: 0,
+        strength: 0,
+        invincibility: 0
+    };
     constructor(x, y, assets){
         super(x, y, "player", assets);
         this.#health = 100;
-        this.#speed = 5;
-        this.attackPower = 50;
-        this.explosives = [];
-        this.keys = [];
+        this.#baseSpeed = (0, _settingsJs.playerSettings).speed;
+        this.#attackPower = 50;
         this.powerups = [];
+        // Item ids (see items.js) mapped to how many the player carries; the pack
+        // survives level changes (see Game.initializePlayer) but not a new run
+        this.inventory = {};
+        // One weapon and one rune can be equipped at a time
+        this.equipment = {
+            weapon: null,
+            rune: null
+        };
+        this.weaponId = "axe";
+        this.animator = new (0, _animatorJsDefault.default)((0, _spriteManifestJs.playerSpriteManifest));
         this.currentFrame = 0;
-        this.frameCount = 0;
         this.movement = "down";
         this.action = "idle";
         this.visible = true;
@@ -1298,7 +1855,6 @@ class Player extends (0, _entityJsDefault.default) {
             height: this._height * 0.5
         };
     }
-    // Area in front of the player that an attack sweeps over
     getAttackBox() {
         const hitBox = this.getHitBox();
         const reach = this._width * 0.6;
@@ -1337,10 +1893,42 @@ class Player extends (0, _entityJsDefault.default) {
     getHealth() {
         return this.#health;
     }
+    get attackPower() {
+        let power = this.#attackPower;
+        // Equipped weapon and rune bonuses
+        for (const equippedId of Object.values(this.equipment)){
+            const bonus = equippedId && (0, _itemsJs.itemCatalog)[equippedId].attackBonus;
+            if (bonus) power += bonus;
+        }
+        if (this.#effectMs.strength > 0) power *= (0, _settingsJs.powerupSettings).strengthMultiplier;
+        return power;
+    }
+    getSpeed() {
+        let speed = this.#baseSpeed;
+        if (this.#effectMs.speed > 0) speed += (0, _settingsJs.powerupSettings).speedBoost;
+        const rune = this.equipment.rune;
+        if (rune && (0, _itemsJs.itemCatalog)[rune].speedBonus) speed += (0, _itemsJs.itemCatalog)[rune].speedBonus;
+        return speed;
+    }
+    getActiveEffects() {
+        return Object.entries(this.#effectMs).filter(([, ms])=>ms > 0).map(([name, ms])=>({
+                name,
+                secondsLeft: Math.ceil(ms / 1000),
+                msLeft: ms
+            }));
+    }
+    hasEffect(name) {
+        return this.#effectMs[name] > 0;
+    }
     takeDamage(amount) {
-        // Ignore hits during the invulnerability window after being hurt
+        if (this.#effectMs.invincibility > 0) return;
         if (this.#isHurt || this.#health <= 0) return;
-        this.#health -= amount;
+        if (this.equipment.rune === "runeWarding") amount = Math.ceil(amount / 2);
+        this.#health = Math.max(0, this.#health - amount);
+        if (this.#health <= 0) {
+            this.defeat();
+            return;
+        }
         this.hurtAnimation();
     }
     respawn(x, y) {
@@ -1349,95 +1937,182 @@ class Player extends (0, _entityJsDefault.default) {
             y
         };
         this.#health = 100;
+        // A short shield after respawning: a guard standing on the spawn point
+        // could otherwise drain the fresh life before the player can react
+        this.#effectMs = {
+            speed: 0,
+            strength: 0,
+            invincibility: (0, _settingsJs.playerSettings).respawnProtectionMs
+        };
         this.#isHurt = false;
         if (this.#hurtInterval) {
             clearInterval(this.#hurtInterval);
             this.#hurtInterval = null;
         }
         this.visible = true;
-        this.action = "idle";
         this.movement = "down";
+        this.animator.play("idle", {
+            restart: true,
+            direction: "down"
+        });
+        this.#syncAnimationState();
     }
-    moveLeft() {
-        this._position.x -= this.#speed;
-        this.action = "walk";
-        this.movement = "left";
-    }
-    moveRight() {
-        this._position.x += this.#speed;
-        this.action = "walk";
-        this.movement = "right";
-    }
-    moveUp() {
-        this._position.y -= this.#speed;
-        this.action = "walk";
-        this.movement = "up";
-    }
-    moveDown() {
-        this._position.y += this.#speed;
-        this.action = "walk";
-        this.movement = "down";
-    }
-    attack() {
-        this.action = "attack";
-    // Implement attack logic here
-    }
-    pick() {
-        this.action = "pick";
-    // TODO: Implement actual object detection and picking logic
-    // This would involve checking for collisions with pickable entities
-    // and handling the pickup if a valid object is found
-    }
-    axe() {
-        this.action = "axe";
-    // Implement axe logic here
-    }
-    potion() {
-        this.action = "potion";
-    // Implement potion logic here
-    }
-    collectExplosive(explosive) {
-        this.explosives.push(explosive);
-    }
-    collectKey(key) {
-        this.keys.push(key);
-    }
-    collectPowerup(powerup) {
-        this.powerups.push(powerup);
-    }
-    applyPowerup(effect) {
-        this.powerups.push(effect);
-        if (effect === "health") this.#health = Math.min(100, this.#health + 25);
-    }
-    update() {
-        this.frameCount++;
-        if (this.frameCount >= 10) {
-            // Adjust frame rate as needed
-            let frames_per_action = 6;
-            if (this.action === "walk" || this.action === "idle" || this.action === "jump") frames_per_action = 6;
-            else if (this.action === "attack" || this.action === "duck") frames_per_action = 4;
-            else if (this.action === "pick" || this.action === "axe" || this.action === "potion") frames_per_action = 4;
-            this.currentFrame = (this.currentFrame + 1) % frames_per_action;
-            this.frameCount = 0;
+    setMovement(direction) {
+        if (direction) {
+            this.movement = direction;
+            this.animator.setDirection(direction);
         }
     }
-    // Add a new method to check for collisions before moving
-    checkCollision(direction) {
+    setWalking(isWalking) {
+        this.animator.setState(isWalking ? "walk" : "idle");
+        this.#syncAnimationState();
+    }
+    moveBy(deltaX, deltaY) {
+        this._position.x += deltaX;
+        this._position.y += deltaY;
+        if (deltaX !== 0 || deltaY !== 0) {
+            this.setMovement(Math.abs(deltaX) > Math.abs(deltaY) ? deltaX > 0 ? "right" : "left" : deltaY > 0 ? "down" : "up");
+            this.setWalking(true);
+        }
+    }
+    moveLeft(distance = this.getSpeed() / 60) {
+        this.moveBy(-distance, 0);
+    }
+    moveRight(distance = this.getSpeed() / 60) {
+        this.moveBy(distance, 0);
+    }
+    moveUp(distance = this.getSpeed() / 60) {
+        this.moveBy(0, -distance);
+    }
+    moveDown(distance = this.getSpeed() / 60) {
+        this.moveBy(0, distance);
+    }
+    attack() {
+        this.animator.play("attack", {
+            restart: true,
+            direction: this.movement
+        });
+        this.#syncAnimationState();
+    }
+    pick() {
+        this.animator.play("pick", {
+            restart: true,
+            direction: this.movement
+        });
+        this.#syncAnimationState();
+    }
+    axe() {
+        const weapon = (0, _spriteManifestJs.playerSpriteManifest).weapons[this.weaponId];
+        this.animator.play(weapon?.actionState || "axe", {
+            restart: true,
+            direction: this.movement
+        });
+        this.#syncAnimationState();
+    }
+    potion() {
+        this.animator.play("potion", {
+            restart: true,
+            direction: this.movement
+        });
+        this.#syncAnimationState();
+    }
+    defeat() {
+        this.animator.play("defeated", {
+            restart: true,
+            direction: this.movement
+        });
+        this.#syncAnimationState();
+    }
+    isDefeated() {
+        return this.#health <= 0;
+    }
+    isActionActive(action = this.action) {
+        return this.animator.isActiveWindow(action);
+    }
+    // --- Inventory ---------------------------------------------------------
+    addItem(itemId) {
+        this.inventory[itemId] = (this.inventory[itemId] || 0) + 1;
+    }
+    hasItem(itemId) {
+        return (this.inventory[itemId] || 0) > 0;
+    }
+    removeItem(itemId) {
+        if (!this.hasItem(itemId)) return false;
+        this.inventory[itemId] -= 1;
+        if (this.inventory[itemId] === 0) delete this.inventory[itemId];
+        return true;
+    }
+    // Carried items in catalog order, for the inventory screen
+    getInventoryEntries() {
+        return Object.keys((0, _itemsJs.itemCatalog)).filter((id)=>this.hasItem(id)).map((id)=>({
+                id,
+                count: this.inventory[id]
+            }));
+    }
+    // Consume one item and apply its effect. Returns true when consumed.
+    useItem(itemId) {
+        const item = (0, _itemsJs.itemCatalog)[itemId];
+        if (!item || !this.hasItem(itemId)) return false;
+        if (item.kind === "potion") {
+            this.removeItem(itemId);
+            this.#health = Math.min(100, this.#health + item.healAmount);
+            return true;
+        }
+        return false;
+    }
+    // Equip a weapon or rune from the inventory, or take it off when it is
+    // already worn. Returns "equipped", "unequipped" or null when the item
+    // cannot be equipped.
+    equip(itemId) {
+        const item = (0, _itemsJs.itemCatalog)[itemId];
+        if (!item || item.kind !== "weapon" && item.kind !== "rune") return null;
+        if (!this.hasItem(itemId)) return null;
+        if (this.equipment[item.kind] === itemId) {
+            this.equipment[item.kind] = null;
+            return "unequipped";
+        }
+        this.equipment[item.kind] = itemId;
+        return "equipped";
+    }
+    applyPowerup(effect) {
+        if (!effect) return;
+        this.powerups.push(effect);
+        switch(effect){
+            case "health":
+                this.#health = Math.min(100, this.#health + (0, _settingsJs.powerupSettings).healAmount);
+                break;
+            case "speed":
+                this.#effectMs.speed = (0, _settingsJs.powerupSettings).speedDurationMs;
+                break;
+            case "strength":
+                this.#effectMs.strength = (0, _settingsJs.powerupSettings).strengthDurationMs;
+                break;
+            case "invincibility":
+                this.#effectMs.invincibility = (0, _settingsJs.powerupSettings).invincibilityDurationMs;
+                break;
+        }
+    }
+    update(deltaMs = 1000 / 60) {
+        for (const name of Object.keys(this.#effectMs))this.#effectMs[name] = Math.max(0, this.#effectMs[name] - deltaMs);
+        this.animator.update(deltaMs);
+        this.#syncAnimationState();
+    }
+    checkCollision(direction, distance = this.getSpeed() / 60) {
         const nextPosition = {
             ...this._position
         };
         switch(direction){
             case "left":
-                nextPosition.x -= this.#speed;
+                nextPosition.x -= distance;
                 break;
             case "right":
-                nextPosition.x += this.#speed;
+                nextPosition.x += distance;
                 break;
             case "up":
-                nextPosition.y -= this.#speed;
+                nextPosition.y -= distance;
                 break;
             case "down":
-                nextPosition.y += this.#speed;
+                nextPosition.y += distance;
                 break;
         }
         return nextPosition;
@@ -1445,169 +2120,44 @@ class Player extends (0, _entityJsDefault.default) {
     hurtAnimation() {
         if (this.#isHurt) return;
         this.#isHurt = true;
-        this.action = "idle"; // Freeze the player
         let flickerCount = 0;
         const maxFlickers = 10;
-        const flickerDuration = 100; // milliseconds
+        const flickerDuration = 100;
         this.#hurtInterval = setInterval(()=>{
-            this.visible = !this.visible; // Toggle visibility
+            this.visible = !this.visible;
             flickerCount++;
             if (flickerCount >= maxFlickers) {
                 clearInterval(this.#hurtInterval);
                 this.#hurtInterval = null;
                 this.#isHurt = false;
-                this.visible = true; // Ensure player is visible after flickering
+                this.visible = true;
             }
         }, flickerDuration);
     }
     draw(ctx) {
         if (!this.visible) return;
-        let spriteHeight = 32;
-        let spriteWidth = 32;
-        let spriteX = 0;
-        let spriteY = 0;
-        let spriteSheet = this._sprites.movement;
-        // mapping the sprite sheet to the actions
-        switch(this.action){
-            case "walk":
-                switch(this.movement){
-                    case "left":
-                        spriteY = 4 * spriteHeight;
-                        break;
-                    case "right":
-                        spriteY = 4 * spriteHeight;
-                        break;
-                    case "up":
-                        spriteY = 2 * spriteHeight;
-                        break;
-                    case "down":
-                        spriteY = 0 * spriteHeight;
-                        break;
-                }
-                break;
-            case "crawl":
-                switch(this.movement){
-                    case "down":
-                        spriteY = 0 * spriteHeight;
-                        break;
-                    case "left":
-                        spriteY = 9 * spriteHeight;
-                        break;
-                    case "right":
-                        spriteY = 9 * spriteHeight;
-                        break;
-                    case "up":
-                        spriteY = 0 * spriteHeight;
-                        break;
-                }
-                break;
-            case "attack":
-                switch(this.movement){
-                    case "down":
-                        spriteY = 6 * spriteHeight;
-                        break;
-                    case "left":
-                        spriteY = 7 * spriteHeight;
-                        break;
-                    case "right":
-                        spriteY = 7 * spriteHeight;
-                        break;
-                    case "up":
-                        spriteY = 8 * spriteHeight;
-                        break;
-                }
-                break;
-            case "pick":
-                spriteHeight = 48;
-                spriteWidth = 48;
-                spriteSheet = this._sprites.actions;
-                switch(this.movement){
-                    case "down":
-                        spriteY = 1 * spriteHeight;
-                        break;
-                    case "left":
-                        spriteY = 0 * spriteHeight;
-                        break;
-                    case "right":
-                        spriteY = 0 * spriteHeight;
-                        break;
-                    case "up":
-                        spriteY = 2 * spriteHeight;
-                        break;
-                }
-                break;
-            case "axe":
-                spriteHeight = 48;
-                spriteWidth = 48;
-                spriteSheet = this._sprites.actions;
-                spriteX = 3 * spriteWidth;
-                spriteY = 10 * spriteHeight;
-                break;
-            case "potion":
-                spriteHeight = 48;
-                spriteWidth = 48;
-                spriteSheet = this._sprites.actions;
-                // spriteY = 11 * spriteHeight;
-                switch(this.movement){
-                    case "down":
-                        spriteY = 9 * spriteHeight;
-                        break;
-                    case "left":
-                        spriteY = 9 * spriteHeight;
-                        break;
-                    case "right":
-                        spriteY = 9 * spriteHeight;
-                        break;
-                    case "up":
-                        spriteY = 10 * spriteHeight;
-                        break;
-                }
-                break;
-            case "idle":
-            default:
-                switch(this.movement){
-                    case "down":
-                        spriteY = 0 * spriteHeight;
-                        break;
-                    case "left":
-                        spriteY = 1 * spriteHeight;
-                        break;
-                    case "right":
-                        spriteY = 1 * spriteHeight;
-                        break;
-                    case "up":
-                        spriteY = 2 * spriteHeight;
-                        break;
-                }
-                break;
-        }
-        spriteX = this.currentFrame * spriteWidth;
+        const frame = this.animator.getFrame(this.movement);
+        const spriteSheet = this._sprites[frame.sheet];
+        const pixelScale = (0, _settingsJs.canvasSettings).cellWidth / 32;
+        const destWidth = frame.frameWidth * pixelScale;
+        const destHeight = frame.frameHeight * pixelScale;
+        const offsetX = ((0, _settingsJs.canvasSettings).cellWidth - destWidth) / 2;
+        const offsetY = ((0, _settingsJs.canvasSettings).cellHeight - destHeight) / 2;
         ctx.save();
-        if (this.movement === "left") {
+        if (frame.flip) {
             ctx.scale(-1, 1);
-            ctx.drawImage(spriteSheet, spriteX, spriteY, spriteWidth, spriteHeight, -this._position.x - this._width, this._position.y, (0, _settingsJs.canvasSettings).cellWidth, (0, _settingsJs.canvasSettings).cellHeight);
-        } else ctx.drawImage(spriteSheet, spriteX, spriteY, spriteWidth, spriteHeight, this._position.x, this._position.y, (0, _settingsJs.canvasSettings).cellWidth, (0, _settingsJs.canvasSettings).cellHeight);
+            ctx.drawImage(spriteSheet, frame.sourceX, frame.sourceY, frame.frameWidth, frame.frameHeight, -(this._position.x + offsetX) - destWidth, this._position.y + offsetY, destWidth, destHeight);
+        } else ctx.drawImage(spriteSheet, frame.sourceX, frame.sourceY, frame.frameWidth, frame.frameHeight, this._position.x + offsetX, this._position.y + offsetY, destWidth, destHeight);
         ctx.restore();
-    // this.drawBoundingBox(ctx);
     }
-    drawBoundingBox(ctx) {
-        // Hitbox
-        ctx.save();
-        ctx.strokeStyle = "red";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(this._position.x + this._width * 0.25, this._position.y + this._height * 0.25, this._width * 0.5, this._height * 0.5);
-        ctx.restore();
-        ctx.save();
-        // Pickup range
-        ctx.strokeStyle = "green";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(this._position.x, this._position.y, this._width, this._height);
-        ctx.restore();
+    #syncAnimationState() {
+        this.action = this.animator.state;
+        this.currentFrame = this.animator.frame;
     }
 }
 exports.default = Player;
 
-},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"4kBdl":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","./animator.js":"hma7Y","../assets/sprite-manifest.js":"kdgDE","../items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"4kBdl":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _settingsJs = require("../utils/settings.js");
@@ -1662,11 +2212,401 @@ class Entity {
 }
 exports.default = Entity;
 
-},{"../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"57eJ8":[function(require,module,exports) {
+},{"../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hma7Y":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+class Animator {
+    constructor(manifest){
+        this.manifest = manifest;
+        this.state = manifest.defaultState || "idle";
+        this.direction = manifest.defaultDirection || "down";
+        this.elapsedMs = 0;
+        this.frame = 0;
+        this.complete = false;
+    }
+    #definition(state = this.state) {
+        const weaponStates = Object.values(this.manifest.weapons || {}).flatMap((weapon)=>Object.entries(weapon.states || {}));
+        const weaponState = weaponStates.find(([name])=>name === state);
+        return weaponState ? weaponState[1] : this.manifest.states[state];
+    }
+    setDirection(direction) {
+        if (direction) this.direction = direction;
+    }
+    play(state, { restart = false, direction = null } = {}) {
+        if (direction) this.setDirection(direction);
+        if (!restart && this.state === state) return;
+        this.state = state;
+        this.elapsedMs = 0;
+        this.frame = 0;
+        this.complete = false;
+    }
+    setState(state, options = {}) {
+        const current = this.#definition();
+        if (current?.oneShot && !this.complete && !options.force) return;
+        this.play(state, options);
+    }
+    update(deltaMs) {
+        const definition = this.#definition();
+        if (!definition || this.complete && definition.holdLast) return;
+        this.elapsedMs += deltaMs;
+        const frameDuration = definition.frameDurationMs || 120;
+        const frameCount = definition.frames || 1;
+        const nextFrame = Math.floor(this.elapsedMs / frameDuration);
+        if (definition.oneShot && nextFrame >= frameCount) {
+            this.complete = true;
+            if (definition.holdLast) {
+                this.frame = frameCount - 1;
+                return;
+            }
+            this.play(definition.returnTo || this.manifest.defaultState || "idle", {
+                restart: true
+            });
+            return;
+        }
+        this.frame = nextFrame % frameCount;
+    }
+    isComplete(state = this.state) {
+        return this.state === state && this.complete;
+    }
+    isActiveWindow(state = this.state) {
+        const definition = this.#definition(state);
+        if (!definition || this.state !== state) return false;
+        const start = definition.activeStartMs ?? 0;
+        const end = definition.activeEndMs ?? Number.POSITIVE_INFINITY;
+        return this.elapsedMs >= start && this.elapsedMs <= end;
+    }
+    getFrame(direction = this.direction) {
+        const definition = this.#definition();
+        const rows = definition.rows || {};
+        const row = rows[direction] ?? rows.down ?? 0;
+        return {
+            state: this.state,
+            sheet: definition.sheet,
+            frameWidth: definition.frameWidth,
+            frameHeight: definition.frameHeight,
+            sourceX: this.frame * definition.frameWidth,
+            sourceY: row * definition.frameHeight,
+            flip: direction === "left" && Boolean(definition.flipLeft)
+        };
+    }
+}
+exports.default = Animator;
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"kdgDE":[function(require,module,exports) {
+// Sprite sheet metadata. Keep animation layout here so adding a new hero
+// weapon or generated sheet does not require rewriting entity draw code.
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "directions", ()=>directions);
+parcelHelpers.export(exports, "playerSpriteManifest", ()=>playerSpriteManifest);
+parcelHelpers.export(exports, "guardSpriteManifest", ()=>guardSpriteManifest);
+const directions = {
+    down: "down",
+    up: "up",
+    left: "left",
+    right: "right"
+};
+const playerSpriteManifest = {
+    defaultState: "idle",
+    defaultDirection: directions.down,
+    sheets: {
+        movement: "movement",
+        actions: "actions"
+    },
+    states: {
+        idle: {
+            sheet: "movement",
+            frameWidth: 32,
+            frameHeight: 32,
+            frames: 6,
+            frameDurationMs: 150,
+            rows: {
+                down: 0,
+                left: 1,
+                right: 1,
+                up: 2
+            },
+            flipLeft: true
+        },
+        walk: {
+            sheet: "movement",
+            frameWidth: 32,
+            frameHeight: 32,
+            frames: 6,
+            frameDurationMs: 90,
+            rows: {
+                down: 0,
+                left: 4,
+                right: 4,
+                up: 2
+            },
+            flipLeft: true
+        },
+        attack: {
+            sheet: "movement",
+            frameWidth: 32,
+            frameHeight: 32,
+            frames: 4,
+            frameDurationMs: 80,
+            rows: {
+                down: 6,
+                left: 7,
+                right: 7,
+                up: 8
+            },
+            flipLeft: true,
+            oneShot: true,
+            returnTo: "idle",
+            activeStartMs: 0,
+            activeEndMs: 220
+        },
+        pick: {
+            sheet: "actions",
+            frameWidth: 48,
+            frameHeight: 48,
+            frames: 2,
+            frameDurationMs: 120,
+            rows: {
+                down: 1,
+                left: 0,
+                right: 0,
+                up: 2
+            },
+            flipLeft: true,
+            oneShot: true,
+            returnTo: "idle"
+        },
+        potion: {
+            sheet: "actions",
+            frameWidth: 48,
+            frameHeight: 48,
+            frames: 2,
+            frameDurationMs: 130,
+            rows: {
+                down: 9,
+                left: 9,
+                right: 9,
+                up: 10
+            },
+            flipLeft: true,
+            oneShot: true,
+            returnTo: "idle"
+        },
+        defeated: {
+            sheet: "movement",
+            frameWidth: 32,
+            frameHeight: 32,
+            frames: 6,
+            frameDurationMs: 130,
+            rows: {
+                down: 9,
+                left: 9,
+                right: 9,
+                up: 9
+            },
+            flipLeft: true,
+            oneShot: true,
+            holdLast: true
+        }
+    },
+    weapons: {
+        axe: {
+            actionState: "axe",
+            states: {
+                axe: {
+                    sheet: "actions",
+                    frameWidth: 48,
+                    frameHeight: 48,
+                    frames: 2,
+                    frameDurationMs: 110,
+                    rows: {
+                        down: 10,
+                        left: 10,
+                        right: 10,
+                        up: 10
+                    },
+                    flipLeft: true,
+                    oneShot: true,
+                    returnTo: "idle",
+                    activeStartMs: 0,
+                    activeEndMs: 210
+                }
+            }
+        }
+    }
+};
+const guardSpriteManifest = {
+    defaultState: "idle",
+    defaultDirection: directions.down,
+    states: {
+        idle: {
+            frameWidth: 64,
+            frameHeight: 64,
+            frames: 4,
+            frameDurationMs: 220,
+            rows: {
+                down: 0,
+                up: 1,
+                left: 2,
+                right: 3
+            }
+        },
+        walk: {
+            frameWidth: 64,
+            frameHeight: 64,
+            frames: 4,
+            frameDurationMs: 120,
+            rows: {
+                down: 0,
+                up: 1,
+                left: 2,
+                right: 3
+            }
+        },
+        attack: {
+            frameWidth: 64,
+            frameHeight: 64,
+            frames: 4,
+            frameDurationMs: 110,
+            rows: {
+                down: 0,
+                up: 1,
+                left: 2,
+                right: 3
+            },
+            oneShot: true,
+            returnTo: "idle"
+        },
+        hurt: {
+            frameWidth: 64,
+            frameHeight: 64,
+            frames: 4,
+            frameDurationMs: 90,
+            rows: {
+                down: 0,
+                up: 1,
+                left: 2,
+                right: 3
+            },
+            oneShot: true,
+            returnTo: "idle"
+        },
+        dead: {
+            frameWidth: 64,
+            frameHeight: 64,
+            frames: 4,
+            frameDurationMs: 140,
+            rows: {
+                down: 0,
+                up: 1,
+                left: 2,
+                right: 3
+            },
+            oneShot: true,
+            holdLast: true
+        }
+    }
+};
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"8gP9P":[function(require,module,exports) {
+// Item catalog
+// - Single source of truth for every item that can live in the player's
+//   inventory: pickups, guard drops, weapons and runes
+// - `icon` refers to a key in the itemAssets loaded by assets.js
+// - Weapons and runes are equipped from the inventory screen (one of each);
+//   their bonuses are applied by the Player while equipped
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "itemCatalog", ()=>itemCatalog);
+parcelHelpers.export(exports, "guardDropPool", ()=>guardDropPool);
+const itemCatalog = {
+    key: {
+        name: "Key",
+        article: "a",
+        kind: "key",
+        icon: "key",
+        description: "Unlocks a locked door \u2014 walk into the door while carrying it."
+    },
+    potion: {
+        name: "Health Potion",
+        article: "a",
+        kind: "potion",
+        icon: "potion",
+        healAmount: 50,
+        description: "Restores 50 health. Press 'u' or click it here to drink one."
+    },
+    explosive: {
+        name: "Explosive",
+        article: "an",
+        kind: "explosive",
+        icon: "explosive",
+        description: "Unstable and powerful. No use for it yet \u2014 handle with care."
+    },
+    steelSword: {
+        name: "Steel Sword",
+        article: "a",
+        kind: "weapon",
+        icon: "steelSword",
+        attackBonus: 25,
+        description: "A sturdy blade. +25 attack power while equipped."
+    },
+    warAxe: {
+        name: "War Axe",
+        article: "a",
+        kind: "weapon",
+        icon: "warAxe",
+        attackBonus: 50,
+        description: "Heavy and brutal. +50 attack power while equipped."
+    },
+    runeHaste: {
+        name: "Rune of Haste",
+        article: "a",
+        kind: "rune",
+        icon: "runeHaste",
+        speedBonus: 120,
+        description: "Ancient stone humming with energy. Move faster while equipped."
+    },
+    runeMight: {
+        name: "Rune of Might",
+        article: "a",
+        kind: "rune",
+        icon: "runeMight",
+        attackBonus: 25,
+        description: "Burns with orcish rage. +25 attack power while equipped."
+    },
+    runeWarding: {
+        name: "Rune of Warding",
+        article: "a",
+        kind: "rune",
+        icon: "runeWarding",
+        description: "A protective sigil. Halves all damage taken while equipped."
+    }
+};
+const guardDropPool = [
+    "potion",
+    "potion",
+    "steelSword",
+    "warAxe",
+    "runeHaste",
+    "runeMight",
+    "runeWarding"
+];
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"57eJ8":[function(require,module,exports) {
 // Level data
 // - Define the structure of each level (layout of the labyrinth)
 // - Specify positions of obstacles, powerups, explosives, guards
-// - Include metadata (level number, difficulty, etc.)
+// - Include metadata (level number, difficulty, name)
+//
+// Layout legend:
+//   '#' wall          ' ' floor         'P' player spawn   'X' exit
+//   'T' tree (solid, choppable)         'O' boulder (solid, choppable)
+//   'G' guard         'B' boss          'C' crystal        'E' explosive
+//   'D' locked door (a defeated guard drops the key)
+//
+// Every layout is 10 rows of exactly 20 characters. Trees and boulders can
+// be chopped down (2 hits), so they make soft walls: a shortcut for players
+// willing to stop and swing, a detour for those who keep running.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 class LevelData {
@@ -1681,1126 +2621,165 @@ class LevelData {
     }
 }
 class Level {
-    constructor(number, difficulty, layout, theme){
+    constructor(number, difficulty, layout, name, options = {}){
         this.number = number;
         this.difficulty = difficulty;
         this.layout = layout;
-        this.theme = theme;
+        this.name = name;
+        // With fog of war on, only explored parts of the map are visible
+        this.fogOfWar = Boolean(options.fogOfWar);
     }
 }
-// Example usage:
+// Rows are written as strings for readability and converted to the
+// character arrays the game consumes
+const parse = (rows)=>rows.map((row)=>row.split(""));
 const levelData = new LevelData();
-// Add levels
-levelData.addLevel(new Level(1, "easy", [
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ],
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ],
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "#",
-        "P",
-        "T",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ],
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "#",
-        " ",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        "#",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ],
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "#",
-        "O",
-        "#",
-        "X",
-        "#",
-        " ",
-        "C",
-        "#",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ],
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "#",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ],
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "#",
-        "#",
-        "#",
-        " ",
-        "#",
-        " ",
-        "G",
-        "#",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ],
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "#",
-        " ",
-        "C",
-        "G",
-        " ",
-        "E",
-        " ",
-        "#",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ],
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ],
-    [
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T",
-        "T"
-    ]
-]));
-levelData.addLevel(new Level(2, "easy", [
-    [
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#"
-    ],
-    [
-        "#",
-        "P",
-        " ",
-        " ",
-        "#",
-        "G",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#"
-    ],
-    [
-        "#",
-        " ",
-        "#",
-        " ",
-        "#",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        "#"
-    ],
-    [
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "#",
-        " ",
-        "#",
-        "#",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#"
-    ],
-    [
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#"
-    ],
-    [
-        "#",
-        "X",
-        " ",
-        "G",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#"
-    ],
-    [
-        "#",
-        " ",
-        "#",
-        " ",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "G",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        "#"
-    ],
-    [
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "#"
-    ],
-    [
-        "#",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        "#"
-    ],
-    [
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#"
-    ]
-]));
-levelData.addLevel(new Level(3, "medium", [
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "P",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "#",
-        " ",
-        "#",
-        " ",
-        "C",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "E",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        " ",
-        "#",
-        " ",
-        "G",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "C",
-        "G",
-        " ",
-        "E",
-        " ",
-        "X",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ]
-]));
-levelData.addLevel(new Level(4, "hard", [
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "P",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "#",
-        " ",
-        "#",
-        " ",
-        "C",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "E",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        " ",
-        "#",
-        " ",
-        "G",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "C",
-        "G",
-        " ",
-        "E",
-        " ",
-        "X",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ]
-]));
-levelData.addLevel(new Level(5, "expert", [
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "P",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "#",
-        " ",
-        "#",
-        " ",
-        "C",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "E",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        " ",
-        "#",
-        " ",
-        "G",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        " ",
-        "C",
-        "G",
-        " ",
-        "E",
-        " ",
-        "X",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        "#",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ],
-    [
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " ",
-        " "
-    ]
-]));
+// 1. The Glade — tutorial: a small maze inside a forest clearing. One tree
+// blocks a corridor (teaches chopping), one boulder guards a dead end.
+levelData.addLevel(new Level(1, "easy", parse([
+    "TTTTTTTTTTTTTTTTTTTT",
+    "T##################T",
+    "T#  G #PT     C   #T",
+    "T# ## #   ####### #T",
+    "T#    #O#  C # ## #T",
+    "T# ## # ##   #    #T",
+    "T#  # #    #   ## #T",
+    "T# ##   ##G# X ## #T",
+    "T#    E #      T  #T",
+    "TTTTTTTTTTTTTTTTTTTT"
+]), "The Glade"));
+// 2. The Gatehouse — first locked door: defeat a guard to find the key
+levelData.addLevel(new Level(2, "easy", parse([
+    "####################",
+    "#P  #G  #####      #",
+    "# # # #   #   #### #",
+    "#     # # ## #     #",
+    "#########    #D#####",
+    "#X G    ######     #",
+    "# # ###    #G##### #",
+    "#     ###    #   # #",
+    "#   #     ##   #   #",
+    "####################"
+]), "The Gatehouse"));
+// 3. The Orchard — rows of trees form choppable gates between corridors:
+// chop straight through or walk around via the side openings
+levelData.addLevel(new Level(3, "medium", parse([
+    "####################",
+    "#P  TT   C  TT    C#",
+    "#   TT      TT     #",
+    "##T####T######T##T##",
+    "#   G     E    G   #",
+    "#C  TT      TT     #",
+    "##T####T######T# ###",
+    "#   G     C  G     #",
+    "#  TTT      TT    X#",
+    "####################"
+]), "The Orchard"));
+// 4. The Quarry — boulders plug the wall gaps: every shortcut costs two
+// swings of the axe, every detour risks a patrol
+levelData.addLevel(new Level(4, "medium", parse([
+    "####################",
+    "#P   #  C  O  G   C#",
+    "#    O     #       #",
+    "## ###### ####O### #",
+    "#  G   #     C   G #",
+    "#    O #  E #      #",
+    "# #### ##O### ###O##",
+    "#  C      #     G  #",
+    "#    G    O   C   X#",
+    "####################"
+]), "The Quarry"));
+// 5. The Warden — the first boss guards the open eastern arena. It is slow:
+// keep moving, land a swing, and step away before it closes in.
+levelData.addLevel(new Level(5, "medium", parse([
+    "####################",
+    "#P #  C    #      C#",
+    "#  # ## ## #  ### ##",
+    "# G#  #  # #       #",
+    "#  ## # ###    B   #",
+    "#     #            #",
+    "# ###### ###   ### #",
+    "# C #  G   #       #",
+    "#   #      ##  X   #",
+    "####################"
+]), "The Warden"));
+// 6. Twin Halls — two halls behind two locked doors: the guards of each
+// hall carry the key to the next
+levelData.addLevel(new Level(6, "hard", parse([
+    "####################",
+    "#P   #  G   #  C  G#",
+    "#  C #      #      #",
+    "# G  #  E   #  ##  #",
+    "#    D      D  ## X#",
+    "#  ###      #      #",
+    "#    #  C   #   G  #",
+    "# ## #      # ###  #",
+    "#  G #   G  #  C   #",
+    "####################"
+]), "Twin Halls"));
+// 7. The Serpent — one long winding corridor walked in the dark: fog of
+// war hides what waits beyond the next bend. Gates of trees and boulders
+// plug the wall gaps.
+levelData.addLevel(new Level(7, "hard", parse([
+    "####################",
+    "#P  C      G      G#",
+    "################## #",
+    "#    G     C      T#",
+    "#T##################",
+    "# G     E     C    #",
+    "##################O#",
+    "#  G     C    G    #",
+    "#X                T#",
+    "####################"
+]), "The Serpent", {
+    fogOfWar: true
+}));
+// 8. The Crossroads — four guarded quadrants around a central plaza where
+// a boss patrols the loot
+levelData.addLevel(new Level(8, "hard", parse([
+    "####################",
+    "#P   #   C  #     G#",
+    "#  G #      #  C   #",
+    "#### ## ## ## # ####",
+    "#      G           #",
+    "#  C     B      E  #",
+    "#### ## ## ## # ####",
+    "#  G #      #   G  #",
+    "#    # C    #    X #",
+    "####################"
+]), "The Crossroads"));
+// 9. The Gauntlet — four chambers in a row, each sealed by a locked door;
+// every chamber's guards carry the next key
+levelData.addLevel(new Level(9, "expert", parse([
+    "####################",
+    "#P  #C  G#   G# C  #",
+    "#   #    #    #    #",
+    "# G D  G D  E D  G #",
+    "#   #    #    #    #",
+    "## ## ## # ## ## ###",
+    "#C  #  G #  G #   G#",
+    "#   #    #    #  ###",
+    "# G #  C #  C #  X##",
+    "####################"
+]), "The Gauntlet", {
+    fogOfWar: true
+}));
+// 10. The Throne — the final boss waits in an inner sanctum behind a locked
+// door, with the exit at its back. Sneak past it or bring it down for glory.
+levelData.addLevel(new Level(10, "expert", parse([
+    "####################",
+    "#P   #     C    G  #",
+    "# G  # ##########  #",
+    "#    # #      X##  #",
+    "## # # #  B    ## C#",
+    "#  # # #       ##  #",
+    "#  #   ####D##### G#",
+    "#E ## G    C     ###",
+    "#C     ##     G   T#",
+    "####################"
+]), "The Throne", {
+    fogOfWar: true
+}));
 exports.default = levelData;
 
 },{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"TkAKd":[function(require,module,exports) {
@@ -2867,7 +2846,6 @@ var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
 var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
-var _settingsJs = require("../utils/settings.js");
 // Wall entity class
 // - Represents the walls in the game
 // - Defines properties such as position, width, height
@@ -2880,7 +2858,7 @@ class Wall extends (0, _entityJsDefault.default) {
     constructor(x, y, type, assets){
         super(x, y);
         this.#type = type; // 'normal', 'breakable', 'secret'
-        this._sprite = assets.rock;
+        this._sprite = assets.wall;
     }
     getType() {
         return this.#type;
@@ -2889,25 +2867,12 @@ class Wall extends (0, _entityJsDefault.default) {
     // Update wall state if needed (e.g., for breakable walls)
     }
     draw(ctx) {
-        const spriteX = 0;
-        let spriteY = 0;
-        // Select sprite based on wall type
-        switch(this.#type){
-            case "breakable":
-                spriteY = (0, _settingsJs.canvasSettings).cellHeight;
-                break;
-            case "secret":
-                spriteY = (0, _settingsJs.canvasSettings).cellHeight * 2;
-                break;
-            default:
-                spriteY = 0;
-        }
-        ctx.drawImage(this._sprite, spriteX, spriteY, this._width, this._height, this._position.x, this._position.y, this._width, this._height);
+        ctx.drawImage(this._sprite, this._position.x, this._position.y, this._width, this._height);
     }
 }
 exports.default = Wall;
 
-},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"590U3":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"590U3":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -2960,37 +2925,56 @@ var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
 var _settingsJs = require("../utils/settings.js");
 var _gameJs = require("../utils/game.js");
 var _rngJs = require("../utils/rng.js");
-// Guard entity class
-// - Represents the guards in the game
-// - Can move towards the player
-// - Can detect the player's position
-// - Can attack the player
-// - Can be defeated by the player
-// - Can drop powerups when defeated
-// - Can drop explosives when defeated
-// - Can drop keys when defeated
-// - Can drop keys when defeated
+var _animatorJs = require("./animator.js");
+var _animatorJsDefault = parcelHelpers.interopDefault(_animatorJs);
+var _spriteManifestJs = require("../assets/sprite-manifest.js");
 class Guard extends (0, _entityJsDefault.default) {
     #speed;
     #detectionRange;
-    #currentSprite;
     #health;
-    constructor(x, y, type, assets){
-        super(x, y, type, assets, (0, _settingsJs.entitySettings).enemyWidth, (0, _settingsJs.entitySettings).enemyHeight);
-        this.action = "idle";
+    #maxHealth;
+    #currentSprite;
+    #defeatAwarded = false;
+    // Time the health bar stays visible after the last hit
+    #healthBarMs = 0;
+    // Active knockback push: direction vector plus remaining duration
+    #knockback = null;
+    #isBoss;
+    constructor(x, y, type, assets, { boss = false } = {}){
+        super(x, y, type, assets, boss ? (0, _settingsJs.bossSettings).width : (0, _settingsJs.entitySettings).enemyWidth, boss ? (0, _settingsJs.bossSettings).height : (0, _settingsJs.entitySettings).enemyHeight);
+        this.#isBoss = boss;
+        this.animator = new (0, _animatorJsDefault.default)((0, _spriteManifestJs.guardSpriteManifest));
         this.movement = [
             "down",
             "up",
             "left",
             "right"
         ][(0, _rngJs.randomInt)(0, 3)];
-        this.damage = 10;
-        this.#health = 100;
-        this.#speed = 1;
-        this.#detectionRange = 5 * (0, _settingsJs.canvasSettings).cellWidth;
+        this.animator.setDirection(this.movement);
+        this.action = "idle";
+        this.damage = boss ? (0, _settingsJs.bossSettings).damage : 10;
+        this.#maxHealth = boss ? (0, _settingsJs.bossSettings).health : 100;
+        this.#health = this.#maxHealth;
+        this.#speed = boss ? (0, _settingsJs.bossSettings).speed : 60; // pixels per second
+        this.#detectionRange = (boss ? (0, _settingsJs.bossSettings).detectionRangeCells : 5) * (0, _settingsJs.canvasSettings).cellWidth;
         this.#currentSprite = this._sprites.idle;
-        this.frameCount = 0;
         this.currentFrame = 0;
+    }
+    isBoss() {
+        return this.#isBoss;
+    }
+    // The sprite frame has generous transparent padding, so contact damage
+    // uses a tighter box that matches the visible body instead of the full
+    // drawn rectangle
+    getHitBox() {
+        const insetX = this._width * 0.2;
+        const insetY = this._height * 0.2;
+        return {
+            x: this._position.x + insetX,
+            y: this._position.y + insetY,
+            width: this._width - insetX * 2,
+            height: this._height - insetY * 2
+        };
     }
     selectSprites(assets) {
         return {
@@ -3004,13 +2988,39 @@ class Guard extends (0, _entityJsDefault.default) {
             walkAttack: assets[`${this._type}_Walk_Attack`]
         };
     }
-    moveTowards(target, walls) {
+    #setSpriteForAction(action) {
+        switch(action){
+            case "attack":
+                this.#currentSprite = this._sprites.attack;
+                break;
+            case "dead":
+                this.#currentSprite = this._sprites.death;
+                break;
+            case "hurt":
+                this.#currentSprite = this._sprites.hurt;
+                break;
+            case "walk":
+                this.#currentSprite = this._sprites.walk;
+                break;
+            case "idle":
+            default:
+                this.#currentSprite = this._sprites.idle;
+                break;
+        }
+    }
+    #syncAnimationState() {
+        this.action = this.animator.state;
+        this.currentFrame = this.animator.frame;
+        this.#setSpriteForAction(this.action);
+    }
+    moveTowards(target, walls, deltaMs = 1000 / 60) {
+        if (this.isDefeated()) return;
         const dx = target.x - this._position.x;
         const dy = target.y - this._position.y;
-        // Determine primary direction
         if (Math.abs(dx) > Math.abs(dy)) this.movement = dx > 0 ? "right" : "left";
         else this.movement = dy > 0 ? "down" : "up";
-        // Check if movement is possible (not blocked by a wall)
+        this.animator.setDirection(this.movement);
+        const distance = this.#speed * (deltaMs / 1000);
         const nextPosition = {
             ...this._position,
             width: (0, _settingsJs.canvasSettings).cellWidth / 2,
@@ -3018,36 +3028,35 @@ class Guard extends (0, _entityJsDefault.default) {
         };
         switch(this.movement){
             case "up":
-                nextPosition.y -= this.#speed;
+                nextPosition.y -= distance;
                 break;
             case "down":
-                nextPosition.y += this.#speed;
+                nextPosition.y += distance;
                 break;
             case "left":
-                nextPosition.x -= this.#speed;
+                nextPosition.x -= distance;
                 break;
             case "right":
-                nextPosition.x += this.#speed;
+                nextPosition.x += distance;
                 break;
         }
         const willCollideWithWalls = walls.some((wall)=>(0, _gameJs.isColliding)(nextPosition, wall.getHitBox()));
         const willCollideWithPlayer = (0, _gameJs.isColliding)(nextPosition, target);
-        if (willCollideWithPlayer) {
-            // Determine guard's facing direction based on target position
-            if (Math.abs(dx) > Math.abs(dy)) this.movement = dx > 0 ? "right" : "left";
-            else this.movement = dy > 0 ? "down" : "up";
-            this.attack();
-        } else if (!willCollideWithWalls) {
-            this._position = nextPosition;
+        if (willCollideWithPlayer) this.attack();
+        else if (!willCollideWithWalls) {
+            this._position = {
+                x: nextPosition.x,
+                y: nextPosition.y
+            };
             this.walk();
         } else this.idle();
     }
     detectPlayer(playerPosition, walls) {
+        if (this.isDefeated()) return false;
         const dx = playerPosition.x - this._position.x;
         const dy = playerPosition.y - this._position.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         if (distance <= this.#detectionRange) {
-            // Check if there's a clear line of sight
             const step = {
                 x: dx / distance,
                 y: dy / distance
@@ -3059,51 +3068,104 @@ class Guard extends (0, _entityJsDefault.default) {
             };
             for(let i = 0; i < distance; i += (0, _settingsJs.canvasSettings).cellWidth / 2){
                 checkPosition.x += step.x * ((0, _settingsJs.canvasSettings).cellWidth / 2);
-                checkPosition.y += step.y * ((0, _settingsJs.canvasSettings).cellWidth / 2);
-                if (walls.some((wall)=>(0, _gameJs.isColliding)(checkPosition, wall.getHitBox()))) return false; // Wall blocking the line of sight
+                checkPosition.y += step.y * ((0, _settingsJs.canvasSettings).cellHeight / 2);
+                if (walls.some((wall)=>(0, _gameJs.isColliding)(checkPosition, wall.getHitBox()))) return false;
             }
-            return true; // Clear line of sight to the player
+            return true;
         }
-        return false; // Player out of detection range
+        return false;
     }
     idle() {
-        this.action = "idle";
-        this.#currentSprite = this._sprites.idle;
+        this.animator.setState("idle");
+        this.#syncAnimationState();
     }
     walk() {
-        this.action = "walk";
-        this.#currentSprite = this._sprites.walk;
+        this.animator.setState("walk");
+        this.#syncAnimationState();
     }
     attack() {
-        this.action = "attack";
-        this.#currentSprite = this._sprites.attack;
+        this.animator.play("attack", {
+            restart: true,
+            direction: this.movement
+        });
+        this.#syncAnimationState();
     }
     hurt() {
-        this.action = "hurt";
-        this.#currentSprite = this._sprites.hurt;
+        this.animator.play("hurt", {
+            restart: true,
+            direction: this.movement
+        });
+        this.#syncAnimationState();
     }
-    // Apply damage from the player. Returns true when the guard is defeated.
-    takeDamage(amount) {
+    // Apply damage from the player. `fromDirection` is the direction the
+    // player was facing, so the guard is knocked back away from the swing.
+    takeDamage(amount, fromDirection = null) {
         if (this.#health <= 0) return false;
-        this.#health -= amount;
+        this.#health = Math.max(0, this.#health - amount);
+        this.#healthBarMs = (0, _settingsJs.combatSettings).healthBarVisibleMs;
         if (this.#health <= 0) {
             this.defeat();
             return true;
         }
+        // Bosses are too heavy to be pushed around
+        if (fromDirection && !this.#isBoss) {
+            const push = {
+                up: {
+                    x: 0,
+                    y: -1
+                },
+                down: {
+                    x: 0,
+                    y: 1
+                },
+                left: {
+                    x: -1,
+                    y: 0
+                },
+                right: {
+                    x: 1,
+                    y: 0
+                }
+            }[fromDirection];
+            if (push) this.#knockback = {
+                ...push,
+                msLeft: (0, _settingsJs.combatSettings).knockbackDurationMs
+            };
+        }
         this.hurt();
         return false;
+    }
+    getHealth() {
+        return this.#health;
+    }
+    getMaxHealth() {
+        return this.#maxHealth;
+    }
+    isHealthBarVisible() {
+        // A boss always shows its health bar, so the danger (and progress
+        // against it) is visible before the first hit lands
+        return !this.isDefeated() && (this.#isBoss || this.#healthBarMs > 0);
     }
     isDefeated() {
         return this.#health <= 0;
     }
+    consumeDefeatAward() {
+        if (!this.isDefeated() || this.#defeatAwarded) return false;
+        this.#defeatAwarded = true;
+        return true;
+    }
+    isReadyToRemove() {
+        return this.isDefeated() && this.animator.isComplete("dead");
+    }
     defeat() {
-        this.action = "dead";
-        this.#currentSprite = this._sprites.death;
-    // Return dropped items (powerups, explosives, keys)
+        this.#health = 0;
+        this.animator.play("dead", {
+            restart: true,
+            direction: this.movement
+        });
+        this.#syncAnimationState();
     }
     lookAround() {
-        this.action = "idle";
-        this.#currentSprite = this._sprites.idle;
         const directions = [
             "up",
             "right",
@@ -3111,48 +3173,68 @@ class Guard extends (0, _entityJsDefault.default) {
             "left"
         ];
         const currentIndex = directions.indexOf(this.movement);
-        if (currentIndex !== -1) this.movement = directions[(currentIndex + 1) % 4];
-        else this.movement = "up";
+        this.movement = currentIndex !== -1 ? directions[(currentIndex + 1) % 4] : "up";
+        this.animator.setDirection(this.movement);
+        this.idle();
     }
-    update(playerPosition, walls) {
-        const frames_per_action = 4;
-        const frames_per_look = 180; // Look around every 60 frames (about 1 second at 60 FPS)
-        const max_frame_count = this.action === "idle" ? 180 : 20;
-        this.frameCount++;
-        if (this.frameCount >= max_frame_count) {
-            this.frameCount = 0;
-            this.currentFrame = (this.currentFrame + 1) % frames_per_action;
+    update(playerPosition, walls, deltaMs = 1000 / 60) {
+        this.animator.update(deltaMs);
+        this.#syncAnimationState();
+        this.#healthBarMs = Math.max(0, this.#healthBarMs - deltaMs);
+        if (this.isDefeated()) return;
+        // A knockback push overrides normal movement while it lasts
+        if (this.#knockback) {
+            this.#applyKnockback(walls, deltaMs);
+            return;
         }
-        if (this.detectPlayer(playerPosition, walls)) this.moveTowards(playerPosition, walls);
-        else if (this.frameCount % frames_per_look === 0) this.lookAround();
+        if (this.detectPlayer(playerPosition, walls)) this.moveTowards(playerPosition, walls, deltaMs);
         else this.idle();
     }
+    #applyKnockback(walls, deltaMs) {
+        const distance = (0, _settingsJs.combatSettings).knockbackSpeed * (deltaMs / 1000);
+        const nextPosition = {
+            x: this._position.x + this.#knockback.x * distance,
+            y: this._position.y + this.#knockback.y * distance,
+            width: (0, _settingsJs.canvasSettings).cellWidth / 2,
+            height: (0, _settingsJs.canvasSettings).cellHeight / 2
+        };
+        const blocked = walls.some((wall)=>(0, _gameJs.isColliding)(nextPosition, wall.getHitBox()));
+        if (!blocked) this._position = {
+            x: nextPosition.x,
+            y: nextPosition.y
+        };
+        this.#knockback.msLeft -= deltaMs;
+        if (this.#knockback.msLeft <= 0 || blocked) this.#knockback = null;
+    }
     draw(ctx) {
-        let spriteHeight = 64;
-        let spriteWidth = 64;
-        let spriteX = this.currentFrame * spriteWidth;
-        let spriteY = 0;
-        // Determine spriteY based on movement direction
-        switch(this.movement){
-            case "down":
-                spriteY = 0 * spriteHeight;
-                break;
-            case "up":
-                spriteY = 1 * spriteHeight;
-                break;
-            case "left":
-                spriteY = 2 * spriteHeight;
-                break;
-            case "right":
-                spriteY = 3 * spriteHeight;
-                break;
-        }
-        ctx.drawImage(this.#currentSprite, spriteX, spriteY, spriteWidth, spriteHeight, this._position.x - 10, this._position.y - 10, this._width, this._height);
+        const frame = this.animator.getFrame(this.movement);
+        ctx.drawImage(this.#currentSprite, frame.sourceX, frame.sourceY, frame.frameWidth, frame.frameHeight, this._position.x - 10, this._position.y - 10, this._width, this._height);
+        this.#drawHealthBar(ctx);
+    }
+    // Small health bar above the guard, visible for a few seconds after a hit.
+    // A boss bar is wider and permanently visible.
+    #drawHealthBar(ctx) {
+        if (!this.isHealthBarVisible()) return;
+        const barWidth = this.#isBoss ? 96 : 48;
+        const barHeight = this.#isBoss ? 8 : 6;
+        const barX = this._position.x + (this._width - barWidth) / 2 - 10;
+        const barY = this._position.y - 20;
+        const ratio = this.#health / this.#maxHealth;
+        ctx.save();
+        // Fade out during the last second on screen (boss bars never fade)
+        ctx.globalAlpha = this.#isBoss ? 1 : Math.min(1, this.#healthBarMs / 1000);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+        ctx.fillStyle = "#555";
+        ctx.fillRect(barX, barY, barWidth, barHeight);
+        ctx.fillStyle = ratio > 0.5 ? "#4caf50" : ratio > 0.25 ? "#ff9800" : "#c62828";
+        ctx.fillRect(barX, barY, barWidth * ratio, barHeight);
+        ctx.restore();
     }
 }
 exports.default = Guard;
 
-},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","../utils/game.js":"jBBaN","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"14cf6":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","../utils/game.js":"jBBaN","../utils/rng.js":"7uRsi","./animator.js":"hma7Y","../assets/sprite-manifest.js":"kdgDE","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"14cf6":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -3170,7 +3252,7 @@ class Obstacle extends (0, _entityJsDefault.default) {
     constructor(x, y, type, assets){
         super(x, y, type, assets);
         this.#health = 100;
-        if (type === "boulder") this._sprite = assets.rock;
+        if (type === "boulder") this._sprite = assets.boulder;
         else if (type === "tree") {
             const randomTree = (0, _rngJs.randomInt)(1, 2);
             this._sprite = assets[`palm${randomTree}`];
@@ -3201,8 +3283,15 @@ exports.default = Obstacle;
 },{"./entity.js":"4kBdl","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"7DUBa":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "powerupDescriptions", ()=>powerupDescriptions);
 var _entityJs = require("./entity.js");
 var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
+const powerupDescriptions = {
+    health: "Red Crystal \u2014 restores 25 health",
+    speed: "Blue Crystal \u2014 speed boost for 10 seconds!",
+    strength: "Green Crystal \u2014 double attack power for 10 seconds!",
+    invincibility: "Yellow Crystal \u2014 invincible for 10 seconds!"
+};
 // Powerup entity class
 // - Represents the powerups in the game
 // - Can be collected by the player
@@ -3310,7 +3399,86 @@ class Exit extends (0, _entityJsDefault.default) {
 }
 exports.default = Exit;
 
-},{"./entity.js":"4kBdl","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2MtDO":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"3BhaU":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+var _entityJs = require("./entity.js");
+var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
+var _itemsJs = require("../items.js");
+// Drop entity class
+// - An item lying on the ground after a guard is defeated
+// - Bobs gently so it stands out from the scenery
+// - Picked up (into the player's inventory) on contact; see Game.checkCollisions
+class Drop extends (0, _entityJsDefault.default) {
+    #ageMs = 0;
+    constructor(x, y, itemId, itemAssets){
+        super(x, y, itemId, itemAssets);
+    }
+    selectSprites(assets) {
+        return {
+            icon: assets[(0, _itemsJs.itemCatalog)[this._type].icon]
+        };
+    }
+    update(deltaMs = 1000 / 60) {
+        this.#ageMs += deltaMs;
+    }
+    draw(ctx) {
+        // Drawn smaller than a full cell so it reads as loot, not scenery
+        const size = 40;
+        const bob = Math.sin(this.#ageMs / 300) * 3;
+        ctx.drawImage(this._sprites.icon, this._position.x + (this._width - size) / 2, this._position.y + (this._height - size) / 2 + bob, size, size);
+    }
+}
+exports.default = Drop;
+
+},{"./entity.js":"4kBdl","../items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"8XUaB":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+var _entityJs = require("./entity.js");
+var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
+// Door entity class
+// - A locked wooden door that blocks a corridor inside the maze ('D' tile)
+// - Blocks the player and guards like a wall while locked
+// - Walking into it while carrying a key unlocks it (see Game.checkDoorUnlock);
+//   once open it disappears and the corridor is free
+class Door extends (0, _entityJsDefault.default) {
+    constructor(x, y, assets){
+        super(x, y, "door", assets);
+        this.locked = true;
+    }
+    selectSprites(assets) {
+        return {
+            door: assets.door
+        };
+    }
+    unlock() {
+        this.locked = false;
+    }
+    draw(ctx) {
+        if (!this.locked) return; // an opened door leaves a free passage
+        ctx.drawImage(this._sprites.door, this._position.x, this._position.y, this._width, this._height);
+        // A padlock signals that the door needs a key
+        const lockX = this._position.x + this._width / 2 - 9;
+        const lockY = this._position.y + this._height / 2 - 2;
+        ctx.save();
+        // Shackle
+        ctx.strokeStyle = "#cfd8dc";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(lockX + 9, lockY + 2, 6, Math.PI, 0);
+        ctx.stroke();
+        // Body
+        ctx.fillStyle = "#ffd54f";
+        ctx.fillRect(lockX, lockY + 2, 18, 14);
+        // Keyhole
+        ctx.fillStyle = "#5d4037";
+        ctx.fillRect(lockX + 7, lockY + 6, 4, 7);
+        ctx.restore();
+    }
+}
+exports.default = Door;
+
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2MtDO":[function(require,module,exports) {
 // handle the assets
 // Load player sprite sheets
 // Load enemy sprite sheets
@@ -3327,6 +3495,7 @@ parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "loadPlayerAssets", ()=>loadPlayerAssets);
 parcelHelpers.export(exports, "loadGuardAssets", ()=>loadGuardAssets);
 parcelHelpers.export(exports, "loadLevelAssets", ()=>loadLevelAssets);
+parcelHelpers.export(exports, "loadItemAssets", ()=>loadItemAssets);
 parcelHelpers.export(exports, "loadPowerUpsAssets", ()=>loadPowerUpsAssets);
 function loadImage(src, onProgress) {
     return new Promise((resolve, reject)=>{
@@ -3414,16 +3583,22 @@ async function loadGuardAssets(onProgress) {
 }
 async function loadLevelAssets(onProgress) {
     console.log("Loading level assets...");
+    const grassTile = await loadImage(new URL(require("1d5dcd0f193cb1ce")).href, onProgress);
+    const wall = await loadImage(new URL(require("e544f926ea4eae58")).href, onProgress);
+    const boulder = await loadImage(new URL(require("c7cde1bd730e6a2")).href, onProgress);
     const rock = await loadImage(new URL(require("1090cc123f927509")).href, onProgress);
     const tree1 = await loadImage(new URL(require("3f5ed577d5909e0d")).href, onProgress);
     const tree2 = await loadImage(new URL(require("58ff784648728cf8")).href, onProgress);
     const tree3 = await loadImage(new URL(require("6d9a56da4d55f52c")).href, onProgress);
-    const palm1 = await loadImage(new URL(require("693e9f0751fa86d2")).href, onProgress);
-    const palm2 = await loadImage(new URL(require("bc4f5cc8883c7693")).href, onProgress);
+    const palm1 = await loadImage(new URL(require("cf0bb9cdce36df0b")).href, onProgress);
+    const palm2 = await loadImage(new URL(require("af258d76c374145f")).href, onProgress);
     const sandRuin = await loadImage(new URL(require("80e7c00fdd98ae89")).href, onProgress);
     const snowRuin = await loadImage(new URL(require("a7b3d39a650d1b88")).href, onProgress);
-    const yellowRuin = await loadImage(new URL(require("d558afb41645e81d")).href, onProgress);
+    const yellowRuin = await loadImage(new URL(require("4b942e3d0fe21af6")).href, onProgress);
     return {
+        grassTile,
+        wall,
+        boulder,
         rock,
         tree1,
         tree2,
@@ -3435,11 +3610,35 @@ async function loadLevelAssets(onProgress) {
         yellowRuin
     };
 }
+async function loadItemAssets(onProgress) {
+    console.log("Loading item assets...");
+    const key = await loadImage(new URL(require("a5ba75c51d5504f7")).href, onProgress);
+    const potion = await loadImage(new URL(require("d14d64b10e5d3b17")).href, onProgress);
+    const explosive = await loadImage(new URL(require("900784a7c2730965")).href, onProgress);
+    const steelSword = await loadImage(new URL(require("1151ba85fd7a4a86")).href, onProgress);
+    const warAxe = await loadImage(new URL(require("d570f7b0415d629f")).href, onProgress);
+    const runeHaste = await loadImage(new URL(require("865739fa4646a4a3")).href, onProgress);
+    const runeMight = await loadImage(new URL(require("fb58bc3bec541d12")).href, onProgress);
+    const runeWarding = await loadImage(new URL(require("b4b968b0b026b42e")).href, onProgress);
+    // Not an inventory item, but generated by the same tool: the locked door tile
+    const door = await loadImage(new URL(require("8c995fa55a1ef06d")).href, onProgress);
+    return {
+        key,
+        potion,
+        explosive,
+        steelSword,
+        warAxe,
+        runeHaste,
+        runeMight,
+        runeWarding,
+        door
+    };
+}
 async function loadPowerUpsAssets(onProgress) {
     console.log("Loading powerups assets...");
     const greenCrystal = await loadImage(new URL(require("3d27847b46809984")).href, onProgress);
-    const redCrystal = await loadImage(new URL(require("d64a48fa1826a640")).href, onProgress);
-    const blueCrystal = await loadImage(new URL(require("66d083ceb4ac7a4e")).href, onProgress);
+    const redCrystal = await loadImage(new URL(require("2a8d51d362a28a5a")).href, onProgress);
+    const blueCrystal = await loadImage(new URL(require("426b380674b42f96")).href, onProgress);
     const yellowCrystal = await loadImage(new URL(require("9ae2d2d58e4ae0ee")).href, onProgress);
     return {
         greenCrystal,
@@ -3449,7 +3648,7 @@ async function loadPowerUpsAssets(onProgress) {
     };
 }
 
-},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","693e9f0751fa86d2":"1fs7o","bc4f5cc8883c7693":"i7jn0","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","d558afb41645e81d":"jyGU7","3d27847b46809984":"kAqHG","d64a48fa1826a640":"gWXxV","66d083ceb4ac7a4e":"aYPiB","9ae2d2d58e4ae0ee":"9uNQt","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
+},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","3d27847b46809984":"kAqHG","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
 module.exports = require("59afba6ea444a216").getBundleURL("aAnGP") + "Player.89df9642.png" + "?" + Date.now();
 
 },{"59afba6ea444a216":"lgJ39"}],"lgJ39":[function(require,module,exports) {
@@ -3562,7 +3761,16 @@ module.exports = require("35425eb199dd73d6").getBundleURL("aAnGP") + "orc3_walk_
 },{"35425eb199dd73d6":"lgJ39"}],"bMo3R":[function(require,module,exports) {
 module.exports = require("4789fa1a7eb3f7ec").getBundleURL("aAnGP") + "orc3_walk_attack_full.46776ad5.png" + "?" + Date.now();
 
-},{"4789fa1a7eb3f7ec":"lgJ39"}],"3Ukfr":[function(require,module,exports) {
+},{"4789fa1a7eb3f7ec":"lgJ39"}],"26Zo6":[function(require,module,exports) {
+module.exports = require("2675bf9f17f4deff").getBundleURL("aAnGP") + "grass_tile.63710fbe.png" + "?" + Date.now();
+
+},{"2675bf9f17f4deff":"lgJ39"}],"iF5hM":[function(require,module,exports) {
+module.exports = require("59658cf52c7beaa3").getBundleURL("aAnGP") + "stone_wall.3b737783.png" + "?" + Date.now();
+
+},{"59658cf52c7beaa3":"lgJ39"}],"cXfG8":[function(require,module,exports) {
+module.exports = require("6c935de5cb20817").getBundleURL("aAnGP") + "boulder.6af06052.png" + "?" + Date.now();
+
+},{"6c935de5cb20817":"lgJ39"}],"3Ukfr":[function(require,module,exports) {
 module.exports = require("b5aa8aaf9302a118").getBundleURL("aAnGP") + "Rock6_1.7bba883a.png" + "?" + Date.now();
 
 },{"b5aa8aaf9302a118":"lgJ39"}],"iXpK1":[function(require,module,exports) {
@@ -3574,31 +3782,58 @@ module.exports = require("4b73380b0412dfef").getBundleURL("aAnGP") + "Tree2.a46f
 },{"4b73380b0412dfef":"lgJ39"}],"jXnPG":[function(require,module,exports) {
 module.exports = require("83da82ef92c92fbc").getBundleURL("aAnGP") + "Tree3.826af1fd.png" + "?" + Date.now();
 
-},{"83da82ef92c92fbc":"lgJ39"}],"1fs7o":[function(require,module,exports) {
-module.exports = require("c847ba28193751af").getBundleURL("aAnGP") + "Palm_tree1_2.405e5051.png" + "?" + Date.now();
+},{"83da82ef92c92fbc":"lgJ39"}],"bG74D":[function(require,module,exports) {
+module.exports = require("8be36100caa17a17").getBundleURL("aAnGP") + "palm_a.1270a151.png" + "?" + Date.now();
 
-},{"c847ba28193751af":"lgJ39"}],"i7jn0":[function(require,module,exports) {
-module.exports = require("84aac258d2873666").getBundleURL("aAnGP") + "Palm_tree2_2.2dae9864.png" + "?" + Date.now();
+},{"8be36100caa17a17":"lgJ39"}],"74YJz":[function(require,module,exports) {
+module.exports = require("2158a225651f3dc2").getBundleURL("aAnGP") + "palm_b.3ae9328a.png" + "?" + Date.now();
 
-},{"84aac258d2873666":"lgJ39"}],"lQQEY":[function(require,module,exports) {
+},{"2158a225651f3dc2":"lgJ39"}],"lQQEY":[function(require,module,exports) {
 module.exports = require("5a2d54e811bdc200").getBundleURL("aAnGP") + "Sand_ruins3.1f0a3c59.png" + "?" + Date.now();
 
 },{"5a2d54e811bdc200":"lgJ39"}],"jkJ9x":[function(require,module,exports) {
 module.exports = require("d7584db4a4d9b947").getBundleURL("aAnGP") + "Snow_ruins3.0b4f0802.png" + "?" + Date.now();
 
-},{"d7584db4a4d9b947":"lgJ39"}],"jyGU7":[function(require,module,exports) {
-module.exports = require("79a6f32243245a3e").getBundleURL("aAnGP") + "Yellow_ruins3.e4eb5c38.png" + "?" + Date.now();
+},{"d7584db4a4d9b947":"lgJ39"}],"d9SAV":[function(require,module,exports) {
+module.exports = require("f6fe50e58e8fedab").getBundleURL("aAnGP") + "exit_ruin.0d420dd3.png" + "?" + Date.now();
 
-},{"79a6f32243245a3e":"lgJ39"}],"kAqHG":[function(require,module,exports) {
+},{"f6fe50e58e8fedab":"lgJ39"}],"04CyO":[function(require,module,exports) {
+module.exports = require("6db897c9d2656c50").getBundleURL("aAnGP") + "key.843913e9.png" + "?" + Date.now();
+
+},{"6db897c9d2656c50":"lgJ39"}],"iTkbG":[function(require,module,exports) {
+module.exports = require("f59b545bc58552b1").getBundleURL("aAnGP") + "potion.75bf7793.png" + "?" + Date.now();
+
+},{"f59b545bc58552b1":"lgJ39"}],"kr7ve":[function(require,module,exports) {
+module.exports = require("6e6b6af1a7a9e5e3").getBundleURL("aAnGP") + "explosive.6e1a6b86.png" + "?" + Date.now();
+
+},{"6e6b6af1a7a9e5e3":"lgJ39"}],"imXnd":[function(require,module,exports) {
+module.exports = require("11d54df61439d3a4").getBundleURL("aAnGP") + "sword_steel.a6a16a95.png" + "?" + Date.now();
+
+},{"11d54df61439d3a4":"lgJ39"}],"jPYxu":[function(require,module,exports) {
+module.exports = require("8a526e99c9864b94").getBundleURL("aAnGP") + "axe_war.4354af3b.png" + "?" + Date.now();
+
+},{"8a526e99c9864b94":"lgJ39"}],"5X7zw":[function(require,module,exports) {
+module.exports = require("fffd45939eeb7415").getBundleURL("aAnGP") + "rune_haste.804dfb4c.png" + "?" + Date.now();
+
+},{"fffd45939eeb7415":"lgJ39"}],"gFt5D":[function(require,module,exports) {
+module.exports = require("569da5a8d93cb4c2").getBundleURL("aAnGP") + "rune_might.53f59920.png" + "?" + Date.now();
+
+},{"569da5a8d93cb4c2":"lgJ39"}],"lkXLI":[function(require,module,exports) {
+module.exports = require("e2acc41bb21edb48").getBundleURL("aAnGP") + "rune_warding.532f8ad3.png" + "?" + Date.now();
+
+},{"e2acc41bb21edb48":"lgJ39"}],"1ToI4":[function(require,module,exports) {
+module.exports = require("d034bf1a557e1fec").getBundleURL("aAnGP") + "door.07133bdd.png" + "?" + Date.now();
+
+},{"d034bf1a557e1fec":"lgJ39"}],"kAqHG":[function(require,module,exports) {
 module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
 
-},{"f6b1d88be3588622":"lgJ39"}],"gWXxV":[function(require,module,exports) {
-module.exports = require("de3274c789035aa").getBundleURL("aAnGP") + "Red_crystal2.bbb9761d.png" + "?" + Date.now();
+},{"f6b1d88be3588622":"lgJ39"}],"9J8Br":[function(require,module,exports) {
+module.exports = require("2797bb0f8cdaa3cb").getBundleURL("aAnGP") + "health_crystal.0d30a58e.png" + "?" + Date.now();
 
-},{"de3274c789035aa":"lgJ39"}],"aYPiB":[function(require,module,exports) {
-module.exports = require("ca884f5db4bf1cf2").getBundleURL("aAnGP") + "Blue_crystal2.33de1225.png" + "?" + Date.now();
+},{"2797bb0f8cdaa3cb":"lgJ39"}],"iwGdJ":[function(require,module,exports) {
+module.exports = require("ddb42533b60a1ac4").getBundleURL("aAnGP") + "mana_crystal.65e68033.png" + "?" + Date.now();
 
-},{"ca884f5db4bf1cf2":"lgJ39"}],"9uNQt":[function(require,module,exports) {
+},{"ddb42533b60a1ac4":"lgJ39"}],"9uNQt":[function(require,module,exports) {
 module.exports = require("b88e1a35592b6077").getBundleURL("aAnGP") + "Yellow_crystal2.0ed15310.png" + "?" + Date.now();
 
 },{"b88e1a35592b6077":"lgJ39"}],"kNfRL":[function(require,module,exports) {
@@ -4068,32 +4303,57 @@ parcelHelpers.export(exports, "showLevelCompletedScreen", ()=>showLevelCompleted
 var _themeJs = require("../utils/theme.js");
 function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu) {
     const container = document.getElementById("game-container");
-    container.innerHTML = "";
-    const levelCompletedScreen = document.createElement("div");
-    levelCompletedScreen.id = "level-completed-screen";
+    // The game is already paused (animations frozen on the last rendered
+    // frame); keep the canvas in place and lay a modal over it instead of
+    // clearing the container like the full-page screens do.
+    const existing = document.getElementById("level-completed-screen");
+    if (existing) existing.remove();
+    const overlay = document.createElement("div");
+    overlay.id = "level-completed-screen";
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.background = "rgba(0, 0, 0, 0.45)";
+    overlay.style.backdropFilter = "blur(8px)";
+    overlay.style.webkitBackdropFilter = "blur(8px)";
+    overlay.style.zIndex = "10";
+    const modal = document.createElement("div");
+    modal.style.backgroundColor = (0, _themeJs.theme).colors.background;
+    modal.style.color = (0, _themeJs.theme).colors.text;
+    modal.style.fontFamily = (0, _themeJs.theme).fonts.main;
+    modal.style.textAlign = "center";
+    modal.style.padding = (0, _themeJs.theme).spacing.padding;
+    modal.style.border = "2px solid " + (0, _themeJs.theme).colors.text;
+    modal.style.borderRadius = (0, _themeJs.theme).button.borderRadius;
+    modal.style.boxShadow = "0 0 30px rgba(212, 175, 55, 0.5)";
     const title = document.createElement("h1");
     title.textContent = "Level Completed!";
-    levelCompletedScreen.appendChild(title);
-    const scoreDisplay = document.createElement("p");
-    scoreDisplay.textContent = `Current Score: ${currentScore}`;
-    levelCompletedScreen.appendChild(scoreDisplay);
-    const nextLevelButton = document.createElement("button");
-    nextLevelButton.textContent = "Next Level";
-    nextLevelButton.onclick = onNextLevel;
-    levelCompletedScreen.appendChild(nextLevelButton);
-    const mainMenuButton = document.createElement("button");
-    mainMenuButton.textContent = "Main Menu";
-    mainMenuButton.onclick = onMainMenu;
-    levelCompletedScreen.appendChild(mainMenuButton);
-    container.appendChild(levelCompletedScreen);
-    // Apply styles
-    (0, _themeJs.applyContainerStyles)(container);
     title.style.fontSize = (0, _themeJs.theme).fontSize.title;
     title.style.marginBottom = "20px";
+    modal.appendChild(title);
+    const scoreDisplay = document.createElement("p");
+    scoreDisplay.textContent = `Current Score: ${currentScore}`;
     scoreDisplay.style.fontSize = (0, _themeJs.theme).fontSize.subtitle;
     scoreDisplay.style.marginBottom = "20px";
+    modal.appendChild(scoreDisplay);
+    const closeModal = (callback)=>()=>{
+            overlay.remove();
+            callback();
+        };
+    const nextLevelButton = document.createElement("button");
+    nextLevelButton.textContent = "Next Level";
+    nextLevelButton.onclick = closeModal(onNextLevel);
+    modal.appendChild(nextLevelButton);
+    const mainMenuButton = document.createElement("button");
+    mainMenuButton.textContent = "Main Menu";
+    mainMenuButton.onclick = closeModal(onMainMenu);
+    modal.appendChild(mainMenuButton);
     (0, _themeJs.styleButton)(nextLevelButton, (0, _themeJs.theme).colors.accent);
     (0, _themeJs.styleButton)(mainMenuButton, (0, _themeJs.theme).colors.secondary);
+    overlay.appendChild(modal);
+    container.appendChild(overlay);
 }
 
 },{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2HIwu":[function(require,module,exports) {

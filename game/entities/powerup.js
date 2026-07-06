@@ -1,5 +1,14 @@
 import Entity from './entity.js';
 
+// One-line pickup explanations shown in the HUD when a powerup is collected.
+// Amounts and durations must stay in sync with powerupSettings in utils/settings.js
+export const powerupDescriptions = {
+  health: "Red Crystal — restores 25 health",
+  speed: "Blue Crystal — speed boost for 10 seconds!",
+  strength: "Green Crystal — double attack power for 10 seconds!",
+  invincibility: "Yellow Crystal — invincible for 10 seconds!",
+};
+
 // Powerup entity class
 // - Represents the powerups in the game
 // - Can be collected by the player

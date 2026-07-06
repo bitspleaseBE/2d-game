@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Cool 2d platform game for bedtime",
   "scripts": {
-    "start": "parcel index.html",
+    "start": "parcel index.html --no-cache",
     "build": "parcel build index.html --public-url ./",
     "test": "playwright test"
   },

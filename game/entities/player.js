@@ -1,23 +1,32 @@
 import Entity from './entity.js';
-import { canvasSettings } from "../utils/settings.js";
+import { canvasSettings, playerSettings, powerupSettings } from "../utils/settings.js";
+import Animator from "./animator.js";
+import { playerSpriteManifest } from "../assets/sprite-manifest.js";
+import { itemCatalog } from "../items.js";
 
 class Player extends Entity {
   #health;
-  #speed;
+  #baseSpeed;
+  #attackPower;
   #isHurt = false;
   #hurtInterval = null;
+  #effectMs = { speed: 0, strength: 0, invincibility: 0 };
 
   constructor(x, y, assets) {
     super(x, y, 'player', assets);
     this.#health = 100;
-    this.#speed = 5;
-    this.attackPower = 50;
-    this.explosives = [];
-    this.keys = [];
+    this.#baseSpeed = playerSettings.speed;
+    this.#attackPower = 50;
     this.powerups = [];
+    // Item ids (see items.js) mapped to how many the player carries; the pack
+    // survives level changes (see Game.initializePlayer) but not a new run
+    this.inventory = {};
+    // One weapon and one rune can be equipped at a time
+    this.equipment = { weapon: null, rune: null };
+    this.weaponId = "axe";
 
+    this.animator = new Animator(playerSpriteManifest);
     this.currentFrame = 0;
-    this.frameCount = 0;
     this.movement = "down";
     this.action = "idle";
     this.visible = true;
@@ -48,7 +57,6 @@ class Player extends Entity {
     };
   }
 
-  // Area in front of the player that an attack sweeps over
   getAttackBox() {
     const hitBox = this.getHitBox();
     const reach = this._width * 0.6;
@@ -69,132 +77,229 @@ class Player extends Entity {
     return this.#health;
   }
 
+  get attackPower() {
+    let power = this.#attackPower;
+    // Equipped weapon and rune bonuses
+    for (const equippedId of Object.values(this.equipment)) {
+      const bonus = equippedId && itemCatalog[equippedId].attackBonus;
+      if (bonus) power += bonus;
+    }
+    if (this.#effectMs.strength > 0) power *= powerupSettings.strengthMultiplier;
+    return power;
+  }
+
+  getSpeed() {
+    let speed = this.#baseSpeed;
+    if (this.#effectMs.speed > 0) speed += powerupSettings.speedBoost;
+    const rune = this.equipment.rune;
+    if (rune && itemCatalog[rune].speedBonus) speed += itemCatalog[rune].speedBonus;
+    return speed;
+  }
+
+  getActiveEffects() {
+    return Object.entries(this.#effectMs)
+      .filter(([, ms]) => ms > 0)
+      .map(([name, ms]) => ({ name, secondsLeft: Math.ceil(ms / 1000), msLeft: ms }));
+  }
+
+  hasEffect(name) {
+    return this.#effectMs[name] > 0;
+  }
+
   takeDamage(amount) {
-    // Ignore hits during the invulnerability window after being hurt
+    if (this.#effectMs.invincibility > 0) return;
     if (this.#isHurt || this.#health <= 0) return;
-    this.#health -= amount;
+    if (this.equipment.rune === "runeWarding") amount = Math.ceil(amount / 2);
+    this.#health = Math.max(0, this.#health - amount);
+    if (this.#health <= 0) {
+      this.defeat();
+      return;
+    }
     this.hurtAnimation();
   }
 
   respawn(x, y) {
     this._position = { x, y };
     this.#health = 100;
+    // A short shield after respawning: a guard standing on the spawn point
+    // could otherwise drain the fresh life before the player can react
+    this.#effectMs = { speed: 0, strength: 0, invincibility: playerSettings.respawnProtectionMs };
     this.#isHurt = false;
     if (this.#hurtInterval) {
       clearInterval(this.#hurtInterval);
       this.#hurtInterval = null;
     }
     this.visible = true;
-    this.action = "idle";
     this.movement = "down";
+    this.animator.play("idle", { restart: true, direction: "down" });
+    this.#syncAnimationState();
   }
 
-  moveLeft() {
-    this._position.x -= this.#speed;
-    this.action = "walk";
-    this.movement = "left";
+  setMovement(direction) {
+    if (direction) {
+      this.movement = direction;
+      this.animator.setDirection(direction);
+    }
   }
 
-  moveRight() {
-    this._position.x += this.#speed;
-    this.action = "walk";
-    this.movement = "right";
+  setWalking(isWalking) {
+    this.animator.setState(isWalking ? "walk" : "idle");
+    this.#syncAnimationState();
   }
 
-  moveUp() {
-    this._position.y -= this.#speed;
-    this.action = "walk";
-    this.movement = "up";
+  moveBy(deltaX, deltaY) {
+    this._position.x += deltaX;
+    this._position.y += deltaY;
+    if (deltaX !== 0 || deltaY !== 0) {
+      this.setMovement(Math.abs(deltaX) > Math.abs(deltaY)
+        ? (deltaX > 0 ? "right" : "left")
+        : (deltaY > 0 ? "down" : "up"));
+      this.setWalking(true);
+    }
   }
 
-  moveDown() {
-    this._position.y += this.#speed;
-    this.action = "walk";
-    this.movement = "down";
+  moveLeft(distance = this.getSpeed() / 60) {
+    this.moveBy(-distance, 0);
+  }
+
+  moveRight(distance = this.getSpeed() / 60) {
+    this.moveBy(distance, 0);
+  }
+
+  moveUp(distance = this.getSpeed() / 60) {
+    this.moveBy(0, -distance);
+  }
+
+  moveDown(distance = this.getSpeed() / 60) {
+    this.moveBy(0, distance);
   }
 
   attack() {
-    this.action = "attack";
-    // Implement attack logic here
+    this.animator.play("attack", { restart: true, direction: this.movement });
+    this.#syncAnimationState();
   }
 
   pick() {
-    this.action = "pick";
-    // TODO: Implement actual object detection and picking logic
-    // This would involve checking for collisions with pickable entities
-    // and handling the pickup if a valid object is found
+    this.animator.play("pick", { restart: true, direction: this.movement });
+    this.#syncAnimationState();
   }
 
   axe() {
-    this.action = "axe";
-    // Implement axe logic here
+    const weapon = playerSpriteManifest.weapons[this.weaponId];
+    this.animator.play(weapon?.actionState || "axe", { restart: true, direction: this.movement });
+    this.#syncAnimationState();
   }
 
   potion() {
-    this.action = "potion";
-    // Implement potion logic here
+    this.animator.play("potion", { restart: true, direction: this.movement });
+    this.#syncAnimationState();
   }
 
-  collectExplosive(explosive) {
-    this.explosives.push(explosive);
+  defeat() {
+    this.animator.play("defeated", { restart: true, direction: this.movement });
+    this.#syncAnimationState();
   }
 
-  collectKey(key) {
-    this.keys.push(key);
+  isDefeated() {
+    return this.#health <= 0;
   }
 
-  collectPowerup(powerup) {
-    this.powerups.push(powerup);
+  isActionActive(action = this.action) {
+    return this.animator.isActiveWindow(action);
+  }
+
+  // --- Inventory ---------------------------------------------------------
+
+  addItem(itemId) {
+    this.inventory[itemId] = (this.inventory[itemId] || 0) + 1;
+  }
+
+  hasItem(itemId) {
+    return (this.inventory[itemId] || 0) > 0;
+  }
+
+  removeItem(itemId) {
+    if (!this.hasItem(itemId)) return false;
+    this.inventory[itemId] -= 1;
+    if (this.inventory[itemId] === 0) delete this.inventory[itemId];
+    return true;
+  }
+
+  // Carried items in catalog order, for the inventory screen
+  getInventoryEntries() {
+    return Object.keys(itemCatalog)
+      .filter((id) => this.hasItem(id))
+      .map((id) => ({ id, count: this.inventory[id] }));
+  }
+
+  // Consume one item and apply its effect. Returns true when consumed.
+  useItem(itemId) {
+    const item = itemCatalog[itemId];
+    if (!item || !this.hasItem(itemId)) return false;
+    if (item.kind === "potion") {
+      this.removeItem(itemId);
+      this.#health = Math.min(100, this.#health + item.healAmount);
+      return true;
+    }
+    return false;
+  }
+
+  // Equip a weapon or rune from the inventory, or take it off when it is
+  // already worn. Returns "equipped", "unequipped" or null when the item
+  // cannot be equipped.
+  equip(itemId) {
+    const item = itemCatalog[itemId];
+    if (!item || (item.kind !== "weapon" && item.kind !== "rune")) return null;
+    if (!this.hasItem(itemId)) return null;
+    if (this.equipment[item.kind] === itemId) {
+      this.equipment[item.kind] = null;
+      return "unequipped";
+    }
+    this.equipment[item.kind] = itemId;
+    return "equipped";
   }
 
   applyPowerup(effect) {
+    if (!effect) return;
     this.powerups.push(effect);
-    if (effect === "health") {
-      this.#health = Math.min(100, this.#health + 25);
+    switch (effect) {
+      case "health":
+        this.#health = Math.min(100, this.#health + powerupSettings.healAmount);
+        break;
+      case "speed":
+        this.#effectMs.speed = powerupSettings.speedDurationMs;
+        break;
+      case "strength":
+        this.#effectMs.strength = powerupSettings.strengthDurationMs;
+        break;
+      case "invincibility":
+        this.#effectMs.invincibility = powerupSettings.invincibilityDurationMs;
+        break;
     }
   }
 
-  update() {
-    this.frameCount++;
-    if (this.frameCount >= 10) {
-      // Adjust frame rate as needed
-      let frames_per_action = 6;
-      if (
-        this.action === "walk" ||
-        this.action === "idle" ||
-        this.action === "jump"
-      ) {
-        frames_per_action = 6;
-      } else if (this.action === "attack" || this.action === "duck") {
-        frames_per_action = 4;
-      } else if (
-        this.action === "pick" ||
-        this.action === "axe" ||
-        this.action === "potion"
-      ) {
-        // The actions sprite sheet (Player_Actions.png) only has 2 columns
-        frames_per_action = 2;
-      }
-      this.currentFrame = (this.currentFrame + 1) % frames_per_action;
-      this.frameCount = 0;
+  update(deltaMs = 1000 / 60) {
+    for (const name of Object.keys(this.#effectMs)) {
+      this.#effectMs[name] = Math.max(0, this.#effectMs[name] - deltaMs);
     }
+    this.animator.update(deltaMs);
+    this.#syncAnimationState();
   }
 
-  // Add a new method to check for collisions before moving
-  checkCollision(direction) {
+  checkCollision(direction, distance = this.getSpeed() / 60) {
     const nextPosition = { ...this._position };
     switch (direction) {
       case 'left':
-        nextPosition.x -= this.#speed;
+        nextPosition.x -= distance;
         break;
       case 'right':
-        nextPosition.x += this.#speed;
+        nextPosition.x += distance;
         break;
       case 'up':
-        nextPosition.y -= this.#speed;
+        nextPosition.y -= distance;
         break;
       case 'down':
-        nextPosition.y += this.#speed;
+        nextPosition.y += distance;
         break;
     }
     return nextPosition;
@@ -204,21 +309,20 @@ class Player extends Entity {
     if (this.#isHurt) return;
 
     this.#isHurt = true;
-    this.action = "idle"; // Freeze the player
 
     let flickerCount = 0;
     const maxFlickers = 10;
-    const flickerDuration = 100; // milliseconds
+    const flickerDuration = 100;
 
     this.#hurtInterval = setInterval(() => {
-      this.visible = !this.visible; // Toggle visibility
+      this.visible = !this.visible;
       flickerCount++;
 
       if (flickerCount >= maxFlickers) {
         clearInterval(this.#hurtInterval);
         this.#hurtInterval = null;
         this.#isHurt = false;
-        this.visible = true; // Ensure player is visible after flickering
+        this.visible = true;
       }
     }, flickerDuration);
   }
@@ -226,148 +330,23 @@ class Player extends Entity {
   draw(ctx) {
     if (!this.visible) return;
 
-    let spriteHeight = 32;
-    let spriteWidth = 32;
-    let spriteX = 0;
-    let spriteY = 0;
-    let spriteSheet = this._sprites.movement;
-    // mapping the sprite sheet to the actions
-    switch (this.action) {
-      case "walk":
-        switch (this.movement) {
-          case "left":
-            spriteY = 4 * spriteHeight;
-            break;
-          case "right":
-            spriteY = 4 * spriteHeight;
-            break;
-          case "up":
-            spriteY = 2 * spriteHeight;
-            break;
-          case "down":
-            spriteY = 0 * spriteHeight;
-            break;
-        }
-        break;
-      case "crawl":
-        switch (this.movement) {
-          case "down":
-            spriteY = 0 * spriteHeight;
-            break;
-          case "left":
-            spriteY = 9 * spriteHeight;
-            break;
-          case "right":
-            spriteY = 9 * spriteHeight;
-            break;
-          case "up":
-            spriteY = 0 * spriteHeight;
-            break;
-        }
-        break;
-      case "attack":
-        switch (this.movement) {
-          case "down":
-            spriteY = 6 * spriteHeight;
-            break;
-          case "left":
-            spriteY = 7 * spriteHeight;
-            break;
-          case "right":
-            spriteY = 7 * spriteHeight;
-            break;
-          case "up":
-            spriteY = 8 * spriteHeight;
-            break;
-        }
-        break;
-      case "pick":
-        spriteHeight = 48;
-        spriteWidth = 48;
-        spriteSheet = this._sprites.actions;
-        switch (this.movement) {
-          case "down":
-            spriteY = 1 * spriteHeight;
-            break;
-          case "left":
-            spriteY = 0 * spriteHeight;
-            break;
-          case "right":
-            spriteY = 0 * spriteHeight;
-            break;
-          case "up":
-            spriteY = 2 * spriteHeight;
-            break;
-        }
-        break;
-      case "axe":
-        spriteHeight = 48;
-        spriteWidth = 48;
-        spriteSheet = this._sprites.actions;
-        spriteX = 3 * spriteWidth;
-        spriteY = 10 * spriteHeight;
-        break;
-      case "potion":
-        spriteHeight = 48;
-        spriteWidth = 48;
-        spriteSheet = this._sprites.actions;
-        // spriteY = 11 * spriteHeight;
-        switch (this.movement) {
-            case "down":
-              spriteY = 9 * spriteHeight;
-              break;
-            case "left":
-              spriteY = 9 * spriteHeight;
-              break;
-            case "right":
-              spriteY = 9 * spriteHeight;
-              break;
-            case "up":
-              spriteY = 10 * spriteHeight;
-              break;
-          }
-          break;
-        break;
-      case "idle":
-      default:
-        switch (this.movement) {
-          case "down":
-            spriteY = 0 * spriteHeight;
-            break;
-          case "left":
-            spriteY = 1 * spriteHeight;
-            break;
-          case "right":
-            spriteY = 1 * spriteHeight;
-            break;
-          case "up":
-            spriteY = 2 * spriteHeight;
-            break;
-        }
-        break;
-    }
-
-    spriteX = this.currentFrame * spriteWidth;
-
-    // Movement frames are 32px and action frames 48px, but the character is
-    // drawn at the same pixel size in both; the extra 16px of an action frame
-    // is empty space for the tool swing. Scale every frame by the same factor
-    // and center it on the cell so the character never changes size.
+    const frame = this.animator.getFrame(this.movement);
+    const spriteSheet = this._sprites[frame.sheet];
     const pixelScale = canvasSettings.cellWidth / 32;
-    const destWidth = spriteWidth * pixelScale;
-    const destHeight = spriteHeight * pixelScale;
+    const destWidth = frame.frameWidth * pixelScale;
+    const destHeight = frame.frameHeight * pixelScale;
     const offsetX = (canvasSettings.cellWidth - destWidth) / 2;
     const offsetY = (canvasSettings.cellHeight - destHeight) / 2;
 
     ctx.save();
-    if (this.movement === "left") {
+    if (frame.flip) {
       ctx.scale(-1, 1);
       ctx.drawImage(
         spriteSheet,
-        spriteX,
-        spriteY,
-        spriteWidth,
-        spriteHeight,
+        frame.sourceX,
+        frame.sourceY,
+        frame.frameWidth,
+        frame.frameHeight,
         -(this._position.x + offsetX) - destWidth,
         this._position.y + offsetY,
         destWidth,
@@ -376,10 +355,10 @@ class Player extends Entity {
     } else {
       ctx.drawImage(
         spriteSheet,
-        spriteX,
-        spriteY,
-        spriteWidth,
-        spriteHeight,
+        frame.sourceX,
+        frame.sourceY,
+        frame.frameWidth,
+        frame.frameHeight,
         this._position.x + offsetX,
         this._position.y + offsetY,
         destWidth,
@@ -387,33 +366,11 @@ class Player extends Entity {
       );
     }
     ctx.restore();
-    // this.drawBoundingBox(ctx);
   }
 
-  drawBoundingBox(ctx) {
-    // Hitbox
-    ctx.save();
-    ctx.strokeStyle = 'red';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(
-      this._position.x + this._width * 0.25,
-      this._position.y + this._height * 0.25,
-      this._width * 0.5,
-      this._height * 0.5
-    );
-    ctx.restore();
-    ctx.save();
-
-    // Pickup range
-    ctx.strokeStyle = 'green';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(
-      this._position.x,
-      this._position.y,
-      this._width,
-      this._height
-    );
-    ctx.restore();
+  #syncAnimationState() {
+    this.action = this.animator.state;
+    this.currentFrame = this.animator.frame;
   }
 }
 

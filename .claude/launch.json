@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "wandertrap",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 1234,
+      "autoPort": true
+    }
+  ]
+}

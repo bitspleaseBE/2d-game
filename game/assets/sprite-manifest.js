@@ -1,0 +1,152 @@
+// Sprite sheet metadata. Keep animation layout here so adding a new hero
+// weapon or generated sheet does not require rewriting entity draw code.
+
+export const directions = {
+  down: "down",
+  up: "up",
+  left: "left",
+  right: "right",
+};
+
+export const playerSpriteManifest = {
+  defaultState: "idle",
+  defaultDirection: directions.down,
+  sheets: {
+    movement: "movement",
+    actions: "actions",
+  },
+  states: {
+    idle: {
+      sheet: "movement",
+      frameWidth: 32,
+      frameHeight: 32,
+      frames: 6,
+      frameDurationMs: 150,
+      rows: { down: 0, left: 1, right: 1, up: 2 },
+      flipLeft: true,
+    },
+    walk: {
+      sheet: "movement",
+      frameWidth: 32,
+      frameHeight: 32,
+      frames: 6,
+      frameDurationMs: 90,
+      rows: { down: 0, left: 4, right: 4, up: 2 },
+      flipLeft: true,
+    },
+    attack: {
+      sheet: "movement",
+      frameWidth: 32,
+      frameHeight: 32,
+      frames: 4,
+      frameDurationMs: 80,
+      rows: { down: 6, left: 7, right: 7, up: 8 },
+      flipLeft: true,
+      oneShot: true,
+      returnTo: "idle",
+      activeStartMs: 0,
+      activeEndMs: 220,
+    },
+    pick: {
+      sheet: "actions",
+      frameWidth: 48,
+      frameHeight: 48,
+      frames: 2,
+      frameDurationMs: 120,
+      rows: { down: 1, left: 0, right: 0, up: 2 },
+      flipLeft: true,
+      oneShot: true,
+      returnTo: "idle",
+    },
+    potion: {
+      sheet: "actions",
+      frameWidth: 48,
+      frameHeight: 48,
+      frames: 2,
+      frameDurationMs: 130,
+      rows: { down: 9, left: 9, right: 9, up: 10 },
+      flipLeft: true,
+      oneShot: true,
+      returnTo: "idle",
+    },
+    defeated: {
+      sheet: "movement",
+      frameWidth: 32,
+      frameHeight: 32,
+      frames: 6,
+      frameDurationMs: 130,
+      rows: { down: 9, left: 9, right: 9, up: 9 },
+      flipLeft: true,
+      oneShot: true,
+      holdLast: true,
+    },
+  },
+  weapons: {
+    axe: {
+      actionState: "axe",
+      states: {
+        axe: {
+          sheet: "actions",
+          frameWidth: 48,
+          frameHeight: 48,
+          frames: 2,
+          frameDurationMs: 110,
+          rows: { down: 10, left: 10, right: 10, up: 10 },
+          flipLeft: true,
+          oneShot: true,
+          returnTo: "idle",
+          activeStartMs: 0,
+          activeEndMs: 210,
+        },
+      },
+    },
+  },
+};
+
+export const guardSpriteManifest = {
+  defaultState: "idle",
+  defaultDirection: directions.down,
+  states: {
+    idle: {
+      frameWidth: 64,
+      frameHeight: 64,
+      frames: 4,
+      frameDurationMs: 220,
+      rows: { down: 0, up: 1, left: 2, right: 3 },
+    },
+    walk: {
+      frameWidth: 64,
+      frameHeight: 64,
+      frames: 4,
+      frameDurationMs: 120,
+      rows: { down: 0, up: 1, left: 2, right: 3 },
+    },
+    attack: {
+      frameWidth: 64,
+      frameHeight: 64,
+      frames: 4,
+      frameDurationMs: 110,
+      rows: { down: 0, up: 1, left: 2, right: 3 },
+      oneShot: true,
+      returnTo: "idle",
+    },
+    hurt: {
+      frameWidth: 64,
+      frameHeight: 64,
+      frames: 4,
+      frameDurationMs: 90,
+      rows: { down: 0, up: 1, left: 2, right: 3 },
+      oneShot: true,
+      returnTo: "idle",
+    },
+    dead: {
+      frameWidth: 64,
+      frameHeight: 64,
+      frames: 4,
+      frameDurationMs: 140,
+      rows: { down: 0, up: 1, left: 2, right: 3 },
+      oneShot: true,
+      holdLast: true,
+    },
+  },
+};
