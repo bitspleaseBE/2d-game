@@ -932,6 +932,33 @@ test('step(frames) advances the simulation deterministically while paused', asyn
   expect(result.isGameOver).toBe(false);
 });
 
+test('winning the final level asks for a high score name and saves it', async ({ page }) => {
+  await startNewGame(page);
+
+  await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.startAtLevel(10);
+    game.score = 1234;
+    const exit = game.exit.getPosition();
+    game.teleportPlayer(exit.x, exit.y);
+    game.step(1);
+  });
+
+  // Clearing the last level wins the game and offers to save the score
+  await expect(page.locator('#game-won-screen')).toBeVisible();
+  await expect(page.getByText('You made the high scores!')).toBeVisible();
+  await page.fill('#score-name-input', 'Theo');
+  await page.getByRole('button', { name: 'Save Score' }).click();
+  await expect(page.getByText('Score saved!')).toBeVisible();
+
+  // The saved entry shows up in the high scores table (1234 + 100 exit bonus)
+  await page.getByRole('button', { name: 'Main Menu' }).click();
+  await page.getByRole('button', { name: 'High Scores' }).click();
+  await expect(page.getByRole('cell', { name: 'Theo' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '1334' })).toBeVisible();
+});
+
 test('reaching the exit completes level 1 and advances to level 2', async ({ page }) => {
   await startNewGame(page);
 
