@@ -1,5 +1,5 @@
 import { Game } from './game.js';
-import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, loadItemAssets, } from './assets.js';
+import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, loadItemAssets, getTotalAssetCount } from './assets.js';
 import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.js';
 import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
@@ -37,12 +37,12 @@ class GameEngine {
     async initialize() {
         try {
             console.log('Initializing game...');
-            const totalAssets = 51;
+            const totalAssets = getTotalAssetCount();
             let loadedAssets = 0;
 
             const onProgress = (src, img) => {
                 loadedAssets++;
-                const progress = Math.floor((loadedAssets / totalAssets) * 100);
+                const progress = Math.min(100, Math.floor((loadedAssets / totalAssets) * 100));
                 updateSplashScreenProgress(progress);
             };
 

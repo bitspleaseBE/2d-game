@@ -617,11 +617,11 @@ class GameEngine {
     async initialize() {
         try {
             console.log("Initializing game...");
-            const totalAssets = 51;
+            const totalAssets = (0, _assetsJs.getTotalAssetCount)();
             let loadedAssets = 0;
             const onProgress = (src, img)=>{
                 loadedAssets++;
-                const progress = Math.floor(loadedAssets / totalAssets * 100);
+                const progress = Math.min(100, Math.floor(loadedAssets / totalAssets * 100));
                 (0, _splashJs.updateSplashScreenProgress)(progress);
             };
             const playerAssets = await (0, _assetsJs.loadPlayerAssets)(onProgress);
@@ -1734,7 +1734,7 @@ class Game {
 }
 exports.default = Game;
 
-},{"./utils/settings.js":"hBndc","./utils/sound.js":"6QCfZ","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./items.js":"8gP9P","./assets/theme-manifest.js":"d5R3E","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
+},{"./utils/settings.js":"hBndc","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./utils/sound.js":"6QCfZ","./assets/theme-manifest.js":"d5R3E"}],"hBndc":[function(require,module,exports) {
 // Game settings and configurations
 // - This file contains global settings and configurations for the game
 // - These settings can be adjusted to change the game's behavior and appearance
@@ -1860,218 +1860,7 @@ exports.export = function(dest, destName, get) {
     });
 };
 
-},{}],"6QCfZ":[function(require,module,exports) {
-var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
-parcelHelpers.defineInteropFlag(exports);
-parcelHelpers.export(exports, "sfx", ()=>sfx);
-var _settingsJs = require("./settings.js");
-// Tiny synthesized sound effects via the Web Audio API — no audio assets
-// needed. The AudioContext is created lazily on the first sound, which always
-// happens after a user gesture (a key press or button click), so autoplay
-// policies never block it. Every call is wrapped so a missing/blocked audio
-// backend can never break the game.
-let ctx = null;
-function getContext() {
-    if ((0, _settingsJs.soundSettings).mute) return null;
-    try {
-        if (!ctx) {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return null;
-            ctx = new AudioCtx();
-        }
-        if (ctx.state === "suspended") ctx.resume().catch(()=>{});
-        return ctx;
-    } catch  {
-        return null;
-    }
-}
-// Play a simple tone: oscillator + exponential decay envelope
-function tone({ type = "square", from = 440, to = from, duration = 0.1, volume = 0.3, delay = 0 }) {
-    const audio = getContext();
-    if (!audio) return;
-    try {
-        const t0 = audio.currentTime + delay;
-        const osc = audio.createOscillator();
-        const gain = audio.createGain();
-        osc.type = type;
-        osc.frequency.setValueAtTime(from, t0);
-        osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + duration);
-        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
-        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
-        osc.connect(gain).connect(audio.destination);
-        osc.start(t0);
-        osc.stop(t0 + duration);
-    } catch  {
-    // Audio is best-effort; never let it break gameplay
-    }
-}
-// A burst of filtered noise, for impacts and explosions
-function noise({ duration = 0.3, volume = 0.4, delay = 0 }) {
-    const audio = getContext();
-    if (!audio) return;
-    try {
-        const t0 = audio.currentTime + delay;
-        const buffer = audio.createBuffer(1, audio.sampleRate * duration, audio.sampleRate);
-        const data = buffer.getChannelData(0);
-        for(let i = 0; i < data.length; i++)data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-        const src = audio.createBufferSource();
-        src.buffer = buffer;
-        const gain = audio.createGain();
-        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
-        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
-        src.connect(gain).connect(audio.destination);
-        src.start(t0);
-    } catch  {
-    // best-effort
-    }
-}
-const sfx = {
-    swing: ()=>tone({
-            type: "sawtooth",
-            from: 300,
-            to: 80,
-            duration: 0.08,
-            volume: 0.15
-        }),
-    hit: ()=>tone({
-            type: "square",
-            from: 150,
-            to: 60,
-            duration: 0.12,
-            volume: 0.25
-        }),
-    hurt: ()=>tone({
-            type: "triangle",
-            from: 220,
-            to: 110,
-            duration: 0.25,
-            volume: 0.3
-        }),
-    pickup: ()=>{
-        tone({
-            type: "sine",
-            from: 660,
-            to: 880,
-            duration: 0.08,
-            volume: 0.25
-        });
-        tone({
-            type: "sine",
-            from: 880,
-            to: 1320,
-            duration: 0.1,
-            volume: 0.2,
-            delay: 0.08
-        });
-    },
-    fuse: ()=>tone({
-            type: "square",
-            from: 1200,
-            to: 1200,
-            duration: 0.05,
-            volume: 0.08
-        }),
-    explosion: ()=>{
-        noise({
-            duration: 0.5,
-            volume: 0.5
-        });
-        tone({
-            type: "sine",
-            from: 100,
-            to: 30,
-            duration: 0.5,
-            volume: 0.4
-        });
-    },
-    guardDown: ()=>tone({
-            type: "sawtooth",
-            from: 200,
-            to: 40,
-            duration: 0.35,
-            volume: 0.3
-        }),
-    unlock: ()=>{
-        tone({
-            type: "square",
-            from: 500,
-            to: 500,
-            duration: 0.06,
-            volume: 0.2
-        });
-        tone({
-            type: "square",
-            from: 750,
-            to: 750,
-            duration: 0.1,
-            volume: 0.2,
-            delay: 0.08
-        });
-    },
-    disarm: ()=>tone({
-            type: "sine",
-            from: 900,
-            to: 300,
-            duration: 0.25,
-            volume: 0.2
-        }),
-    gulp: ()=>{
-        tone({
-            type: "sine",
-            from: 300,
-            to: 150,
-            duration: 0.1,
-            volume: 0.25
-        });
-        tone({
-            type: "sine",
-            from: 350,
-            to: 180,
-            duration: 0.12,
-            volume: 0.25,
-            delay: 0.12
-        });
-    },
-    chop: ()=>tone({
-            type: "square",
-            from: 120,
-            to: 50,
-            duration: 0.15,
-            volume: 0.3
-        }),
-    levelComplete: ()=>{
-        [
-            523,
-            659,
-            784,
-            1047
-        ].forEach((f, i)=>tone({
-                type: "triangle",
-                from: f,
-                to: f,
-                duration: 0.15,
-                volume: 0.25,
-                delay: i * 0.12
-            }));
-    },
-    gameOver: ()=>{
-        [
-            392,
-            330,
-            262,
-            196
-        ].forEach((f, i)=>tone({
-                type: "triangle",
-                from: f,
-                to: f,
-                duration: 0.25,
-                volume: 0.25,
-                delay: i * 0.2
-            }));
-    }
-};
-
-},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"1uqza":[function(require,module,exports) {
+},{}],"1uqza":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -3294,7 +3083,7 @@ class Explosive extends (0, _entityJsDefault.default) {
 }
 exports.default = Explosive;
 
-},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"bFjVQ":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","../utils/settings.js":"hBndc"}],"bFjVQ":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -3858,7 +3647,218 @@ class Door extends (0, _entityJsDefault.default) {
 }
 exports.default = Door;
 
-},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d5R3E":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"6QCfZ":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "sfx", ()=>sfx);
+var _settingsJs = require("./settings.js");
+// Tiny synthesized sound effects via the Web Audio API — no audio assets
+// needed. The AudioContext is created lazily on the first sound, which always
+// happens after a user gesture (a key press or button click), so autoplay
+// policies never block it. Every call is wrapped so a missing/blocked audio
+// backend can never break the game.
+let ctx = null;
+function getContext() {
+    if ((0, _settingsJs.soundSettings).mute) return null;
+    try {
+        if (!ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return null;
+            ctx = new AudioCtx();
+        }
+        if (ctx.state === "suspended") ctx.resume().catch(()=>{});
+        return ctx;
+    } catch  {
+        return null;
+    }
+}
+// Play a simple tone: oscillator + exponential decay envelope
+function tone({ type = "square", from = 440, to = from, duration = 0.1, volume = 0.3, delay = 0 }) {
+    const audio = getContext();
+    if (!audio) return;
+    try {
+        const t0 = audio.currentTime + delay;
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(from, t0);
+        osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + duration);
+        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        osc.connect(gain).connect(audio.destination);
+        osc.start(t0);
+        osc.stop(t0 + duration);
+    } catch  {
+    // Audio is best-effort; never let it break gameplay
+    }
+}
+// A burst of filtered noise, for impacts and explosions
+function noise({ duration = 0.3, volume = 0.4, delay = 0 }) {
+    const audio = getContext();
+    if (!audio) return;
+    try {
+        const t0 = audio.currentTime + delay;
+        const buffer = audio.createBuffer(1, audio.sampleRate * duration, audio.sampleRate);
+        const data = buffer.getChannelData(0);
+        for(let i = 0; i < data.length; i++)data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+        const src = audio.createBufferSource();
+        src.buffer = buffer;
+        const gain = audio.createGain();
+        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        src.connect(gain).connect(audio.destination);
+        src.start(t0);
+    } catch  {
+    // best-effort
+    }
+}
+const sfx = {
+    swing: ()=>tone({
+            type: "sawtooth",
+            from: 300,
+            to: 80,
+            duration: 0.08,
+            volume: 0.15
+        }),
+    hit: ()=>tone({
+            type: "square",
+            from: 150,
+            to: 60,
+            duration: 0.12,
+            volume: 0.25
+        }),
+    hurt: ()=>tone({
+            type: "triangle",
+            from: 220,
+            to: 110,
+            duration: 0.25,
+            volume: 0.3
+        }),
+    pickup: ()=>{
+        tone({
+            type: "sine",
+            from: 660,
+            to: 880,
+            duration: 0.08,
+            volume: 0.25
+        });
+        tone({
+            type: "sine",
+            from: 880,
+            to: 1320,
+            duration: 0.1,
+            volume: 0.2,
+            delay: 0.08
+        });
+    },
+    fuse: ()=>tone({
+            type: "square",
+            from: 1200,
+            to: 1200,
+            duration: 0.05,
+            volume: 0.08
+        }),
+    explosion: ()=>{
+        noise({
+            duration: 0.5,
+            volume: 0.5
+        });
+        tone({
+            type: "sine",
+            from: 100,
+            to: 30,
+            duration: 0.5,
+            volume: 0.4
+        });
+    },
+    guardDown: ()=>tone({
+            type: "sawtooth",
+            from: 200,
+            to: 40,
+            duration: 0.35,
+            volume: 0.3
+        }),
+    unlock: ()=>{
+        tone({
+            type: "square",
+            from: 500,
+            to: 500,
+            duration: 0.06,
+            volume: 0.2
+        });
+        tone({
+            type: "square",
+            from: 750,
+            to: 750,
+            duration: 0.1,
+            volume: 0.2,
+            delay: 0.08
+        });
+    },
+    disarm: ()=>tone({
+            type: "sine",
+            from: 900,
+            to: 300,
+            duration: 0.25,
+            volume: 0.2
+        }),
+    gulp: ()=>{
+        tone({
+            type: "sine",
+            from: 300,
+            to: 150,
+            duration: 0.1,
+            volume: 0.25
+        });
+        tone({
+            type: "sine",
+            from: 350,
+            to: 180,
+            duration: 0.12,
+            volume: 0.25,
+            delay: 0.12
+        });
+    },
+    chop: ()=>tone({
+            type: "square",
+            from: 120,
+            to: 50,
+            duration: 0.15,
+            volume: 0.3
+        }),
+    levelComplete: ()=>{
+        [
+            523,
+            659,
+            784,
+            1047
+        ].forEach((f, i)=>tone({
+                type: "triangle",
+                from: f,
+                to: f,
+                duration: 0.15,
+                volume: 0.25,
+                delay: i * 0.12
+            }));
+    },
+    gameOver: ()=>{
+        [
+            392,
+            330,
+            262,
+            196
+        ].forEach((f, i)=>tone({
+                type: "triangle",
+                from: f,
+                to: f,
+                duration: 0.25,
+                volume: 0.25,
+                delay: i * 0.2
+            }));
+    }
+};
+
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d5R3E":[function(require,module,exports) {
 // Per-level visual theme registry.
 // Theme entries point at keys in the loaded level-assets object.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -3953,13 +3953,111 @@ function resolveThemeAssets(levelAssets, themeId = DEFAULT_THEME) {
 // Parcel only bundles the referenced file when the first argument is a string
 // literal at the call site. Wrapping it in a helper (variable argument) defeats
 // static analysis, leaving an unbundled `file://` path that the browser blocks.
+// Storing the resulting URL objects in the maps below is fine: the literal is
+// still at the `new URL(...)` call site.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
+// Total number of images the splash screen progress bar should expect.
+// Derived from the URL maps so it can never drift out of sync with the
+// actual asset lists (which previously caused progress above 100%).
+parcelHelpers.export(exports, "getTotalAssetCount", ()=>getTotalAssetCount);
 parcelHelpers.export(exports, "loadPlayerAssets", ()=>loadPlayerAssets);
 parcelHelpers.export(exports, "loadGuardAssets", ()=>loadGuardAssets);
 parcelHelpers.export(exports, "loadLevelAssets", ()=>loadLevelAssets);
 parcelHelpers.export(exports, "loadItemAssets", ()=>loadItemAssets);
 parcelHelpers.export(exports, "loadPowerUpsAssets", ()=>loadPowerUpsAssets);
+const PLAYER_ASSET_URLS = {
+    playerMovement: new URL(require("93fa132a23469ad3")),
+    playerActions: new URL(require("24d061bc9070758b"))
+};
+const GUARD_ASSET_URLS = {
+    // ORC 1
+    orc1_Attack: new URL(require("da839ad1c17fe6f0")),
+    orc1_Death: new URL(require("e0bc205cb3c5c0bf")),
+    orc1_Hurt: new URL(require("9fcd0329138ebc13")),
+    orc1_Idle: new URL(require("fff618a47255eb1a")),
+    orc1_Run: new URL(require("9f26a3e4a159b554")),
+    orc1_Run_Attack: new URL(require("2222dfe21f9016a6")),
+    orc1_Walk: new URL(require("37fab219c2e3438d")),
+    orc1_Walk_Attack: new URL(require("297e02e827843629")),
+    // ORC 2
+    orc2_Attack: new URL(require("6c2f82508ca9a3bb")),
+    orc2_Death: new URL(require("47ee9c0f63ff8828")),
+    orc2_Hurt: new URL(require("4b946ae5fc174647")),
+    orc2_Idle: new URL(require("301431c8769f658")),
+    orc2_Run: new URL(require("f462afe302c8f41b")),
+    orc2_Run_Attack: new URL(require("cd1068d2a2c15560")),
+    orc2_Walk: new URL(require("37ea3b9efefea7e6")),
+    orc2_Walk_Attack: new URL(require("f524f9f30597b7c3")),
+    // ORC 3
+    orc3_Attack: new URL(require("4af006d8495d5804")),
+    orc3_Death: new URL(require("4bfabeb171e83a78")),
+    orc3_Hurt: new URL(require("a88858287bda9b00")),
+    orc3_Idle: new URL(require("8aa376bb259420aa")),
+    orc3_Run: new URL(require("f060f8a5fdaac71f")),
+    orc3_Run_Attack: new URL(require("1926d3b5d1463658")),
+    orc3_Walk: new URL(require("798831562a8c99b4")),
+    orc3_Walk_Attack: new URL(require("d7a60630e255c457"))
+};
+const LEVEL_ASSET_URLS = {
+    grassTile: new URL(require("1d5dcd0f193cb1ce")),
+    wall: new URL(require("e544f926ea4eae58")),
+    boulder: new URL(require("c7cde1bd730e6a2")),
+    rock: new URL(require("1090cc123f927509")),
+    tree1: new URL(require("3f5ed577d5909e0d")),
+    tree2: new URL(require("58ff784648728cf8")),
+    tree3: new URL(require("6d9a56da4d55f52c")),
+    palm1: new URL(require("cf0bb9cdce36df0b")),
+    palm2: new URL(require("af258d76c374145f")),
+    sandRuin: new URL(require("80e7c00fdd98ae89")),
+    snowRuin: new URL(require("a7b3d39a650d1b88")),
+    yellowRuin: new URL(require("4b942e3d0fe21af6")),
+    desertFloor: new URL(require("ef04bc5083c079cc")),
+    desertWall: new URL(require("6878513b9faf2986")),
+    desertTree1: new URL(require("bc79d6f290e43a80")),
+    desertTree2: new URL(require("3cb4e84e63f16db9")),
+    desertBoulder: new URL(require("b7e208cdba694b64")),
+    desertExit: new URL(require("79f3a39fe9166a77")),
+    snowFloor: new URL(require("74aef0ff01d35eed")),
+    snowWall: new URL(require("bcb8f883f78c181d")),
+    snowTree1: new URL(require("cc85696959d39ebe")),
+    snowTree2: new URL(require("8a9de24e04381f43")),
+    snowBoulder: new URL(require("fa5a6a619bb370b5")),
+    snowExit: new URL(require("bc748784e8c30387")),
+    dungeonFloor: new URL(require("4c85499cec1fe247")),
+    dungeonWall: new URL(require("30dc4b9275317af2")),
+    dungeonObstacle1: new URL(require("9473da643103b312")),
+    dungeonObstacle2: new URL(require("ddf8915e74bf87b9")),
+    dungeonBoulder: new URL(require("2ee19a9caa29b665")),
+    dungeonExit: new URL(require("5cab7d9201f88a17"))
+};
+const ITEM_ASSET_URLS = {
+    key: new URL(require("a5ba75c51d5504f7")),
+    potion: new URL(require("d14d64b10e5d3b17")),
+    explosive: new URL(require("900784a7c2730965")),
+    steelSword: new URL(require("1151ba85fd7a4a86")),
+    warAxe: new URL(require("d570f7b0415d629f")),
+    runeHaste: new URL(require("865739fa4646a4a3")),
+    runeMight: new URL(require("fb58bc3bec541d12")),
+    runeWarding: new URL(require("b4b968b0b026b42e")),
+    // Not an inventory item, but generated by the same tool: the locked door tile
+    door: new URL(require("8c995fa55a1ef06d"))
+};
+const POWERUP_ASSET_URLS = {
+    greenCrystal: new URL(require("3d27847b46809984")),
+    redCrystal: new URL(require("2a8d51d362a28a5a")),
+    blueCrystal: new URL(require("426b380674b42f96")),
+    yellowCrystal: new URL(require("9ae2d2d58e4ae0ee"))
+};
+function getTotalAssetCount() {
+    return [
+        PLAYER_ASSET_URLS,
+        GUARD_ASSET_URLS,
+        LEVEL_ASSET_URLS,
+        ITEM_ASSET_URLS,
+        POWERUP_ASSET_URLS
+    ].reduce((total, urls)=>total + Object.keys(urls).length, 0);
+}
 function loadImage(src, onProgress) {
     return new Promise((resolve, reject)=>{
         try {
@@ -3979,175 +4077,34 @@ function loadImage(src, onProgress) {
         }
     });
 }
+// Loads every image in a { name: URL } map and returns { name: HTMLImageElement }.
+async function loadImages(urlMap, onProgress) {
+    const images = {};
+    for (const [name, url] of Object.entries(urlMap))images[name] = await loadImage(url.href, onProgress);
+    return images;
+}
 async function loadPlayerAssets(onProgress) {
     console.log("Loading player assets...");
-    const playerMovement = await loadImage(new URL(require("93fa132a23469ad3")).href, onProgress);
-    const playerActions = await loadImage(new URL(require("24d061bc9070758b")).href, onProgress);
-    return {
-        playerMovement,
-        playerActions
-    };
+    return loadImages(PLAYER_ASSET_URLS, onProgress);
 }
 async function loadGuardAssets(onProgress) {
     console.log("Loading guard assets...");
-    // ORC 1
-    const orc1_Attack = await loadImage(new URL(require("da839ad1c17fe6f0")).href, onProgress);
-    const orc1_Death = await loadImage(new URL(require("e0bc205cb3c5c0bf")).href, onProgress);
-    const orc1_Hurt = await loadImage(new URL(require("9fcd0329138ebc13")).href, onProgress);
-    const orc1_Idle = await loadImage(new URL(require("fff618a47255eb1a")).href, onProgress);
-    const orc1_Run = await loadImage(new URL(require("9f26a3e4a159b554")).href, onProgress);
-    const orc1_Run_Attack = await loadImage(new URL(require("2222dfe21f9016a6")).href, onProgress);
-    const orc1_Walk = await loadImage(new URL(require("37fab219c2e3438d")).href, onProgress);
-    const orc1_Walk_Attack = await loadImage(new URL(require("297e02e827843629")).href, onProgress);
-    // ORC 2
-    const orc2_Attack = await loadImage(new URL(require("6c2f82508ca9a3bb")).href, onProgress);
-    const orc2_Death = await loadImage(new URL(require("47ee9c0f63ff8828")).href, onProgress);
-    const orc2_Hurt = await loadImage(new URL(require("4b946ae5fc174647")).href, onProgress);
-    const orc2_Idle = await loadImage(new URL(require("301431c8769f658")).href, onProgress);
-    const orc2_Run = await loadImage(new URL(require("f462afe302c8f41b")).href, onProgress);
-    const orc2_Run_Attack = await loadImage(new URL(require("cd1068d2a2c15560")).href, onProgress);
-    const orc2_Walk = await loadImage(new URL(require("37ea3b9efefea7e6")).href, onProgress);
-    const orc2_Walk_Attack = await loadImage(new URL(require("f524f9f30597b7c3")).href, onProgress);
-    // ORC 3
-    const orc3_Attack = await loadImage(new URL(require("4af006d8495d5804")).href, onProgress);
-    const orc3_Death = await loadImage(new URL(require("4bfabeb171e83a78")).href, onProgress);
-    const orc3_Hurt = await loadImage(new URL(require("a88858287bda9b00")).href, onProgress);
-    const orc3_Idle = await loadImage(new URL(require("8aa376bb259420aa")).href, onProgress);
-    const orc3_Run = await loadImage(new URL(require("f060f8a5fdaac71f")).href, onProgress);
-    const orc3_Run_Attack = await loadImage(new URL(require("1926d3b5d1463658")).href, onProgress);
-    const orc3_Walk = await loadImage(new URL(require("798831562a8c99b4")).href, onProgress);
-    const orc3_Walk_Attack = await loadImage(new URL(require("d7a60630e255c457")).href, onProgress);
-    return {
-        orc1_Attack,
-        orc1_Death,
-        orc1_Hurt,
-        orc1_Idle,
-        orc1_Run,
-        orc1_Run_Attack,
-        orc1_Walk,
-        orc1_Walk_Attack,
-        orc2_Attack,
-        orc2_Death,
-        orc2_Hurt,
-        orc2_Idle,
-        orc2_Run,
-        orc2_Run_Attack,
-        orc2_Walk,
-        orc2_Walk_Attack,
-        orc3_Attack,
-        orc3_Death,
-        orc3_Hurt,
-        orc3_Idle,
-        orc3_Run,
-        orc3_Run_Attack,
-        orc3_Walk,
-        orc3_Walk_Attack
-    };
+    return loadImages(GUARD_ASSET_URLS, onProgress);
 }
 async function loadLevelAssets(onProgress) {
     console.log("Loading level assets...");
-    const grassTile = await loadImage(new URL(require("1d5dcd0f193cb1ce")).href, onProgress);
-    const wall = await loadImage(new URL(require("e544f926ea4eae58")).href, onProgress);
-    const boulder = await loadImage(new URL(require("c7cde1bd730e6a2")).href, onProgress);
-    const rock = await loadImage(new URL(require("1090cc123f927509")).href, onProgress);
-    const tree1 = await loadImage(new URL(require("3f5ed577d5909e0d")).href, onProgress);
-    const tree2 = await loadImage(new URL(require("58ff784648728cf8")).href, onProgress);
-    const tree3 = await loadImage(new URL(require("6d9a56da4d55f52c")).href, onProgress);
-    const palm1 = await loadImage(new URL(require("cf0bb9cdce36df0b")).href, onProgress);
-    const palm2 = await loadImage(new URL(require("af258d76c374145f")).href, onProgress);
-    const sandRuin = await loadImage(new URL(require("80e7c00fdd98ae89")).href, onProgress);
-    const snowRuin = await loadImage(new URL(require("a7b3d39a650d1b88")).href, onProgress);
-    const yellowRuin = await loadImage(new URL(require("4b942e3d0fe21af6")).href, onProgress);
-    const desertFloor = await loadImage(new URL(require("ef04bc5083c079cc")).href, onProgress);
-    const desertWall = await loadImage(new URL(require("6878513b9faf2986")).href, onProgress);
-    const desertTree1 = await loadImage(new URL(require("bc79d6f290e43a80")).href, onProgress);
-    const desertTree2 = await loadImage(new URL(require("3cb4e84e63f16db9")).href, onProgress);
-    const desertBoulder = await loadImage(new URL(require("b7e208cdba694b64")).href, onProgress);
-    const desertExit = await loadImage(new URL(require("79f3a39fe9166a77")).href, onProgress);
-    const snowFloor = await loadImage(new URL(require("74aef0ff01d35eed")).href, onProgress);
-    const snowWall = await loadImage(new URL(require("bcb8f883f78c181d")).href, onProgress);
-    const snowTree1 = await loadImage(new URL(require("cc85696959d39ebe")).href, onProgress);
-    const snowTree2 = await loadImage(new URL(require("8a9de24e04381f43")).href, onProgress);
-    const snowBoulder = await loadImage(new URL(require("fa5a6a619bb370b5")).href, onProgress);
-    const snowExit = await loadImage(new URL(require("bc748784e8c30387")).href, onProgress);
-    const dungeonFloor = await loadImage(new URL(require("4c85499cec1fe247")).href, onProgress);
-    const dungeonWall = await loadImage(new URL(require("30dc4b9275317af2")).href, onProgress);
-    const dungeonObstacle1 = await loadImage(new URL(require("9473da643103b312")).href, onProgress);
-    const dungeonObstacle2 = await loadImage(new URL(require("ddf8915e74bf87b9")).href, onProgress);
-    const dungeonBoulder = await loadImage(new URL(require("2ee19a9caa29b665")).href, onProgress);
-    const dungeonExit = await loadImage(new URL(require("5cab7d9201f88a17")).href, onProgress);
-    return {
-        grassTile,
-        wall,
-        boulder,
-        rock,
-        tree1,
-        tree2,
-        tree3,
-        palm1,
-        palm2,
-        sandRuin,
-        snowRuin,
-        yellowRuin,
-        desertFloor,
-        desertWall,
-        desertTree1,
-        desertTree2,
-        desertBoulder,
-        desertExit,
-        snowFloor,
-        snowWall,
-        snowTree1,
-        snowTree2,
-        snowBoulder,
-        snowExit,
-        dungeonFloor,
-        dungeonWall,
-        dungeonObstacle1,
-        dungeonObstacle2,
-        dungeonBoulder,
-        dungeonExit
-    };
+    return loadImages(LEVEL_ASSET_URLS, onProgress);
 }
 async function loadItemAssets(onProgress) {
     console.log("Loading item assets...");
-    const key = await loadImage(new URL(require("a5ba75c51d5504f7")).href, onProgress);
-    const potion = await loadImage(new URL(require("d14d64b10e5d3b17")).href, onProgress);
-    const explosive = await loadImage(new URL(require("900784a7c2730965")).href, onProgress);
-    const steelSword = await loadImage(new URL(require("1151ba85fd7a4a86")).href, onProgress);
-    const warAxe = await loadImage(new URL(require("d570f7b0415d629f")).href, onProgress);
-    const runeHaste = await loadImage(new URL(require("865739fa4646a4a3")).href, onProgress);
-    const runeMight = await loadImage(new URL(require("fb58bc3bec541d12")).href, onProgress);
-    const runeWarding = await loadImage(new URL(require("b4b968b0b026b42e")).href, onProgress);
-    // Not an inventory item, but generated by the same tool: the locked door tile
-    const door = await loadImage(new URL(require("8c995fa55a1ef06d")).href, onProgress);
-    return {
-        key,
-        potion,
-        explosive,
-        steelSword,
-        warAxe,
-        runeHaste,
-        runeMight,
-        runeWarding,
-        door
-    };
+    return loadImages(ITEM_ASSET_URLS, onProgress);
 }
 async function loadPowerUpsAssets(onProgress) {
     console.log("Loading powerups assets...");
-    const greenCrystal = await loadImage(new URL(require("3d27847b46809984")).href, onProgress);
-    const redCrystal = await loadImage(new URL(require("2a8d51d362a28a5a")).href, onProgress);
-    const blueCrystal = await loadImage(new URL(require("426b380674b42f96")).href, onProgress);
-    const yellowCrystal = await loadImage(new URL(require("9ae2d2d58e4ae0ee")).href, onProgress);
-    return {
-        greenCrystal,
-        redCrystal,
-        blueCrystal,
-        yellowCrystal
-    };
+    return loadImages(POWERUP_ASSET_URLS, onProgress);
 }
 
-},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","3d27847b46809984":"kAqHG","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
+},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","3d27847b46809984":"kAqHG","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg"}],"b9nou":[function(require,module,exports) {
 module.exports = require("59afba6ea444a216").getBundleURL("aAnGP") + "Player.89df9642.png" + "?" + Date.now();
 
 },{"59afba6ea444a216":"lgJ39"}],"lgJ39":[function(require,module,exports) {
@@ -4296,7 +4253,46 @@ module.exports = require("d7584db4a4d9b947").getBundleURL("aAnGP") + "Snow_ruins
 },{"d7584db4a4d9b947":"lgJ39"}],"d9SAV":[function(require,module,exports) {
 module.exports = require("f6fe50e58e8fedab").getBundleURL("aAnGP") + "exit_ruin.0d420dd3.png" + "?" + Date.now();
 
-},{"f6fe50e58e8fedab":"lgJ39"}],"7mv1Z":[function(require,module,exports) {
+},{"f6fe50e58e8fedab":"lgJ39"}],"04CyO":[function(require,module,exports) {
+module.exports = require("6db897c9d2656c50").getBundleURL("aAnGP") + "key.843913e9.png" + "?" + Date.now();
+
+},{"6db897c9d2656c50":"lgJ39"}],"iTkbG":[function(require,module,exports) {
+module.exports = require("f59b545bc58552b1").getBundleURL("aAnGP") + "potion.75bf7793.png" + "?" + Date.now();
+
+},{"f59b545bc58552b1":"lgJ39"}],"kr7ve":[function(require,module,exports) {
+module.exports = require("6e6b6af1a7a9e5e3").getBundleURL("aAnGP") + "explosive.6e1a6b86.png" + "?" + Date.now();
+
+},{"6e6b6af1a7a9e5e3":"lgJ39"}],"imXnd":[function(require,module,exports) {
+module.exports = require("11d54df61439d3a4").getBundleURL("aAnGP") + "sword_steel.a6a16a95.png" + "?" + Date.now();
+
+},{"11d54df61439d3a4":"lgJ39"}],"jPYxu":[function(require,module,exports) {
+module.exports = require("8a526e99c9864b94").getBundleURL("aAnGP") + "axe_war.4354af3b.png" + "?" + Date.now();
+
+},{"8a526e99c9864b94":"lgJ39"}],"5X7zw":[function(require,module,exports) {
+module.exports = require("fffd45939eeb7415").getBundleURL("aAnGP") + "rune_haste.804dfb4c.png" + "?" + Date.now();
+
+},{"fffd45939eeb7415":"lgJ39"}],"gFt5D":[function(require,module,exports) {
+module.exports = require("569da5a8d93cb4c2").getBundleURL("aAnGP") + "rune_might.53f59920.png" + "?" + Date.now();
+
+},{"569da5a8d93cb4c2":"lgJ39"}],"lkXLI":[function(require,module,exports) {
+module.exports = require("e2acc41bb21edb48").getBundleURL("aAnGP") + "rune_warding.532f8ad3.png" + "?" + Date.now();
+
+},{"e2acc41bb21edb48":"lgJ39"}],"1ToI4":[function(require,module,exports) {
+module.exports = require("d034bf1a557e1fec").getBundleURL("aAnGP") + "door.07133bdd.png" + "?" + Date.now();
+
+},{"d034bf1a557e1fec":"lgJ39"}],"kAqHG":[function(require,module,exports) {
+module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
+
+},{"f6b1d88be3588622":"lgJ39"}],"9J8Br":[function(require,module,exports) {
+module.exports = require("2797bb0f8cdaa3cb").getBundleURL("aAnGP") + "health_crystal.0d30a58e.png" + "?" + Date.now();
+
+},{"2797bb0f8cdaa3cb":"lgJ39"}],"iwGdJ":[function(require,module,exports) {
+module.exports = require("ddb42533b60a1ac4").getBundleURL("aAnGP") + "mana_crystal.65e68033.png" + "?" + Date.now();
+
+},{"ddb42533b60a1ac4":"lgJ39"}],"9uNQt":[function(require,module,exports) {
+module.exports = require("b88e1a35592b6077").getBundleURL("aAnGP") + "Yellow_crystal2.0ed15310.png" + "?" + Date.now();
+
+},{"b88e1a35592b6077":"lgJ39"}],"7mv1Z":[function(require,module,exports) {
 module.exports = require("54635e7b2ca4709c").getBundleURL("aAnGP") + "floor.0bbfb544.png" + "?" + Date.now();
 
 },{"54635e7b2ca4709c":"lgJ39"}],"8K5FP":[function(require,module,exports) {
@@ -4350,46 +4346,7 @@ module.exports = require("9ae66daa07eb04f").getBundleURL("aAnGP") + "boulder.773
 },{"9ae66daa07eb04f":"lgJ39"}],"5AKUg":[function(require,module,exports) {
 module.exports = require("398d64d2fd3c60ad").getBundleURL("aAnGP") + "exit.e1114455.png" + "?" + Date.now();
 
-},{"398d64d2fd3c60ad":"lgJ39"}],"04CyO":[function(require,module,exports) {
-module.exports = require("6db897c9d2656c50").getBundleURL("aAnGP") + "key.843913e9.png" + "?" + Date.now();
-
-},{"6db897c9d2656c50":"lgJ39"}],"iTkbG":[function(require,module,exports) {
-module.exports = require("f59b545bc58552b1").getBundleURL("aAnGP") + "potion.75bf7793.png" + "?" + Date.now();
-
-},{"f59b545bc58552b1":"lgJ39"}],"kr7ve":[function(require,module,exports) {
-module.exports = require("6e6b6af1a7a9e5e3").getBundleURL("aAnGP") + "explosive.6e1a6b86.png" + "?" + Date.now();
-
-},{"6e6b6af1a7a9e5e3":"lgJ39"}],"imXnd":[function(require,module,exports) {
-module.exports = require("11d54df61439d3a4").getBundleURL("aAnGP") + "sword_steel.a6a16a95.png" + "?" + Date.now();
-
-},{"11d54df61439d3a4":"lgJ39"}],"jPYxu":[function(require,module,exports) {
-module.exports = require("8a526e99c9864b94").getBundleURL("aAnGP") + "axe_war.4354af3b.png" + "?" + Date.now();
-
-},{"8a526e99c9864b94":"lgJ39"}],"5X7zw":[function(require,module,exports) {
-module.exports = require("fffd45939eeb7415").getBundleURL("aAnGP") + "rune_haste.804dfb4c.png" + "?" + Date.now();
-
-},{"fffd45939eeb7415":"lgJ39"}],"gFt5D":[function(require,module,exports) {
-module.exports = require("569da5a8d93cb4c2").getBundleURL("aAnGP") + "rune_might.53f59920.png" + "?" + Date.now();
-
-},{"569da5a8d93cb4c2":"lgJ39"}],"lkXLI":[function(require,module,exports) {
-module.exports = require("e2acc41bb21edb48").getBundleURL("aAnGP") + "rune_warding.532f8ad3.png" + "?" + Date.now();
-
-},{"e2acc41bb21edb48":"lgJ39"}],"1ToI4":[function(require,module,exports) {
-module.exports = require("d034bf1a557e1fec").getBundleURL("aAnGP") + "door.07133bdd.png" + "?" + Date.now();
-
-},{"d034bf1a557e1fec":"lgJ39"}],"kAqHG":[function(require,module,exports) {
-module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
-
-},{"f6b1d88be3588622":"lgJ39"}],"9J8Br":[function(require,module,exports) {
-module.exports = require("2797bb0f8cdaa3cb").getBundleURL("aAnGP") + "health_crystal.0d30a58e.png" + "?" + Date.now();
-
-},{"2797bb0f8cdaa3cb":"lgJ39"}],"iwGdJ":[function(require,module,exports) {
-module.exports = require("ddb42533b60a1ac4").getBundleURL("aAnGP") + "mana_crystal.65e68033.png" + "?" + Date.now();
-
-},{"ddb42533b60a1ac4":"lgJ39"}],"9uNQt":[function(require,module,exports) {
-module.exports = require("b88e1a35592b6077").getBundleURL("aAnGP") + "Yellow_crystal2.0ed15310.png" + "?" + Date.now();
-
-},{"b88e1a35592b6077":"lgJ39"}],"kNfRL":[function(require,module,exports) {
+},{"398d64d2fd3c60ad":"lgJ39"}],"kNfRL":[function(require,module,exports) {
 // Splash screen
 // - Display game logo or animation
 // - Briefly show before transitioning to the welcome screen

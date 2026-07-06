@@ -10,6 +10,111 @@
 // Parcel only bundles the referenced file when the first argument is a string
 // literal at the call site. Wrapping it in a helper (variable argument) defeats
 // static analysis, leaving an unbundled `file://` path that the browser blocks.
+// Storing the resulting URL objects in the maps below is fine: the literal is
+// still at the `new URL(...)` call site.
+
+const PLAYER_ASSET_URLS = {
+  playerMovement: new URL("../assets/images/player/Player.png", import.meta.url),
+  playerActions: new URL("../assets/images/player/Player_Actions.png", import.meta.url),
+};
+
+const GUARD_ASSET_URLS = {
+  // ORC 1
+  orc1_Attack: new URL("../assets/images/enemies/orc1/orc1_attack_full.png", import.meta.url),
+  orc1_Death: new URL("../assets/images/enemies/orc1/orc1_death_full.png", import.meta.url),
+  orc1_Hurt: new URL("../assets/images/enemies/orc1/orc1_hurt_full.png", import.meta.url),
+  orc1_Idle: new URL("../assets/images/enemies/orc1/orc1_idle_full.png", import.meta.url),
+  orc1_Run: new URL("../assets/images/enemies/orc1/orc1_run_full.png", import.meta.url),
+  orc1_Run_Attack: new URL("../assets/images/enemies/orc1/orc1_run_attack_front_full.png", import.meta.url),
+  orc1_Walk: new URL("../assets/images/enemies/orc1/orc1_walk_full.png", import.meta.url),
+  orc1_Walk_Attack: new URL("../assets/images/enemies/orc1/orc1_walk_attack_front_full.png", import.meta.url),
+
+  // ORC 2
+  orc2_Attack: new URL("../assets/images/enemies/orc2/orc2_attack_full.png", import.meta.url),
+  orc2_Death: new URL("../assets/images/enemies/orc2/orc2_death_full.png", import.meta.url),
+  orc2_Hurt: new URL("../assets/images/enemies/orc2/orc2_hurt_full.png", import.meta.url),
+  orc2_Idle: new URL("../assets/images/enemies/orc2/orc2_idle_full.png", import.meta.url),
+  orc2_Run: new URL("../assets/images/enemies/orc2/orc2_run_full.png", import.meta.url),
+  orc2_Run_Attack: new URL("../assets/images/enemies/orc2/orc2_run_attack_full.png", import.meta.url),
+  orc2_Walk: new URL("../assets/images/enemies/orc2/orc2_walk_full.png", import.meta.url),
+  orc2_Walk_Attack: new URL("../assets/images/enemies/orc2/orc2_walk_attack_full.png", import.meta.url),
+
+  // ORC 3
+  orc3_Attack: new URL("../assets/images/enemies/orc3/orc3_attack_full.png", import.meta.url),
+  orc3_Death: new URL("../assets/images/enemies/orc3/orc3_death_full.png", import.meta.url),
+  orc3_Hurt: new URL("../assets/images/enemies/orc3/orc3_hurt_full.png", import.meta.url),
+  orc3_Idle: new URL("../assets/images/enemies/orc3/orc3_idle_full.png", import.meta.url),
+  orc3_Run: new URL("../assets/images/enemies/orc3/orc3_run_full.png", import.meta.url),
+  orc3_Run_Attack: new URL("../assets/images/enemies/orc3/orc3_run_attack_full.png", import.meta.url),
+  orc3_Walk: new URL("../assets/images/enemies/orc3/orc3_walk_full.png", import.meta.url),
+  orc3_Walk_Attack: new URL("../assets/images/enemies/orc3/orc3_walk_attack_full.png", import.meta.url),
+};
+
+const LEVEL_ASSET_URLS = {
+  grassTile: new URL("../assets/images/generated/grass_tile.png", import.meta.url),
+  wall: new URL("../assets/images/generated/stone_wall.png", import.meta.url),
+  boulder: new URL("../assets/images/generated/boulder.png", import.meta.url),
+  rock: new URL("../assets/images/obstacle/Rock6_1.png", import.meta.url),
+  tree1: new URL("../assets/images/obstacle/Tree1.png", import.meta.url),
+  tree2: new URL("../assets/images/obstacle/Tree2.png", import.meta.url),
+  tree3: new URL("../assets/images/obstacle/Tree3.png", import.meta.url),
+  palm1: new URL("../assets/images/generated/palm_a.png", import.meta.url),
+  palm2: new URL("../assets/images/generated/palm_b.png", import.meta.url),
+  sandRuin: new URL("../assets/images/exit/Sand_ruins3.png", import.meta.url),
+  snowRuin: new URL("../assets/images/exit/Snow_ruins3.png", import.meta.url),
+  yellowRuin: new URL("../assets/images/generated/exit_ruin.png", import.meta.url),
+  desertFloor: new URL("../assets/images/themes/desert/floor.png", import.meta.url),
+  desertWall: new URL("../assets/images/themes/desert/wall.png", import.meta.url),
+  desertTree1: new URL("../assets/images/themes/desert/tree_1.png", import.meta.url),
+  desertTree2: new URL("../assets/images/themes/desert/tree_2.png", import.meta.url),
+  desertBoulder: new URL("../assets/images/themes/desert/boulder.png", import.meta.url),
+  desertExit: new URL("../assets/images/themes/desert/exit.png", import.meta.url),
+  snowFloor: new URL("../assets/images/themes/snow/floor.png", import.meta.url),
+  snowWall: new URL("../assets/images/themes/snow/wall.png", import.meta.url),
+  snowTree1: new URL("../assets/images/themes/snow/tree_1.png", import.meta.url),
+  snowTree2: new URL("../assets/images/themes/snow/tree_2.png", import.meta.url),
+  snowBoulder: new URL("../assets/images/themes/snow/boulder.png", import.meta.url),
+  snowExit: new URL("../assets/images/themes/snow/exit.png", import.meta.url),
+  dungeonFloor: new URL("../assets/images/themes/dungeon/floor.png", import.meta.url),
+  dungeonWall: new URL("../assets/images/themes/dungeon/wall.png", import.meta.url),
+  dungeonObstacle1: new URL("../assets/images/themes/dungeon/obstacle_1.png", import.meta.url),
+  dungeonObstacle2: new URL("../assets/images/themes/dungeon/obstacle_2.png", import.meta.url),
+  dungeonBoulder: new URL("../assets/images/themes/dungeon/boulder.png", import.meta.url),
+  dungeonExit: new URL("../assets/images/themes/dungeon/exit.png", import.meta.url),
+};
+
+const ITEM_ASSET_URLS = {
+  key: new URL("../assets/images/generated/items/key.png", import.meta.url),
+  potion: new URL("../assets/images/generated/items/potion.png", import.meta.url),
+  explosive: new URL("../assets/images/generated/items/explosive.png", import.meta.url),
+  steelSword: new URL("../assets/images/generated/items/sword_steel.png", import.meta.url),
+  warAxe: new URL("../assets/images/generated/items/axe_war.png", import.meta.url),
+  runeHaste: new URL("../assets/images/generated/items/rune_haste.png", import.meta.url),
+  runeMight: new URL("../assets/images/generated/items/rune_might.png", import.meta.url),
+  runeWarding: new URL("../assets/images/generated/items/rune_warding.png", import.meta.url),
+  // Not an inventory item, but generated by the same tool: the locked door tile
+  door: new URL("../assets/images/generated/items/door.png", import.meta.url),
+};
+
+const POWERUP_ASSET_URLS = {
+  greenCrystal: new URL("../assets/images/powerups/Green_crystal2.png", import.meta.url),
+  redCrystal: new URL("../assets/images/generated/health_crystal.png", import.meta.url),
+  blueCrystal: new URL("../assets/images/generated/mana_crystal.png", import.meta.url),
+  yellowCrystal: new URL("../assets/images/powerups/Yellow_crystal2.png", import.meta.url),
+};
+
+// Total number of images the splash screen progress bar should expect.
+// Derived from the URL maps so it can never drift out of sync with the
+// actual asset lists (which previously caused progress above 100%).
+export function getTotalAssetCount() {
+  return [
+    PLAYER_ASSET_URLS,
+    GUARD_ASSET_URLS,
+    LEVEL_ASSET_URLS,
+    ITEM_ASSET_URLS,
+    POWERUP_ASSET_URLS,
+  ].reduce((total, urls) => total + Object.keys(urls).length, 0);
+}
 
 function loadImage(src, onProgress) {
   return new Promise((resolve, reject) => {
@@ -31,376 +136,36 @@ function loadImage(src, onProgress) {
   });
 }
 
+// Loads every image in a { name: URL } map and returns { name: HTMLImageElement }.
+async function loadImages(urlMap, onProgress) {
+  const images = {};
+  for (const [name, url] of Object.entries(urlMap)) {
+    images[name] = await loadImage(url.href, onProgress);
+  }
+  return images;
+}
+
 export async function loadPlayerAssets(onProgress) {
   console.log("Loading player assets...");
-  const playerMovement = await loadImage(
-    new URL("../assets/images/player/Player.png", import.meta.url).href,
-    onProgress
-  );
-  const playerActions = await loadImage(
-    new URL("../assets/images/player/Player_Actions.png", import.meta.url).href,
-    onProgress
-  );
-
-  return { playerMovement, playerActions };
+  return loadImages(PLAYER_ASSET_URLS, onProgress);
 }
 
 export async function loadGuardAssets(onProgress) {
   console.log("Loading guard assets...");
-  // ORC 1
-  const orc1_Attack = await loadImage(
-    new URL("../assets/images/enemies/orc1/orc1_attack_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc1_Death = await loadImage(
-    new URL("../assets/images/enemies/orc1/orc1_death_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc1_Hurt = await loadImage(
-    new URL("../assets/images/enemies/orc1/orc1_hurt_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc1_Idle = await loadImage(
-    new URL("../assets/images/enemies/orc1/orc1_idle_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc1_Run = await loadImage(
-    new URL("../assets/images/enemies/orc1/orc1_run_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc1_Run_Attack = await loadImage(
-    new URL("../assets/images/enemies/orc1/orc1_run_attack_front_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc1_Walk = await loadImage(
-    new URL("../assets/images/enemies/orc1/orc1_walk_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc1_Walk_Attack = await loadImage(
-    new URL("../assets/images/enemies/orc1/orc1_walk_attack_front_full.png", import.meta.url).href,
-    onProgress
-  );
-
-  // ORC 2
-  const orc2_Attack = await loadImage(
-    new URL("../assets/images/enemies/orc2/orc2_attack_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc2_Death = await loadImage(
-    new URL("../assets/images/enemies/orc2/orc2_death_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc2_Hurt = await loadImage(
-    new URL("../assets/images/enemies/orc2/orc2_hurt_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc2_Idle = await loadImage(
-    new URL("../assets/images/enemies/orc2/orc2_idle_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc2_Run = await loadImage(
-    new URL("../assets/images/enemies/orc2/orc2_run_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc2_Run_Attack = await loadImage(
-    new URL("../assets/images/enemies/orc2/orc2_run_attack_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc2_Walk = await loadImage(
-    new URL("../assets/images/enemies/orc2/orc2_walk_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc2_Walk_Attack = await loadImage(
-    new URL("../assets/images/enemies/orc2/orc2_walk_attack_full.png", import.meta.url).href,
-    onProgress
-  );
-
-  // ORC 3
-  const orc3_Attack = await loadImage(
-    new URL("../assets/images/enemies/orc3/orc3_attack_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc3_Death = await loadImage(
-    new URL("../assets/images/enemies/orc3/orc3_death_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc3_Hurt = await loadImage(
-    new URL("../assets/images/enemies/orc3/orc3_hurt_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc3_Idle = await loadImage(
-    new URL("../assets/images/enemies/orc3/orc3_idle_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc3_Run = await loadImage(
-    new URL("../assets/images/enemies/orc3/orc3_run_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc3_Run_Attack = await loadImage(
-    new URL("../assets/images/enemies/orc3/orc3_run_attack_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc3_Walk = await loadImage(
-    new URL("../assets/images/enemies/orc3/orc3_walk_full.png", import.meta.url).href,
-    onProgress
-  );
-  const orc3_Walk_Attack = await loadImage(
-    new URL("../assets/images/enemies/orc3/orc3_walk_attack_full.png", import.meta.url).href,
-    onProgress
-  );
-
-  return {
-    orc1_Attack,
-    orc1_Death,
-    orc1_Hurt,
-    orc1_Idle,
-    orc1_Run,
-    orc1_Run_Attack,
-    orc1_Walk,
-    orc1_Walk_Attack,
-    orc2_Attack,
-    orc2_Death,
-    orc2_Hurt,
-    orc2_Idle,
-    orc2_Run,
-    orc2_Run_Attack,
-    orc2_Walk,
-    orc2_Walk_Attack,
-    orc3_Attack,
-    orc3_Death,
-    orc3_Hurt,
-    orc3_Idle,
-    orc3_Run,
-    orc3_Run_Attack,
-    orc3_Walk,
-    orc3_Walk_Attack,
-  };
+  return loadImages(GUARD_ASSET_URLS, onProgress);
 }
 
 export async function loadLevelAssets(onProgress) {
   console.log("Loading level assets...");
-  const grassTile = await loadImage(
-    new URL("../assets/images/generated/grass_tile.png", import.meta.url).href,
-    onProgress
-  );
-  const wall = await loadImage(
-    new URL("../assets/images/generated/stone_wall.png", import.meta.url).href,
-    onProgress
-  );
-  const boulder = await loadImage(
-    new URL("../assets/images/generated/boulder.png", import.meta.url).href,
-    onProgress
-  );
-  const rock = await loadImage(
-    new URL("../assets/images/obstacle/Rock6_1.png", import.meta.url).href,
-    onProgress
-  );
-  const tree1 = await loadImage(
-    new URL("../assets/images/obstacle/Tree1.png", import.meta.url).href,
-    onProgress
-  );
-  const tree2 = await loadImage(
-    new URL("../assets/images/obstacle/Tree2.png", import.meta.url).href,
-    onProgress
-  );
-  const tree3 = await loadImage(
-    new URL("../assets/images/obstacle/Tree3.png", import.meta.url).href,
-    onProgress
-  );
-  const palm1 = await loadImage(
-    new URL("../assets/images/generated/palm_a.png", import.meta.url).href,
-    onProgress
-  );
-  const palm2 = await loadImage(
-    new URL("../assets/images/generated/palm_b.png", import.meta.url).href,
-    onProgress
-  );
-
-  const sandRuin = await loadImage(
-    new URL("../assets/images/exit/Sand_ruins3.png", import.meta.url).href,
-    onProgress
-  );
-
-  const snowRuin = await loadImage(
-    new URL("../assets/images/exit/Snow_ruins3.png", import.meta.url).href,
-    onProgress
-  );
-
-  const yellowRuin = await loadImage(
-    new URL("../assets/images/generated/exit_ruin.png", import.meta.url).href,
-    onProgress
-  );
-
-  const desertFloor = await loadImage(
-    new URL("../assets/images/themes/desert/floor.png", import.meta.url).href,
-    onProgress
-  );
-  const desertWall = await loadImage(
-    new URL("../assets/images/themes/desert/wall.png", import.meta.url).href,
-    onProgress
-  );
-  const desertTree1 = await loadImage(
-    new URL("../assets/images/themes/desert/tree_1.png", import.meta.url).href,
-    onProgress
-  );
-  const desertTree2 = await loadImage(
-    new URL("../assets/images/themes/desert/tree_2.png", import.meta.url).href,
-    onProgress
-  );
-  const desertBoulder = await loadImage(
-    new URL("../assets/images/themes/desert/boulder.png", import.meta.url).href,
-    onProgress
-  );
-  const desertExit = await loadImage(
-    new URL("../assets/images/themes/desert/exit.png", import.meta.url).href,
-    onProgress
-  );
-
-  const snowFloor = await loadImage(
-    new URL("../assets/images/themes/snow/floor.png", import.meta.url).href,
-    onProgress
-  );
-  const snowWall = await loadImage(
-    new URL("../assets/images/themes/snow/wall.png", import.meta.url).href,
-    onProgress
-  );
-  const snowTree1 = await loadImage(
-    new URL("../assets/images/themes/snow/tree_1.png", import.meta.url).href,
-    onProgress
-  );
-  const snowTree2 = await loadImage(
-    new URL("../assets/images/themes/snow/tree_2.png", import.meta.url).href,
-    onProgress
-  );
-  const snowBoulder = await loadImage(
-    new URL("../assets/images/themes/snow/boulder.png", import.meta.url).href,
-    onProgress
-  );
-  const snowExit = await loadImage(
-    new URL("../assets/images/themes/snow/exit.png", import.meta.url).href,
-    onProgress
-  );
-
-  const dungeonFloor = await loadImage(
-    new URL("../assets/images/themes/dungeon/floor.png", import.meta.url).href,
-    onProgress
-  );
-  const dungeonWall = await loadImage(
-    new URL("../assets/images/themes/dungeon/wall.png", import.meta.url).href,
-    onProgress
-  );
-  const dungeonObstacle1 = await loadImage(
-    new URL("../assets/images/themes/dungeon/obstacle_1.png", import.meta.url).href,
-    onProgress
-  );
-  const dungeonObstacle2 = await loadImage(
-    new URL("../assets/images/themes/dungeon/obstacle_2.png", import.meta.url).href,
-    onProgress
-  );
-  const dungeonBoulder = await loadImage(
-    new URL("../assets/images/themes/dungeon/boulder.png", import.meta.url).href,
-    onProgress
-  );
-  const dungeonExit = await loadImage(
-    new URL("../assets/images/themes/dungeon/exit.png", import.meta.url).href,
-    onProgress
-  );
-
-  return {
-    grassTile,
-    wall,
-    boulder,
-    rock,
-    tree1,
-    tree2,
-    tree3,
-    palm1,
-    palm2,
-    sandRuin,
-    snowRuin,
-    yellowRuin,
-    desertFloor,
-    desertWall,
-    desertTree1,
-    desertTree2,
-    desertBoulder,
-    desertExit,
-    snowFloor,
-    snowWall,
-    snowTree1,
-    snowTree2,
-    snowBoulder,
-    snowExit,
-    dungeonFloor,
-    dungeonWall,
-    dungeonObstacle1,
-    dungeonObstacle2,
-    dungeonBoulder,
-    dungeonExit,
-  };
+  return loadImages(LEVEL_ASSET_URLS, onProgress);
 }
 
 export async function loadItemAssets(onProgress) {
   console.log("Loading item assets...");
-  const key = await loadImage(
-    new URL("../assets/images/generated/items/key.png", import.meta.url).href,
-    onProgress
-  );
-  const potion = await loadImage(
-    new URL("../assets/images/generated/items/potion.png", import.meta.url).href,
-    onProgress
-  );
-  const explosive = await loadImage(
-    new URL("../assets/images/generated/items/explosive.png", import.meta.url).href,
-    onProgress
-  );
-  const steelSword = await loadImage(
-    new URL("../assets/images/generated/items/sword_steel.png", import.meta.url).href,
-    onProgress
-  );
-  const warAxe = await loadImage(
-    new URL("../assets/images/generated/items/axe_war.png", import.meta.url).href,
-    onProgress
-  );
-  const runeHaste = await loadImage(
-    new URL("../assets/images/generated/items/rune_haste.png", import.meta.url).href,
-    onProgress
-  );
-  const runeMight = await loadImage(
-    new URL("../assets/images/generated/items/rune_might.png", import.meta.url).href,
-    onProgress
-  );
-  const runeWarding = await loadImage(
-    new URL("../assets/images/generated/items/rune_warding.png", import.meta.url).href,
-    onProgress
-  );
-  // Not an inventory item, but generated by the same tool: the locked door tile
-  const door = await loadImage(
-    new URL("../assets/images/generated/items/door.png", import.meta.url).href,
-    onProgress
-  );
-
-  return { key, potion, explosive, steelSword, warAxe, runeHaste, runeMight, runeWarding, door };
+  return loadImages(ITEM_ASSET_URLS, onProgress);
 }
 
 export async function loadPowerUpsAssets(onProgress) {
   console.log("Loading powerups assets...");
-  const greenCrystal = await loadImage(
-    new URL("../assets/images/powerups/Green_crystal2.png", import.meta.url).href,
-    onProgress
-  );
-  const redCrystal = await loadImage(
-    new URL("../assets/images/generated/health_crystal.png", import.meta.url).href,
-    onProgress
-  );
-  const blueCrystal = await loadImage(
-    new URL("../assets/images/generated/mana_crystal.png", import.meta.url).href,
-    onProgress
-  );
-  const yellowCrystal = await loadImage(
-    new URL("../assets/images/powerups/Yellow_crystal2.png", import.meta.url).href,
-    onProgress
-  );
-
-  return { greenCrystal, redCrystal, blueCrystal, yellowCrystal };
+  return loadImages(POWERUP_ASSET_URLS, onProgress);
 }

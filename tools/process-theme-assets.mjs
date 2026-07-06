@@ -1,86 +1,60 @@
 // Normalizes generated theme art into the 64x64 PNGs used by the game.
 //
 // Usage:
-//   node tools/process-theme-assets.mjs desert:floor=/path/to/source.png ...
+//   node tools/process-theme-assets.mjs
 //
-// Sources must be PNGs under the repository root. For one-off generated files
-// elsewhere, set THEME_ASSET_INPUT_ROOT=/that/source/folder.
-//
-// Valid keys are theme:asset, for example:
-//   desert:floor, desert:wall, desert:tree_1, desert:tree_2, desert:boulder, desert:exit
+// Source PNGs are read from assets/generated-theme-sources/ with names like
+// desert_floor_source.png and dungeon_obstacle_1_source.png.
 
 import { chromium } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const EXTRA_INPUT_ROOT = process.env.THEME_ASSET_INPUT_ROOT
-  ? resolve(process.env.THEME_ASSET_INPUT_ROOT)
-  : null;
-const ALLOWED_INPUT_ROOTS = [resolve(ROOT), EXTRA_INPUT_ROOT].filter(Boolean);
-
-const OUTPUTS = {
-  "desert:floor": "assets/images/themes/desert/floor.png",
-  "desert:wall": "assets/images/themes/desert/wall.png",
-  "desert:tree_1": "assets/images/themes/desert/tree_1.png",
-  "desert:tree_2": "assets/images/themes/desert/tree_2.png",
-  "desert:boulder": "assets/images/themes/desert/boulder.png",
-  "desert:exit": "assets/images/themes/desert/exit.png",
-
-  "snow:floor": "assets/images/themes/snow/floor.png",
-  "snow:wall": "assets/images/themes/snow/wall.png",
-  "snow:tree_1": "assets/images/themes/snow/tree_1.png",
-  "snow:tree_2": "assets/images/themes/snow/tree_2.png",
-  "snow:boulder": "assets/images/themes/snow/boulder.png",
-  "snow:exit": "assets/images/themes/snow/exit.png",
-
-  "dungeon:floor": "assets/images/themes/dungeon/floor.png",
-  "dungeon:wall": "assets/images/themes/dungeon/wall.png",
-  "dungeon:obstacle_1": "assets/images/themes/dungeon/obstacle_1.png",
-  "dungeon:obstacle_2": "assets/images/themes/dungeon/obstacle_2.png",
-  "dungeon:boulder": "assets/images/themes/dungeon/boulder.png",
-  "dungeon:exit": "assets/images/themes/dungeon/exit.png",
-};
+const SOURCE_DIR = join(ROOT, "assets", "generated-theme-sources");
 
 const OPAQUE_ASSETS = new Set(["floor", "wall"]);
 
-function isInside(root, target) {
-  const pathFromRoot = relative(root, target);
-  return pathFromRoot === "" || (!pathFromRoot.startsWith("..") && !isAbsolute(pathFromRoot));
+function themeAsset(theme, asset, outputName = asset) {
+  return {
+    key: `${theme}:${asset}`,
+    asset,
+    inputPath: join(SOURCE_DIR, `${theme}_${asset}_source.png`),
+    outputPath: join(ROOT, "assets", "images", "themes", theme, `${outputName}.png`),
+  };
 }
 
-function resolveInputPath(rawPath) {
-  const inputPath = resolve(rawPath);
-  if (extname(inputPath).toLowerCase() !== ".png") {
-    throw new Error(`Theme asset source must be a PNG: ${rawPath}`);
-  }
-  if (!ALLOWED_INPUT_ROOTS.some((root) => isInside(root, inputPath))) {
-    throw new Error(
-      `Theme asset source is outside allowed roots. Set THEME_ASSET_INPUT_ROOT for generated sources: ${rawPath}`
-    );
-  }
-  return inputPath;
-}
+const SOURCE_ASSETS = [
+  themeAsset("desert", "floor"),
+  themeAsset("desert", "wall"),
+  themeAsset("desert", "tree_1"),
+  themeAsset("desert", "tree_2"),
+  themeAsset("desert", "boulder"),
+  themeAsset("desert", "exit"),
 
-function parseEntries(args) {
-  if (args.length === 0) {
-    throw new Error("No assets provided. Pass entries like desert:floor=/path/to/source.png");
-  }
+  themeAsset("snow", "floor"),
+  themeAsset("snow", "wall"),
+  themeAsset("snow", "tree_1"),
+  themeAsset("snow", "tree_2"),
+  themeAsset("snow", "boulder"),
+  themeAsset("snow", "exit"),
 
-  return args.map((arg) => {
-    const splitAt = arg.indexOf("=");
-    if (splitAt === -1) throw new Error(`Invalid entry: ${arg}`);
-    const key = arg.slice(0, splitAt);
-    const inputPath = resolveInputPath(arg.slice(splitAt + 1));
-    if (!OUTPUTS[key]) throw new Error(`Unknown theme asset key: ${key}`);
+  themeAsset("dungeon", "floor"),
+  themeAsset("dungeon", "wall"),
+  themeAsset("dungeon", "obstacle_1"),
+  themeAsset("dungeon", "obstacle_2"),
+  themeAsset("dungeon", "boulder"),
+  themeAsset("dungeon", "exit"),
+];
 
-    const asset = key.split(":")[1];
+function parseEntries() {
+  return SOURCE_ASSETS.map(({ key, asset, inputPath, outputPath }) => {
     const bytes = readFileSync(inputPath);
     return {
       key,
       inputPath,
-      outputPath: join(ROOT, OUTPUTS[key]),
+      outputPath,
       transparent: !OPAQUE_ASSETS.has(asset),
       dataUrl: `data:image/png;base64,${bytes.toString("base64")}`,
     };
@@ -92,7 +66,7 @@ function pngBufferFromDataUrl(dataUrl) {
   return Buffer.from(base64, "base64");
 }
 
-const entries = parseEntries(process.argv.slice(2));
+const entries = parseEntries();
 const browser = await chromium.launch();
 
 try {
