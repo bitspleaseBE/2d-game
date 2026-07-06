@@ -7,7 +7,9 @@ import {
   combatSettings,
   bossSettings,
   fogSettings,
+  entitySettings,
 } from "./utils/settings.js";
+import { sfx } from "./utils/sound.js";
 import Player from "./entities/player.js";
 import levelData from "./levels/level-data.js";
 import { clearContainer } from "./utils/canvas.js";
@@ -22,6 +24,7 @@ import Exit from "./entities/exit.js";
 import Drop from "./entities/drop.js";
 import Door from "./entities/door.js";
 import { itemCatalog, guardDropPool } from "./items.js";
+import { resolveThemeAssets } from "./assets/theme-manifest.js";
 
 // Main game logic
 // - Initialize the game board (labyrinth)
@@ -48,6 +51,7 @@ export class Game {
     this.started = false;
     this.paused = false;
     this.assets = assets;
+    this.themeAssets = resolveThemeAssets(this.assets.levelAssets);
     this.explosives = [];
     this.guards = [];
     this.obstacles = [];
@@ -83,6 +87,7 @@ export class Game {
       this.doors = [];
       this.exit = null;
       this.board = level.layout;
+      this.themeAssets = resolveThemeAssets(this.assets.levelAssets, level.theme);
       this.fogEnabled = level.fogOfWar;
       this.explored = level.layout.map((row) => row.map(() => false));
       if (this.fogEnabled) {
@@ -96,7 +101,7 @@ export class Game {
                 x * canvasSettings.cellWidth,
                 y * canvasSettings.cellHeight,
                 "normal",
-                this.assets.levelAssets
+                this.themeAssets
               )
             );
           }
@@ -113,7 +118,7 @@ export class Game {
             this.exit = new Exit(
               x * canvasSettings.cellWidth,
               y * canvasSettings.cellHeight,
-              this.assets.levelAssets
+              this.themeAssets
             );
           }
         }
@@ -205,7 +210,7 @@ export class Game {
           debounceAction(() => this.playerAttack(), 250)();
           break;
         case controlSettings.pick:
-          debounceAction(() => this.player.pick(), 150)();
+          debounceAction(() => this.playerPick(), 150)();
           break;
         case controlSettings.axe:
           debounceAction(() => this.playerAxe(), 250)();
@@ -263,6 +268,7 @@ export class Game {
   playerDrinkPotion() {
     if (this.player.useItem("potion")) {
       this.player.potion(); // drink animation
+      sfx.gulp();
       this.notify(`You drank a Health Potion (+${itemCatalog.potion.healAmount} health)`);
     } else {
       this.notifyOnce("You have no potions — defeated guards sometimes drop them.");
@@ -375,6 +381,7 @@ export class Game {
     this.attackCooldownMs = combatSettings.attackCooldownMs;
 
     this.player.attack();
+    sfx.swing();
     if (!this.player.isActionActive("attack")) return;
     const attackBox = this.player.getAttackBox();
 
@@ -386,13 +393,17 @@ export class Game {
       if (isColliding(attackBox, guard.getHitBox())) {
         guard.takeDamage(this.player.attackPower, this.player.movement);
         if (guard.consumeDefeatAward()) {
+          sfx.guardDown();
           this.score += guard.isBoss() ? bossSettings.scoreValue : gameSettings.scoreIncrement;
           this.spawnDrop(guard.getPosition());
+        } else {
+          sfx.hit();
         }
       }
     });
 
     // Chop down obstacles (trees, boulders) that are struck
+    const obstaclesBefore = this.obstacles.length;
     this.obstacles = this.obstacles.filter((obstacle) => {
       if (isColliding(attackBox, obstacle.getHitBox())) {
         obstacle.takeDamage(this.player.attackPower);
@@ -400,6 +411,7 @@ export class Game {
       }
       return true;
     });
+    if (this.obstacles.length < obstaclesBefore) sfx.chop();
   }
 
   playerAxe() {
@@ -407,9 +419,11 @@ export class Game {
     this.attackCooldownMs = combatSettings.attackCooldownMs;
 
     this.player.axe();
+    sfx.swing();
     if (!this.player.isActionActive("axe")) return;
     const attackBox = this.player.getAttackBox();
 
+    const obstaclesBefore = this.obstacles.length;
     this.obstacles = this.obstacles.filter((obstacle) => {
       if (isColliding(attackBox, obstacle.getHitBox())) {
         obstacle.takeDamage(this.player.attackPower);
@@ -417,6 +431,28 @@ export class Game {
       }
       return true;
     });
+    if (this.obstacles.length < obstaclesBefore) sfx.chop();
+  }
+
+  // Pick: disarm an armed explosive trap the player is standing near,
+  // before its fuse runs out
+  playerPick() {
+    this.player.pick();
+    const playerBox = this.player.getHitBox();
+    const px = playerBox.x + playerBox.width / 2;
+    const py = playerBox.y + playerBox.height / 2;
+
+    const index = this.explosives.findIndex((explosive) => {
+      if (!explosive.isArmed()) return false;
+      const center = explosive.getCenter();
+      return Math.hypot(px - center.x, py - center.y) <= entitySettings.explosiveTriggerRange;
+    });
+    if (index === -1) return;
+
+    this.explosives.splice(index, 1);
+    this.score += gameSettings.disarmScore;
+    sfx.disarm();
+    this.notify(`Trap disarmed! +${gameSettings.disarmScore} points`);
   }
 
   initializeEntities() {
@@ -439,11 +475,7 @@ export class Game {
 
           switch (cell) {
             case "E":
-              this.explosives.push(
-                new Explosive(position.x, position.y, {
-                  explosiveSprite: this.assets.itemAssets.explosive,
-                })
-              );
+              this.explosives.push(new Explosive(position.x, position.y));
               break;
             case "G":
               const randomOrc = randomInt(1, 3);
@@ -457,12 +489,12 @@ export class Game {
               break;
             case "O":
               this.obstacles.push(
-                new Obstacle(position.x, position.y, "boulder", this.assets.levelAssets)
+                new Obstacle(position.x, position.y, "boulder", this.themeAssets)
               );
               break;
             case "T":
               this.obstacles.push(
-                new Obstacle(position.x, position.y, "tree", this.assets.levelAssets)
+                new Obstacle(position.x, position.y, "tree", this.themeAssets)
               );
               break;
             case "C":
@@ -546,7 +578,7 @@ export class Game {
       return n.msLeft > 0;
     });
     this.player.update(deltaMs);
-    this.explosives.forEach((explosive) => explosive.update());
+    this.updateExplosives(deltaMs);
     // Locked doors block guards (and their line of sight) like walls
     const guardBlockers = [...this.walls, ...this.lockedDoors()];
     this.guards.forEach((guard) => guard.update(this.player.getHitBox(), guardBlockers, deltaMs));
@@ -580,6 +612,7 @@ export class Game {
       if (atDoor) {
         this.player.removeItem("key");
         door.unlock();
+        sfx.unlock();
         this.notify("You unlocked the door with your key!");
         return;
       }
@@ -621,30 +654,68 @@ export class Game {
     if (this.lives <= 0) {
       this.player.defeat();
       this.pendingGameOverMs = 700;
+      sfx.gameOver();
       return;
     }
     this.player.respawn(this.playerStart.x, this.playerStart.y);
   }
 
+  // Hidden traps arm when the player comes close, burn a fuse, then blast
+  // everything (player and guards) inside the radius exactly once
+  updateExplosives(deltaMs) {
+    const playerHitBox = this.player.getHitBox();
+
+    this.explosives.forEach((explosive) => {
+      const wasHidden = explosive.isHidden();
+      explosive.update(playerHitBox, deltaMs);
+      if (wasHidden && explosive.isArmed()) {
+        sfx.fuse();
+        this.notifyOnce("A trap springs — run, or disarm it with 'p'!");
+      }
+
+      const blast = explosive.consumeBlast();
+      if (!blast) return;
+      sfx.explosion();
+
+      const inBlast = (box) => {
+        const cx = box.x + box.width / 2;
+        const cy = box.y + box.height / 2;
+        return Math.hypot(cx - blast.x, cy - blast.y) <= blast.radius;
+      };
+
+      if (inBlast(playerHitBox)) {
+        this.damagePlayer(entitySettings.explosivePlayerDamage);
+      }
+      this.guards.forEach((guard) => {
+        if (guard.isDefeated()) return;
+        if (inBlast(guard.getHitBox())) {
+          guard.takeDamage(entitySettings.explosiveGuardDamage);
+          if (guard.consumeDefeatAward()) {
+            this.score += guard.isBoss() ? bossSettings.scoreValue : gameSettings.scoreIncrement;
+            this.spawnDrop(guard.getPosition());
+          }
+        }
+      });
+    });
+
+    this.explosives = this.explosives.filter((explosive) => !explosive.isDone());
+  }
+
+  // Route all player damage through one place so the hurt sound plays
+  // only when damage actually lands (not while invincible or flashing)
+  damagePlayer(amount) {
+    const healthBefore = this.player.getHealth();
+    this.player.takeDamage(amount);
+    if (this.player.getHealth() < healthBefore) sfx.hurt();
+  }
+
   checkCollisions() {
     const playerPosition = this.player.getHitBox();
-
-    this.explosives.forEach((explosive, index) => {
-      if (isColliding(playerPosition, explosive.getHitBox())) {
-        if (explosive.isActive()) {
-          // Handle player damage
-        } else if (!explosive.isHidden()) {
-          this.player.addItem("explosive");
-          this.explosives.splice(index, 1);
-          this.notifyPickup("explosive");
-        }
-      }
-    });
 
     this.guards.forEach((guard) => {
       if (guard.isDefeated()) return;
       if (isColliding(playerPosition, guard.getHitBox())) {
-        this.player.takeDamage(guard.damage);
+        this.damagePlayer(guard.damage);
       }
     });
 
@@ -663,6 +734,7 @@ export class Game {
         }
         this.powerups.splice(index, 1);
         this.score += gameSettings.scoreIncrement;
+        sfx.pickup();
       }
     });
 
@@ -671,6 +743,7 @@ export class Game {
       if (isColliding(this.player.getPickupRange(), drop.getHitBox())) {
         this.player.addItem(drop.getType());
         this.notifyPickup(drop.getType());
+        sfx.pickup();
         return false;
       }
       return true;
@@ -688,6 +761,7 @@ export class Game {
     if (!this.isLevelComplete()) return;
 
     this.score += gameSettings.scoreIncrement;
+    sfx.levelComplete();
 
     const nextLevel = levelData.getLevel(this.currentLevel + 1);
     if (nextLevel) {
@@ -977,11 +1051,10 @@ export class Game {
   }
 
   drawGrid() {
-    const grassPattern = this.context.createPattern(
-      this.assets.levelAssets.grassTile,
-      "repeat"
-    );
-    this.context.fillStyle = grassPattern || "#2f7d3b";
+    const floorPattern = this.themeAssets.floor
+      ? this.context.createPattern(this.themeAssets.floor, "repeat")
+      : null;
+    this.context.fillStyle = floorPattern || this.themeAssets.floorFallback;
     this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 

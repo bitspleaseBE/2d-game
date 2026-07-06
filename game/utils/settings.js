@@ -24,6 +24,7 @@ export const gameSettings = {
     initialLevel: 1, // Initial level of the game
     maxLevels: 10, // Maximum number of levels in the game (must match levels defined in levels/level-data.js)
     scoreIncrement: 100, // Points added to the score for each successful action
+    disarmScore: 50, // Points for disarming an armed explosive trap
 };
 
 // Powerup settings (durations are in milliseconds)
@@ -74,6 +75,11 @@ export const entitySettings = {
     guardColor: '#ff69b4', // Color of guards (funny pink color)
     explosiveColor: '#ffd54f', // Color of explosives (Yellow)
     exitColor: '#4caf50', // Color of the exit (Green)
+    explosiveTriggerRange: 96, // Distance at which a hidden trap arms itself (and can be disarmed)
+    explosiveFuseMs: 1500, // Time between arming and detonation
+    explosiveBlastRadius: 96, // Blast radius in pixels
+    explosivePlayerDamage: 30, // Damage the blast deals to the player
+    explosiveGuardDamage: 100, // Damage the blast deals to guards
 };
 
 // Sound settings

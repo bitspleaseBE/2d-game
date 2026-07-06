@@ -231,6 +231,81 @@ export async function loadLevelAssets(onProgress) {
     onProgress
   );
 
+  const desertFloor = await loadImage(
+    new URL("../assets/images/themes/desert/floor.png", import.meta.url).href,
+    onProgress
+  );
+  const desertWall = await loadImage(
+    new URL("../assets/images/themes/desert/wall.png", import.meta.url).href,
+    onProgress
+  );
+  const desertTree1 = await loadImage(
+    new URL("../assets/images/themes/desert/tree_1.png", import.meta.url).href,
+    onProgress
+  );
+  const desertTree2 = await loadImage(
+    new URL("../assets/images/themes/desert/tree_2.png", import.meta.url).href,
+    onProgress
+  );
+  const desertBoulder = await loadImage(
+    new URL("../assets/images/themes/desert/boulder.png", import.meta.url).href,
+    onProgress
+  );
+  const desertExit = await loadImage(
+    new URL("../assets/images/themes/desert/exit.png", import.meta.url).href,
+    onProgress
+  );
+
+  const snowFloor = await loadImage(
+    new URL("../assets/images/themes/snow/floor.png", import.meta.url).href,
+    onProgress
+  );
+  const snowWall = await loadImage(
+    new URL("../assets/images/themes/snow/wall.png", import.meta.url).href,
+    onProgress
+  );
+  const snowTree1 = await loadImage(
+    new URL("../assets/images/themes/snow/tree_1.png", import.meta.url).href,
+    onProgress
+  );
+  const snowTree2 = await loadImage(
+    new URL("../assets/images/themes/snow/tree_2.png", import.meta.url).href,
+    onProgress
+  );
+  const snowBoulder = await loadImage(
+    new URL("../assets/images/themes/snow/boulder.png", import.meta.url).href,
+    onProgress
+  );
+  const snowExit = await loadImage(
+    new URL("../assets/images/themes/snow/exit.png", import.meta.url).href,
+    onProgress
+  );
+
+  const dungeonFloor = await loadImage(
+    new URL("../assets/images/themes/dungeon/floor.png", import.meta.url).href,
+    onProgress
+  );
+  const dungeonWall = await loadImage(
+    new URL("../assets/images/themes/dungeon/wall.png", import.meta.url).href,
+    onProgress
+  );
+  const dungeonObstacle1 = await loadImage(
+    new URL("../assets/images/themes/dungeon/obstacle_1.png", import.meta.url).href,
+    onProgress
+  );
+  const dungeonObstacle2 = await loadImage(
+    new URL("../assets/images/themes/dungeon/obstacle_2.png", import.meta.url).href,
+    onProgress
+  );
+  const dungeonBoulder = await loadImage(
+    new URL("../assets/images/themes/dungeon/boulder.png", import.meta.url).href,
+    onProgress
+  );
+  const dungeonExit = await loadImage(
+    new URL("../assets/images/themes/dungeon/exit.png", import.meta.url).href,
+    onProgress
+  );
+
   return {
     grassTile,
     wall,
@@ -244,6 +319,24 @@ export async function loadLevelAssets(onProgress) {
     sandRuin,
     snowRuin,
     yellowRuin,
+    desertFloor,
+    desertWall,
+    desertTree1,
+    desertTree2,
+    desertBoulder,
+    desertExit,
+    snowFloor,
+    snowWall,
+    snowTree1,
+    snowTree2,
+    snowBoulder,
+    snowExit,
+    dungeonFloor,
+    dungeonWall,
+    dungeonObstacle1,
+    dungeonObstacle2,
+    dungeonBoulder,
+    dungeonExit,
   };
 }
 

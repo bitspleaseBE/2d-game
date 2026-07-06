@@ -18,8 +18,8 @@ class Obstacle extends Entity {
     if (type === "boulder") {
       this._sprite = assets.boulder;
     } else if (type === "tree") {
-      const randomTree = randomInt(1, 2);
-      this._sprite = assets[`palm${randomTree}`];
+      const trees = assets.trees || [assets.palm1, assets.palm2].filter(Boolean);
+      this._sprite = trees.length ? trees[randomInt(1, trees.length) - 1] : assets.boulder;
     }
   }
 

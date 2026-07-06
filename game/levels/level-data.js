@@ -33,6 +33,7 @@ class Level {
         this.difficulty = difficulty;
         this.layout = layout;
         this.name = name;
+        this.theme = options.theme || 'forest';
         // With fog of war on, only explored parts of the map are visible
         this.fogOfWar = Boolean(options.fogOfWar);
     }
@@ -54,10 +55,10 @@ levelData.addLevel(new Level(1, 'easy', parse([
     'T#    #O#  C # ## #T',
     'T# ## # ##   #    #T',
     'T#  # #    #   ## #T',
-    'T# ##   ##G# X ## #T',
-    'T#    E #      T  #T',
+    'T# ## E ##G# X ## #T',
+    'T##################T',
     'TTTTTTTTTTTTTTTTTTTT',
-]), 'The Glade'));
+]), 'The Glade', { theme: 'forest' }));
 
 // 2. The Gatehouse — first locked door: defeat a guard to find the key
 levelData.addLevel(new Level(2, 'easy', parse([
@@ -71,7 +72,7 @@ levelData.addLevel(new Level(2, 'easy', parse([
     '#     ###    #   # #',
     '#   #     ##   #   #',
     '####################',
-]), 'The Gatehouse'));
+]), 'The Gatehouse', { theme: 'forest' }));
 
 // 3. The Orchard — rows of trees form choppable gates between corridors:
 // chop straight through or walk around via the side openings
@@ -86,7 +87,7 @@ levelData.addLevel(new Level(3, 'medium', parse([
     '#   G     C  G     #',
     '#  TTT      TT    X#',
     '####################',
-]), 'The Orchard'));
+]), 'The Orchard', { theme: 'forest' }));
 
 // 4. The Quarry — boulders plug the wall gaps: every shortcut costs two
 // swings of the axe, every detour risks a patrol
@@ -101,7 +102,7 @@ levelData.addLevel(new Level(4, 'medium', parse([
     '#  C      #     G  #',
     '#    G    O   C   X#',
     '####################',
-]), 'The Quarry'));
+]), 'The Quarry', { theme: 'desert' }));
 
 // 5. The Warden — the first boss guards the open eastern arena. It is slow:
 // keep moving, land a swing, and step away before it closes in.
@@ -116,7 +117,7 @@ levelData.addLevel(new Level(5, 'medium', parse([
     '# C #  G   #       #',
     '#   #      ##  X   #',
     '####################',
-]), 'The Warden'));
+]), 'The Warden', { theme: 'desert' }));
 
 // 6. Twin Halls — two halls behind two locked doors: the guards of each
 // hall carry the key to the next
@@ -131,7 +132,7 @@ levelData.addLevel(new Level(6, 'hard', parse([
     '# ## #      # ###  #',
     '#  G #   G  #  C   #',
     '####################',
-]), 'Twin Halls'));
+]), 'Twin Halls', { theme: 'snow' }));
 
 // 7. The Serpent — one long winding corridor walked in the dark: fog of
 // war hides what waits beyond the next bend. Gates of trees and boulders
@@ -147,7 +148,7 @@ levelData.addLevel(new Level(7, 'hard', parse([
     '#  G     C    G    #',
     '#X                T#',
     '####################',
-]), 'The Serpent', { fogOfWar: true }));
+]), 'The Serpent', { theme: 'snow', fogOfWar: true }));
 
 // 8. The Crossroads — four guarded quadrants around a central plaza where
 // a boss patrols the loot
@@ -162,7 +163,7 @@ levelData.addLevel(new Level(8, 'hard', parse([
     '#  G #      #   G  #',
     '#    # C    #    X #',
     '####################',
-]), 'The Crossroads'));
+]), 'The Crossroads', { theme: 'dungeon' }));
 
 // 9. The Gauntlet — four chambers in a row, each sealed by a locked door;
 // every chamber's guards carry the next key
@@ -177,7 +178,7 @@ levelData.addLevel(new Level(9, 'expert', parse([
     '#   #    #    #  ###',
     '# G #  C #  C #  X##',
     '####################',
-]), 'The Gauntlet', { fogOfWar: true }));
+]), 'The Gauntlet', { theme: 'dungeon', fogOfWar: true }));
 
 // 10. The Throne — the final boss waits in an inner sanctum behind a locked
 // door, with the exit at its back. Sneak past it or bring it down for glory.
@@ -192,6 +193,6 @@ levelData.addLevel(new Level(10, 'expert', parse([
     '#E ## G    C     ###',
     '#C     ##     G   T#',
     '####################',
-]), 'The Throne', { fogOfWar: true }));
+]), 'The Throne', { theme: 'dungeon', fogOfWar: true }));
 
 export default levelData;

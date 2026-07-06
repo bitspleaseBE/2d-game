@@ -379,6 +379,70 @@ test('hitting a guard shows its health bar and knocks it back', async ({ page })
   expect(result.yAfter).toBeGreaterThan(result.yBefore);
 });
 
+test('a hidden trap arms near the player and its blast deals damage', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = []; // no contact damage interfering with the measurement
+
+    // Level 1 has a hidden explosive; stand right on top of it
+    const trap = game.explosives[0];
+    const trapPosition = trap.getPosition();
+    game.teleportPlayer(trapPosition.x, trapPosition.y);
+
+    const hiddenBefore = trap.isHidden();
+    game.step(1); // proximity arms the trap
+    const armedAfterApproach = trap.isArmed();
+    const healthBefore = game.player.getHealth();
+
+    // Wait out the 1.5s fuse plus the blast animation (~60fps steps)
+    game.step(120);
+    return {
+      hiddenBefore,
+      armedAfterApproach,
+      healthBefore,
+      healthAfter: game.player.getHealth(),
+      trapsLeft: game.explosives.length,
+    };
+  });
+
+  expect(result.hiddenBefore).toBe(true);
+  expect(result.armedAfterApproach).toBe(true);
+  expect(result.healthBefore).toBe(100);
+  expect(result.healthAfter).toBe(70); // explosivePlayerDamage
+  expect(result.trapsLeft).toBe(0); // the spent trap is removed
+});
+
+test('an armed trap can be disarmed with the pick action for bonus points', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+
+    const trap = game.explosives[0];
+    const trapPosition = trap.getPosition();
+    game.teleportPlayer(trapPosition.x, trapPosition.y);
+    game.step(1); // arm it
+
+    const scoreBefore = game.score;
+    game.playerPick();
+    return {
+      scoreBefore,
+      scoreAfter: game.score,
+      trapsLeft: game.explosives.length,
+      health: game.player.getHealth(),
+    };
+  });
+
+  expect(result.trapsLeft).toBe(0);
+  expect(result.scoreAfter).toBe(result.scoreBefore + 50); // disarmScore
+  expect(result.health).toBe(100); // no blast happened
+});
+
 test('the attack cooldown blocks an immediate second swing', async ({ page }) => {
   await startNewGame(page);
 

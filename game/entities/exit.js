@@ -10,7 +10,7 @@ import { random } from "../utils/rng.js";
 class Exit extends Entity {
   constructor(x, y, assets) {
     super(x, y, 'exit', assets);
-    this._sprite = assets.yellowRuin;
+    this._sprite = assets.exit || assets.yellowRuin;
     this._sparkles = this._createSparkles();
   }
 

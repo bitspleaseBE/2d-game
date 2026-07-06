@@ -1,6 +1,6 @@
 # Levels Overview
 
-This document provides an overview of the five levels in "Wandertrap," including their theme, the entities present, and a brief story for each.
+This document provides an overview of the ten levels in "Wandertrap," including their theme, the entities present, and a brief story for each.
 
 Layout legend: `#` wall · `P` player spawn · `X` exit · `G` guard · `B` boss · `E` hidden explosive trap · `C` powerup crystal · `K` key · `D` locked door · `O` boulder · `T` tree
 
@@ -58,4 +58,13 @@ Player, walls, 4 guards, 1 boss, 4 powerups, 3 explosive traps, 1 key, 1 locked 
 
 - Levels are declared in `game/levels/level-data.js`; rows can be written as plain strings for readability.
 - Every level is BFS-verified solvable by an automated test (`all levels are distinct and solvable`), which also asserts no two levels share a layout and that any key is reachable before its door.
-- Each level has a `theme` (`forest`, `sand`, `snow`, `dark`) that controls the background palette, the exit ruin sprite, and the tree sprite.
+- Each level has a `theme` (`forest`, `desert`, `snow`, `dungeon`) that controls the floor tile, wall tile, obstacle sprites, boulder sprite, and exit ruin.
+
+## Theme assignment
+
+| Levels | Theme | Visual direction |
+| --- | --- | --- |
+| 1-3 | `forest` | Current grass-and-stone look with palms and forest trees |
+| 4-5 | `desert` | Sand floors, sandstone walls, dead/burned trees, desert rocks |
+| 6-7 | `snow` | Snow floors, icy walls, frosted trees, snow-capped boulders |
+| 8-10 | `dungeon` | Dark cracked floors, mossy brick walls, broken pillars and burned barricades |

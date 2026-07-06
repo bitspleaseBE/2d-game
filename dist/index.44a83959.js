@@ -740,6 +740,7 @@ parcelHelpers.defineInteropFlag(exports);
 // - Render the game board and entities (player, obstacles, powerups, guards)
 parcelHelpers.export(exports, "Game", ()=>Game);
 var _settingsJs = require("./utils/settings.js");
+var _soundJs = require("./utils/sound.js");
 var _playerJs = require("./entities/player.js");
 var _playerJsDefault = parcelHelpers.interopDefault(_playerJs);
 var _levelDataJs = require("./levels/level-data.js");
@@ -764,6 +765,7 @@ var _dropJsDefault = parcelHelpers.interopDefault(_dropJs);
 var _doorJs = require("./entities/door.js");
 var _doorJsDefault = parcelHelpers.interopDefault(_doorJs);
 var _itemsJs = require("./items.js");
+var _themeManifestJs = require("./assets/theme-manifest.js");
 class Game {
     constructor(containerId, canvas, context, assets, callbacks = {}){
         this.container = document.getElementById(containerId);
@@ -781,6 +783,7 @@ class Game {
         this.started = false;
         this.paused = false;
         this.assets = assets;
+        this.themeAssets = (0, _themeManifestJs.resolveThemeAssets)(this.assets.levelAssets);
         this.explosives = [];
         this.guards = [];
         this.obstacles = [];
@@ -821,13 +824,14 @@ class Game {
             this.doors = [];
             this.exit = null;
             this.board = level.layout;
+            this.themeAssets = (0, _themeManifestJs.resolveThemeAssets)(this.assets.levelAssets, level.theme);
             this.fogEnabled = level.fogOfWar;
             this.explored = level.layout.map((row)=>row.map(()=>false));
             if (this.fogEnabled) this.notify("Fog of war \u2014 explore to reveal the map!");
             for(let y = 0; y < level.layout.length; y++)for(let x = 0; x < level.layout[y].length; x++){
-                if (level.layout[y][x] === "#") this.walls.push(new (0, _wallJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, "normal", this.assets.levelAssets));
+                if (level.layout[y][x] === "#") this.walls.push(new (0, _wallJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, "normal", this.themeAssets));
                 if (level.layout[y][x] === "D") this.doors.push(new (0, _doorJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, this.assets.itemAssets));
-                if (level.layout[y][x] === "X") this.exit = new (0, _exitJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, this.assets.levelAssets);
+                if (level.layout[y][x] === "X") this.exit = new (0, _exitJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, this.themeAssets);
             }
         }
     }
@@ -905,7 +909,7 @@ class Game {
                     debounceAction(()=>this.playerAttack(), 250)();
                     break;
                 case (0, _settingsJs.controlSettings).pick:
-                    debounceAction(()=>this.player.pick(), 150)();
+                    debounceAction(()=>this.playerPick(), 150)();
                     break;
                 case (0, _settingsJs.controlSettings).axe:
                     debounceAction(()=>this.playerAxe(), 250)();
@@ -950,6 +954,7 @@ class Game {
     playerDrinkPotion() {
         if (this.player.useItem("potion")) {
             this.player.potion(); // drink animation
+            (0, _soundJs.sfx).gulp();
             this.notify(`You drank a Health Potion (+${(0, _itemsJs.itemCatalog).potion.healAmount} health)`);
         } else this.notifyOnce("You have no potions \u2014 defeated guards sometimes drop them.");
     }
@@ -1042,6 +1047,7 @@ class Game {
         if (this.attackCooldownMs > 0) return;
         this.attackCooldownMs = (0, _settingsJs.combatSettings).attackCooldownMs;
         this.player.attack();
+        (0, _soundJs.sfx).swing();
         if (!this.player.isActionActive("attack")) return;
         const attackBox = this.player.getAttackBox();
         // Damage guards caught in the swing; defeated guards play their death
@@ -1052,12 +1058,14 @@ class Game {
             if ((0, _gameJs.isColliding)(attackBox, guard.getHitBox())) {
                 guard.takeDamage(this.player.attackPower, this.player.movement);
                 if (guard.consumeDefeatAward()) {
+                    (0, _soundJs.sfx).guardDown();
                     this.score += guard.isBoss() ? (0, _settingsJs.bossSettings).scoreValue : (0, _settingsJs.gameSettings).scoreIncrement;
                     this.spawnDrop(guard.getPosition());
-                }
+                } else (0, _soundJs.sfx).hit();
             }
         });
         // Chop down obstacles (trees, boulders) that are struck
+        const obstaclesBefore = this.obstacles.length;
         this.obstacles = this.obstacles.filter((obstacle)=>{
             if ((0, _gameJs.isColliding)(attackBox, obstacle.getHitBox())) {
                 obstacle.takeDamage(this.player.attackPower);
@@ -1065,13 +1073,16 @@ class Game {
             }
             return true;
         });
+        if (this.obstacles.length < obstaclesBefore) (0, _soundJs.sfx).chop();
     }
     playerAxe() {
         if (this.attackCooldownMs > 0) return;
         this.attackCooldownMs = (0, _settingsJs.combatSettings).attackCooldownMs;
         this.player.axe();
+        (0, _soundJs.sfx).swing();
         if (!this.player.isActionActive("axe")) return;
         const attackBox = this.player.getAttackBox();
+        const obstaclesBefore = this.obstacles.length;
         this.obstacles = this.obstacles.filter((obstacle)=>{
             if ((0, _gameJs.isColliding)(attackBox, obstacle.getHitBox())) {
                 obstacle.takeDamage(this.player.attackPower);
@@ -1079,6 +1090,25 @@ class Game {
             }
             return true;
         });
+        if (this.obstacles.length < obstaclesBefore) (0, _soundJs.sfx).chop();
+    }
+    // Pick: disarm an armed explosive trap the player is standing near,
+    // before its fuse runs out
+    playerPick() {
+        this.player.pick();
+        const playerBox = this.player.getHitBox();
+        const px = playerBox.x + playerBox.width / 2;
+        const py = playerBox.y + playerBox.height / 2;
+        const index = this.explosives.findIndex((explosive)=>{
+            if (!explosive.isArmed()) return false;
+            const center = explosive.getCenter();
+            return Math.hypot(px - center.x, py - center.y) <= (0, _settingsJs.entitySettings).explosiveTriggerRange;
+        });
+        if (index === -1) return;
+        this.explosives.splice(index, 1);
+        this.score += (0, _settingsJs.gameSettings).disarmScore;
+        (0, _soundJs.sfx).disarm();
+        this.notify(`Trap disarmed! +${(0, _settingsJs.gameSettings).disarmScore} points`);
     }
     initializeEntities() {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
@@ -1096,9 +1126,7 @@ class Game {
                 };
                 switch(cell){
                     case "E":
-                        this.explosives.push(new (0, _explosiveJsDefault.default)(position.x, position.y, {
-                            explosiveSprite: this.assets.itemAssets.explosive
-                        }));
+                        this.explosives.push(new (0, _explosiveJsDefault.default)(position.x, position.y));
                         break;
                     case "G":
                         const randomOrc = (0, _rngJs.randomInt)(1, 3);
@@ -1111,10 +1139,10 @@ class Game {
                         }));
                         break;
                     case "O":
-                        this.obstacles.push(new (0, _obstacleJsDefault.default)(position.x, position.y, "boulder", this.assets.levelAssets));
+                        this.obstacles.push(new (0, _obstacleJsDefault.default)(position.x, position.y, "boulder", this.themeAssets));
                         break;
                     case "T":
-                        this.obstacles.push(new (0, _obstacleJsDefault.default)(position.x, position.y, "tree", this.assets.levelAssets));
+                        this.obstacles.push(new (0, _obstacleJsDefault.default)(position.x, position.y, "tree", this.themeAssets));
                         break;
                     case "C":
                         const powerupTypes = Object.keys((0, _powerupJs.powerupDescriptions));
@@ -1183,7 +1211,7 @@ class Game {
             return n.msLeft > 0;
         });
         this.player.update(deltaMs);
-        this.explosives.forEach((explosive)=>explosive.update());
+        this.updateExplosives(deltaMs);
         // Locked doors block guards (and their line of sight) like walls
         const guardBlockers = [
             ...this.walls,
@@ -1218,6 +1246,7 @@ class Game {
             if (atDoor) {
                 this.player.removeItem("key");
                 door.unlock();
+                (0, _soundJs.sfx).unlock();
                 this.notify("You unlocked the door with your key!");
                 return;
             }
@@ -1249,25 +1278,56 @@ class Game {
         if (this.lives <= 0) {
             this.player.defeat();
             this.pendingGameOverMs = 700;
+            (0, _soundJs.sfx).gameOver();
             return;
         }
         this.player.respawn(this.playerStart.x, this.playerStart.y);
     }
+    // Hidden traps arm when the player comes close, burn a fuse, then blast
+    // everything (player and guards) inside the radius exactly once
+    updateExplosives(deltaMs) {
+        const playerHitBox = this.player.getHitBox();
+        this.explosives.forEach((explosive)=>{
+            const wasHidden = explosive.isHidden();
+            explosive.update(playerHitBox, deltaMs);
+            if (wasHidden && explosive.isArmed()) {
+                (0, _soundJs.sfx).fuse();
+                this.notifyOnce("A trap springs \u2014 run, or disarm it with 'p'!");
+            }
+            const blast = explosive.consumeBlast();
+            if (!blast) return;
+            (0, _soundJs.sfx).explosion();
+            const inBlast = (box)=>{
+                const cx = box.x + box.width / 2;
+                const cy = box.y + box.height / 2;
+                return Math.hypot(cx - blast.x, cy - blast.y) <= blast.radius;
+            };
+            if (inBlast(playerHitBox)) this.damagePlayer((0, _settingsJs.entitySettings).explosivePlayerDamage);
+            this.guards.forEach((guard)=>{
+                if (guard.isDefeated()) return;
+                if (inBlast(guard.getHitBox())) {
+                    guard.takeDamage((0, _settingsJs.entitySettings).explosiveGuardDamage);
+                    if (guard.consumeDefeatAward()) {
+                        this.score += guard.isBoss() ? (0, _settingsJs.bossSettings).scoreValue : (0, _settingsJs.gameSettings).scoreIncrement;
+                        this.spawnDrop(guard.getPosition());
+                    }
+                }
+            });
+        });
+        this.explosives = this.explosives.filter((explosive)=>!explosive.isDone());
+    }
+    // Route all player damage through one place so the hurt sound plays
+    // only when damage actually lands (not while invincible or flashing)
+    damagePlayer(amount) {
+        const healthBefore = this.player.getHealth();
+        this.player.takeDamage(amount);
+        if (this.player.getHealth() < healthBefore) (0, _soundJs.sfx).hurt();
+    }
     checkCollisions() {
         const playerPosition = this.player.getHitBox();
-        this.explosives.forEach((explosive, index)=>{
-            if ((0, _gameJs.isColliding)(playerPosition, explosive.getHitBox())) {
-                if (explosive.isActive()) ;
-                else if (!explosive.isHidden()) {
-                    this.player.addItem("explosive");
-                    this.explosives.splice(index, 1);
-                    this.notifyPickup("explosive");
-                }
-            }
-        });
         this.guards.forEach((guard)=>{
             if (guard.isDefeated()) return;
-            if ((0, _gameJs.isColliding)(playerPosition, guard.getHitBox())) this.player.takeDamage(guard.damage);
+            if ((0, _gameJs.isColliding)(playerPosition, guard.getHitBox())) this.damagePlayer(guard.damage);
         });
         this.obstacles.forEach((obstacle, index)=>{
             (0, _gameJs.isColliding)(playerPosition, obstacle.getHitBox());
@@ -1279,6 +1339,7 @@ class Game {
                 if ((0, _powerupJs.powerupDescriptions)[effect]) this.notify((0, _powerupJs.powerupDescriptions)[effect]);
                 this.powerups.splice(index, 1);
                 this.score += (0, _settingsJs.gameSettings).scoreIncrement;
+                (0, _soundJs.sfx).pickup();
             }
         });
         // Items dropped by defeated guards go into the inventory
@@ -1286,6 +1347,7 @@ class Game {
             if ((0, _gameJs.isColliding)(this.player.getPickupRange(), drop.getHitBox())) {
                 this.player.addItem(drop.getType());
                 this.notifyPickup(drop.getType());
+                (0, _soundJs.sfx).pickup();
                 return false;
             }
             return true;
@@ -1298,6 +1360,7 @@ class Game {
     checkLevelCompletion() {
         if (!this.isLevelComplete()) return;
         this.score += (0, _settingsJs.gameSettings).scoreIncrement;
+        (0, _soundJs.sfx).levelComplete();
         const nextLevel = (0, _levelDataJsDefault.default).getLevel(this.currentLevel + 1);
         if (nextLevel) {
             this.currentLevel += 1;
@@ -1542,8 +1605,8 @@ class Game {
         ctx.restore();
     }
     drawGrid() {
-        const grassPattern = this.context.createPattern(this.assets.levelAssets.grassTile, "repeat");
-        this.context.fillStyle = grassPattern || "#2f7d3b";
+        const floorPattern = this.themeAssets.floor ? this.context.createPattern(this.themeAssets.floor, "repeat") : null;
+        this.context.fillStyle = floorPattern || this.themeAssets.floorFallback;
         this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
     // Fog of war: unexplored cells are pitch black, explored cells outside
@@ -1671,7 +1734,7 @@ class Game {
 }
 exports.default = Game;
 
-},{"./utils/settings.js":"hBndc","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
+},{"./utils/settings.js":"hBndc","./utils/sound.js":"6QCfZ","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./items.js":"8gP9P","./assets/theme-manifest.js":"d5R3E","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
 // Game settings and configurations
 // - This file contains global settings and configurations for the game
 // - These settings can be adjusted to change the game's behavior and appearance
@@ -1704,7 +1767,8 @@ const playerSettings = {
 const gameSettings = {
     initialLevel: 1,
     maxLevels: 10,
-    scoreIncrement: 100
+    scoreIncrement: 100,
+    disarmScore: 50
 };
 const powerupSettings = {
     healAmount: 25,
@@ -1742,7 +1806,12 @@ const entitySettings = {
     powerupColor: "#1565c0",
     guardColor: "#ff69b4",
     explosiveColor: "#ffd54f",
-    exitColor: "#4caf50"
+    exitColor: "#4caf50",
+    explosiveTriggerRange: 96,
+    explosiveFuseMs: 1500,
+    explosiveBlastRadius: 96,
+    explosivePlayerDamage: 30,
+    explosiveGuardDamage: 100
 };
 const soundSettings = {
     mute: false,
@@ -1791,7 +1860,218 @@ exports.export = function(dest, destName, get) {
     });
 };
 
-},{}],"1uqza":[function(require,module,exports) {
+},{}],"6QCfZ":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "sfx", ()=>sfx);
+var _settingsJs = require("./settings.js");
+// Tiny synthesized sound effects via the Web Audio API — no audio assets
+// needed. The AudioContext is created lazily on the first sound, which always
+// happens after a user gesture (a key press or button click), so autoplay
+// policies never block it. Every call is wrapped so a missing/blocked audio
+// backend can never break the game.
+let ctx = null;
+function getContext() {
+    if ((0, _settingsJs.soundSettings).mute) return null;
+    try {
+        if (!ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return null;
+            ctx = new AudioCtx();
+        }
+        if (ctx.state === "suspended") ctx.resume().catch(()=>{});
+        return ctx;
+    } catch  {
+        return null;
+    }
+}
+// Play a simple tone: oscillator + exponential decay envelope
+function tone({ type = "square", from = 440, to = from, duration = 0.1, volume = 0.3, delay = 0 }) {
+    const audio = getContext();
+    if (!audio) return;
+    try {
+        const t0 = audio.currentTime + delay;
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(from, t0);
+        osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + duration);
+        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        osc.connect(gain).connect(audio.destination);
+        osc.start(t0);
+        osc.stop(t0 + duration);
+    } catch  {
+    // Audio is best-effort; never let it break gameplay
+    }
+}
+// A burst of filtered noise, for impacts and explosions
+function noise({ duration = 0.3, volume = 0.4, delay = 0 }) {
+    const audio = getContext();
+    if (!audio) return;
+    try {
+        const t0 = audio.currentTime + delay;
+        const buffer = audio.createBuffer(1, audio.sampleRate * duration, audio.sampleRate);
+        const data = buffer.getChannelData(0);
+        for(let i = 0; i < data.length; i++)data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+        const src = audio.createBufferSource();
+        src.buffer = buffer;
+        const gain = audio.createGain();
+        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        src.connect(gain).connect(audio.destination);
+        src.start(t0);
+    } catch  {
+    // best-effort
+    }
+}
+const sfx = {
+    swing: ()=>tone({
+            type: "sawtooth",
+            from: 300,
+            to: 80,
+            duration: 0.08,
+            volume: 0.15
+        }),
+    hit: ()=>tone({
+            type: "square",
+            from: 150,
+            to: 60,
+            duration: 0.12,
+            volume: 0.25
+        }),
+    hurt: ()=>tone({
+            type: "triangle",
+            from: 220,
+            to: 110,
+            duration: 0.25,
+            volume: 0.3
+        }),
+    pickup: ()=>{
+        tone({
+            type: "sine",
+            from: 660,
+            to: 880,
+            duration: 0.08,
+            volume: 0.25
+        });
+        tone({
+            type: "sine",
+            from: 880,
+            to: 1320,
+            duration: 0.1,
+            volume: 0.2,
+            delay: 0.08
+        });
+    },
+    fuse: ()=>tone({
+            type: "square",
+            from: 1200,
+            to: 1200,
+            duration: 0.05,
+            volume: 0.08
+        }),
+    explosion: ()=>{
+        noise({
+            duration: 0.5,
+            volume: 0.5
+        });
+        tone({
+            type: "sine",
+            from: 100,
+            to: 30,
+            duration: 0.5,
+            volume: 0.4
+        });
+    },
+    guardDown: ()=>tone({
+            type: "sawtooth",
+            from: 200,
+            to: 40,
+            duration: 0.35,
+            volume: 0.3
+        }),
+    unlock: ()=>{
+        tone({
+            type: "square",
+            from: 500,
+            to: 500,
+            duration: 0.06,
+            volume: 0.2
+        });
+        tone({
+            type: "square",
+            from: 750,
+            to: 750,
+            duration: 0.1,
+            volume: 0.2,
+            delay: 0.08
+        });
+    },
+    disarm: ()=>tone({
+            type: "sine",
+            from: 900,
+            to: 300,
+            duration: 0.25,
+            volume: 0.2
+        }),
+    gulp: ()=>{
+        tone({
+            type: "sine",
+            from: 300,
+            to: 150,
+            duration: 0.1,
+            volume: 0.25
+        });
+        tone({
+            type: "sine",
+            from: 350,
+            to: 180,
+            duration: 0.12,
+            volume: 0.25,
+            delay: 0.12
+        });
+    },
+    chop: ()=>tone({
+            type: "square",
+            from: 120,
+            to: 50,
+            duration: 0.15,
+            volume: 0.3
+        }),
+    levelComplete: ()=>{
+        [
+            523,
+            659,
+            784,
+            1047
+        ].forEach((f, i)=>tone({
+                type: "triangle",
+                from: f,
+                to: f,
+                duration: 0.15,
+                volume: 0.25,
+                delay: i * 0.12
+            }));
+    },
+    gameOver: ()=>{
+        [
+            392,
+            330,
+            262,
+            196
+        ].forEach((f, i)=>tone({
+                type: "triangle",
+                from: f,
+                to: f,
+                duration: 0.25,
+                volume: 0.25,
+                delay: i * 0.2
+            }));
+    }
+};
+
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"1uqza":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -2443,7 +2723,7 @@ const guardSpriteManifest = {
             frameWidth: 64,
             frameHeight: 64,
             frames: 4,
-            frameDurationMs: 220,
+            frameDurationMs: 180,
             rows: {
                 down: 0,
                 up: 1,
@@ -2454,8 +2734,8 @@ const guardSpriteManifest = {
         walk: {
             frameWidth: 64,
             frameHeight: 64,
-            frames: 4,
-            frameDurationMs: 120,
+            frames: 6,
+            frameDurationMs: 95,
             rows: {
                 down: 0,
                 up: 1,
@@ -2466,8 +2746,8 @@ const guardSpriteManifest = {
         attack: {
             frameWidth: 64,
             frameHeight: 64,
-            frames: 4,
-            frameDurationMs: 110,
+            frames: 8,
+            frameDurationMs: 65,
             rows: {
                 down: 0,
                 up: 1,
@@ -2480,8 +2760,8 @@ const guardSpriteManifest = {
         hurt: {
             frameWidth: 64,
             frameHeight: 64,
-            frames: 4,
-            frameDurationMs: 90,
+            frames: 6,
+            frameDurationMs: 70,
             rows: {
                 down: 0,
                 up: 1,
@@ -2494,8 +2774,8 @@ const guardSpriteManifest = {
         dead: {
             frameWidth: 64,
             frameHeight: 64,
-            frames: 4,
-            frameDurationMs: 140,
+            frames: 8,
+            frameDurationMs: 80,
             rows: {
                 down: 0,
                 up: 1,
@@ -2626,6 +2906,7 @@ class Level {
         this.difficulty = difficulty;
         this.layout = layout;
         this.name = name;
+        this.theme = options.theme || "forest";
         // With fog of war on, only explored parts of the map are visible
         this.fogOfWar = Boolean(options.fogOfWar);
     }
@@ -2644,10 +2925,12 @@ levelData.addLevel(new Level(1, "easy", parse([
     "T#    #O#  C # ## #T",
     "T# ## # ##   #    #T",
     "T#  # #    #   ## #T",
-    "T# ##   ##G# X ## #T",
-    "T#    E #      T  #T",
+    "T# ## E ##G# X ## #T",
+    "T##################T",
     "TTTTTTTTTTTTTTTTTTTT"
-]), "The Glade"));
+]), "The Glade", {
+    theme: "forest"
+}));
 // 2. The Gatehouse — first locked door: defeat a guard to find the key
 levelData.addLevel(new Level(2, "easy", parse([
     "####################",
@@ -2660,7 +2943,9 @@ levelData.addLevel(new Level(2, "easy", parse([
     "#     ###    #   # #",
     "#   #     ##   #   #",
     "####################"
-]), "The Gatehouse"));
+]), "The Gatehouse", {
+    theme: "forest"
+}));
 // 3. The Orchard — rows of trees form choppable gates between corridors:
 // chop straight through or walk around via the side openings
 levelData.addLevel(new Level(3, "medium", parse([
@@ -2674,7 +2959,9 @@ levelData.addLevel(new Level(3, "medium", parse([
     "#   G     C  G     #",
     "#  TTT      TT    X#",
     "####################"
-]), "The Orchard"));
+]), "The Orchard", {
+    theme: "forest"
+}));
 // 4. The Quarry — boulders plug the wall gaps: every shortcut costs two
 // swings of the axe, every detour risks a patrol
 levelData.addLevel(new Level(4, "medium", parse([
@@ -2688,7 +2975,9 @@ levelData.addLevel(new Level(4, "medium", parse([
     "#  C      #     G  #",
     "#    G    O   C   X#",
     "####################"
-]), "The Quarry"));
+]), "The Quarry", {
+    theme: "desert"
+}));
 // 5. The Warden — the first boss guards the open eastern arena. It is slow:
 // keep moving, land a swing, and step away before it closes in.
 levelData.addLevel(new Level(5, "medium", parse([
@@ -2702,7 +2991,9 @@ levelData.addLevel(new Level(5, "medium", parse([
     "# C #  G   #       #",
     "#   #      ##  X   #",
     "####################"
-]), "The Warden"));
+]), "The Warden", {
+    theme: "desert"
+}));
 // 6. Twin Halls — two halls behind two locked doors: the guards of each
 // hall carry the key to the next
 levelData.addLevel(new Level(6, "hard", parse([
@@ -2716,7 +3007,9 @@ levelData.addLevel(new Level(6, "hard", parse([
     "# ## #      # ###  #",
     "#  G #   G  #  C   #",
     "####################"
-]), "Twin Halls"));
+]), "Twin Halls", {
+    theme: "snow"
+}));
 // 7. The Serpent — one long winding corridor walked in the dark: fog of
 // war hides what waits beyond the next bend. Gates of trees and boulders
 // plug the wall gaps.
@@ -2732,6 +3025,7 @@ levelData.addLevel(new Level(7, "hard", parse([
     "#X                T#",
     "####################"
 ]), "The Serpent", {
+    theme: "snow",
     fogOfWar: true
 }));
 // 8. The Crossroads — four guarded quadrants around a central plaza where
@@ -2747,7 +3041,9 @@ levelData.addLevel(new Level(8, "hard", parse([
     "#  G #      #   G  #",
     "#    # C    #    X #",
     "####################"
-]), "The Crossroads"));
+]), "The Crossroads", {
+    theme: "dungeon"
+}));
 // 9. The Gauntlet — four chambers in a row, each sealed by a locked door;
 // every chamber's guards carry the next key
 levelData.addLevel(new Level(9, "expert", parse([
@@ -2762,6 +3058,7 @@ levelData.addLevel(new Level(9, "expert", parse([
     "# G #  C #  C #  X##",
     "####################"
 ]), "The Gauntlet", {
+    theme: "dungeon",
     fogOfWar: true
 }));
 // 10. The Throne — the final boss waits in an inner sanctum behind a locked
@@ -2778,6 +3075,7 @@ levelData.addLevel(new Level(10, "expert", parse([
     "#C     ##     G   T#",
     "####################"
 ]), "The Throne", {
+    theme: "dungeon",
     fogOfWar: true
 }));
 exports.default = levelData;
@@ -2877,47 +3175,126 @@ var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
 var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
-// Explosive entity
-// - Properties: position, isHidden (under obstacle), isActive
-// - Methods: detonate (trigger explosion), checkCollision (with player)
-// - Handle explosion effects (reduce player lives, visual effects)
+var _settingsJs = require("../utils/settings.js");
+// Explosive entity — a hidden trap
+// - Starts hidden. When the player comes close it reveals itself and arms:
+//   a short fuse starts burning (the bomb flashes faster and faster).
+// - When the fuse runs out it detonates, damaging the player AND any guards
+//   inside the blast radius. The game reads the blast via consumeBlast().
+// - An armed trap can be disarmed with the pick action before it blows.
+// - Drawn procedurally (bomb + fuse spark + expanding blast), no sprite needed.
+const EXPLOSION_ANIMATION_MS = 350;
 class Explosive extends (0, _entityJsDefault.default) {
-    #isHidden;
-    #isActive;
-    constructor(x, y, assets){
-        super(x, y);
-        this.#isHidden = true;
-        this.#isActive = false;
-        this._sprite = assets.explosiveSprite;
+    #state = "hidden";
+    #fuseMs = (0, _settingsJs.entitySettings).explosiveFuseMs;
+    #explosionMs = EXPLOSION_ANIMATION_MS;
+    #blastConsumed = false;
+    constructor(x, y){
+        super(x, y, "explosive");
     }
     isHidden() {
-        return this.#isHidden;
+        return this.#state === "hidden";
     }
-    isActive() {
-        return this.#isActive;
+    isArmed() {
+        return this.#state === "armed";
     }
-    reveal() {
-        this.#isHidden = false;
+    isExploding() {
+        return this.#state === "exploding";
     }
-    detonate() {
-        this.#isActive = true;
-        // Implement explosion logic here
-        console.log("Explosive detonated!");
+    // Finished exploding; safe to remove from the game
+    isDone() {
+        return this.#state === "done";
     }
-    checkCollision(entity) {
-    // Implement collision detection logic
-    // Return true if colliding, false otherwise
+    getCenter() {
+        return {
+            x: this._position.x + this._width / 2,
+            y: this._position.y + this._height / 2
+        };
     }
-    update() {
-    // Update explosive state if needed
+    // The blast is applied exactly once, on the frame the fuse runs out.
+    // Returns the blast circle on that frame, null otherwise.
+    consumeBlast() {
+        if (this.#state !== "exploding" || this.#blastConsumed) return null;
+        this.#blastConsumed = true;
+        return {
+            ...this.getCenter(),
+            radius: (0, _settingsJs.entitySettings).explosiveBlastRadius
+        };
+    }
+    update(playerHitBox, deltaMs = 1000 / 60) {
+        switch(this.#state){
+            case "hidden":
+                {
+                    if (!playerHitBox) break;
+                    const center = this.getCenter();
+                    const px = playerHitBox.x + playerHitBox.width / 2;
+                    const py = playerHitBox.y + playerHitBox.height / 2;
+                    const distance = Math.hypot(px - center.x, py - center.y);
+                    if (distance <= (0, _settingsJs.entitySettings).explosiveTriggerRange) this.#state = "armed";
+                    break;
+                }
+            case "armed":
+                this.#fuseMs -= deltaMs;
+                if (this.#fuseMs <= 0) this.#state = "exploding";
+                break;
+            case "exploding":
+                this.#explosionMs -= deltaMs;
+                if (this.#explosionMs <= 0) this.#state = "done";
+                break;
+        }
     }
     draw(ctx) {
-        if (!this.#isHidden) ctx.drawImage(this._sprite, this._position.x, this._position.y, this._width, this._height);
+        if (this.#state === "hidden" || this.#state === "done") return;
+        const center = this.getCenter();
+        ctx.save();
+        if (this.#state === "armed") {
+            // Bomb body
+            ctx.fillStyle = "#1c1c1c";
+            ctx.beginPath();
+            ctx.arc(center.x, center.y + 6, 16, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            // Fuse
+            ctx.strokeStyle = "#8B4513";
+            ctx.beginPath();
+            ctx.moveTo(center.x, center.y - 10);
+            ctx.quadraticCurveTo(center.x + 10, center.y - 20, center.x + 14, center.y - 14);
+            ctx.stroke();
+            // Spark, flickering
+            ctx.fillStyle = Math.floor(this.#fuseMs / 130) % 2 === 0 ? "#ffd54f" : "#ff7043";
+            ctx.beginPath();
+            ctx.arc(center.x + 14, center.y - 14, 4, 0, Math.PI * 2);
+            ctx.fill();
+            // Red warning flash that speeds up as the fuse burns down
+            const flashPeriodMs = this.#fuseMs > (0, _settingsJs.entitySettings).explosiveFuseMs / 2 ? 330 : 130;
+            if (this.#fuseMs % flashPeriodMs < flashPeriodMs / 2) {
+                ctx.fillStyle = "rgba(255, 40, 40, 0.25)";
+                ctx.beginPath();
+                ctx.arc(center.x, center.y, (0, _settingsJs.entitySettings).explosiveBlastRadius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        } else {
+            // Expanding blast rings
+            const progress = 1 - this.#explosionMs / EXPLOSION_ANIMATION_MS;
+            const radius = (0, _settingsJs.entitySettings).explosiveBlastRadius * progress;
+            const alpha = 1 - progress;
+            ctx.fillStyle = `rgba(255, 160, 30, ${alpha * 0.7})`;
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = `rgba(255, 240, 120, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, radius * 0.55, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
     }
 }
 exports.default = Explosive;
 
-},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"bFjVQ":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"bFjVQ":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -3254,8 +3631,11 @@ class Obstacle extends (0, _entityJsDefault.default) {
         this.#health = 100;
         if (type === "boulder") this._sprite = assets.boulder;
         else if (type === "tree") {
-            const randomTree = (0, _rngJs.randomInt)(1, 2);
-            this._sprite = assets[`palm${randomTree}`];
+            const trees = assets.trees || [
+                assets.palm1,
+                assets.palm2
+            ].filter(Boolean);
+            this._sprite = trees.length ? trees[(0, _rngJs.randomInt)(1, trees.length) - 1] : assets.boulder;
         }
     }
     takeDamage(amount) {
@@ -3357,7 +3737,7 @@ var _rngJs = require("../utils/rng.js");
 class Exit extends (0, _entityJsDefault.default) {
     constructor(x, y, assets){
         super(x, y, "exit", assets);
-        this._sprite = assets.yellowRuin;
+        this._sprite = assets.exit || assets.yellowRuin;
         this._sparkles = this._createSparkles();
     }
     _createSparkles() {
@@ -3478,7 +3858,90 @@ class Door extends (0, _entityJsDefault.default) {
 }
 exports.default = Door;
 
-},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2MtDO":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d5R3E":[function(require,module,exports) {
+// Per-level visual theme registry.
+// Theme entries point at keys in the loaded level-assets object.
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "DEFAULT_THEME", ()=>DEFAULT_THEME);
+parcelHelpers.export(exports, "THEMES", ()=>THEMES);
+parcelHelpers.export(exports, "getTheme", ()=>getTheme);
+parcelHelpers.export(exports, "resolveThemeAssets", ()=>resolveThemeAssets);
+const DEFAULT_THEME = "forest";
+const THEMES = {
+    forest: {
+        name: "Forest",
+        floor: "grassTile",
+        wall: "wall",
+        trees: [
+            "palm1",
+            "palm2",
+            "tree1",
+            "tree2",
+            "tree3"
+        ],
+        boulder: "boulder",
+        exit: "yellowRuin",
+        floorFallback: "#2f7d3b"
+    },
+    desert: {
+        name: "Desert Ruins",
+        floor: "desertFloor",
+        wall: "desertWall",
+        trees: [
+            "desertTree1",
+            "desertTree2"
+        ],
+        boulder: "desertBoulder",
+        exit: "desertExit",
+        floorFallback: "#b8904d"
+    },
+    snow: {
+        name: "Frozen Halls",
+        floor: "snowFloor",
+        wall: "snowWall",
+        trees: [
+            "snowTree1",
+            "snowTree2"
+        ],
+        boulder: "snowBoulder",
+        exit: "snowExit",
+        floorFallback: "#d8e7ef"
+    },
+    dungeon: {
+        name: "Dungeon Depths",
+        floor: "dungeonFloor",
+        wall: "dungeonWall",
+        trees: [
+            "dungeonObstacle1",
+            "dungeonObstacle2"
+        ],
+        boulder: "dungeonBoulder",
+        exit: "dungeonExit",
+        floorFallback: "#27262d"
+    }
+};
+const assetFromTheme = (levelAssets, theme, fallbackTheme, key)=>levelAssets[theme[key]] || levelAssets[fallbackTheme[key]];
+function getTheme(themeId) {
+    return THEMES[themeId] || THEMES[DEFAULT_THEME];
+}
+function resolveThemeAssets(levelAssets, themeId = DEFAULT_THEME) {
+    const theme = getTheme(themeId);
+    const fallbackTheme = THEMES[DEFAULT_THEME];
+    const trees = theme.trees.map((key)=>levelAssets[key]).filter(Boolean);
+    return {
+        id: THEMES[themeId] ? themeId : DEFAULT_THEME,
+        name: theme.name,
+        floor: assetFromTheme(levelAssets, theme, fallbackTheme, "floor"),
+        wall: assetFromTheme(levelAssets, theme, fallbackTheme, "wall"),
+        trees: trees.length ? trees : fallbackTheme.trees.map((key)=>levelAssets[key]).filter(Boolean),
+        boulder: assetFromTheme(levelAssets, theme, fallbackTheme, "boulder"),
+        exit: assetFromTheme(levelAssets, theme, fallbackTheme, "exit"),
+        floorFallback: theme.floorFallback || fallbackTheme.floorFallback
+    };
+}
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2MtDO":[function(require,module,exports) {
 // handle the assets
 // Load player sprite sheets
 // Load enemy sprite sheets
@@ -3595,6 +4058,24 @@ async function loadLevelAssets(onProgress) {
     const sandRuin = await loadImage(new URL(require("80e7c00fdd98ae89")).href, onProgress);
     const snowRuin = await loadImage(new URL(require("a7b3d39a650d1b88")).href, onProgress);
     const yellowRuin = await loadImage(new URL(require("4b942e3d0fe21af6")).href, onProgress);
+    const desertFloor = await loadImage(new URL(require("ef04bc5083c079cc")).href, onProgress);
+    const desertWall = await loadImage(new URL(require("6878513b9faf2986")).href, onProgress);
+    const desertTree1 = await loadImage(new URL(require("bc79d6f290e43a80")).href, onProgress);
+    const desertTree2 = await loadImage(new URL(require("3cb4e84e63f16db9")).href, onProgress);
+    const desertBoulder = await loadImage(new URL(require("b7e208cdba694b64")).href, onProgress);
+    const desertExit = await loadImage(new URL(require("79f3a39fe9166a77")).href, onProgress);
+    const snowFloor = await loadImage(new URL(require("74aef0ff01d35eed")).href, onProgress);
+    const snowWall = await loadImage(new URL(require("bcb8f883f78c181d")).href, onProgress);
+    const snowTree1 = await loadImage(new URL(require("cc85696959d39ebe")).href, onProgress);
+    const snowTree2 = await loadImage(new URL(require("8a9de24e04381f43")).href, onProgress);
+    const snowBoulder = await loadImage(new URL(require("fa5a6a619bb370b5")).href, onProgress);
+    const snowExit = await loadImage(new URL(require("bc748784e8c30387")).href, onProgress);
+    const dungeonFloor = await loadImage(new URL(require("4c85499cec1fe247")).href, onProgress);
+    const dungeonWall = await loadImage(new URL(require("30dc4b9275317af2")).href, onProgress);
+    const dungeonObstacle1 = await loadImage(new URL(require("9473da643103b312")).href, onProgress);
+    const dungeonObstacle2 = await loadImage(new URL(require("ddf8915e74bf87b9")).href, onProgress);
+    const dungeonBoulder = await loadImage(new URL(require("2ee19a9caa29b665")).href, onProgress);
+    const dungeonExit = await loadImage(new URL(require("5cab7d9201f88a17")).href, onProgress);
     return {
         grassTile,
         wall,
@@ -3607,7 +4088,25 @@ async function loadLevelAssets(onProgress) {
         palm2,
         sandRuin,
         snowRuin,
-        yellowRuin
+        yellowRuin,
+        desertFloor,
+        desertWall,
+        desertTree1,
+        desertTree2,
+        desertBoulder,
+        desertExit,
+        snowFloor,
+        snowWall,
+        snowTree1,
+        snowTree2,
+        snowBoulder,
+        snowExit,
+        dungeonFloor,
+        dungeonWall,
+        dungeonObstacle1,
+        dungeonObstacle2,
+        dungeonBoulder,
+        dungeonExit
     };
 }
 async function loadItemAssets(onProgress) {
@@ -3648,7 +4147,7 @@ async function loadPowerUpsAssets(onProgress) {
     };
 }
 
-},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","3d27847b46809984":"kAqHG","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
+},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","3d27847b46809984":"kAqHG","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
 module.exports = require("59afba6ea444a216").getBundleURL("aAnGP") + "Player.89df9642.png" + "?" + Date.now();
 
 },{"59afba6ea444a216":"lgJ39"}],"lgJ39":[function(require,module,exports) {
@@ -3797,7 +4296,61 @@ module.exports = require("d7584db4a4d9b947").getBundleURL("aAnGP") + "Snow_ruins
 },{"d7584db4a4d9b947":"lgJ39"}],"d9SAV":[function(require,module,exports) {
 module.exports = require("f6fe50e58e8fedab").getBundleURL("aAnGP") + "exit_ruin.0d420dd3.png" + "?" + Date.now();
 
-},{"f6fe50e58e8fedab":"lgJ39"}],"04CyO":[function(require,module,exports) {
+},{"f6fe50e58e8fedab":"lgJ39"}],"7mv1Z":[function(require,module,exports) {
+module.exports = require("54635e7b2ca4709c").getBundleURL("aAnGP") + "floor.0bbfb544.png" + "?" + Date.now();
+
+},{"54635e7b2ca4709c":"lgJ39"}],"8K5FP":[function(require,module,exports) {
+module.exports = require("818c8e26a0fa5fae").getBundleURL("aAnGP") + "wall.5d494604.png" + "?" + Date.now();
+
+},{"818c8e26a0fa5fae":"lgJ39"}],"iGkio":[function(require,module,exports) {
+module.exports = require("3c7ece1fedb824df").getBundleURL("aAnGP") + "tree_1.2b56d562.png" + "?" + Date.now();
+
+},{"3c7ece1fedb824df":"lgJ39"}],"lDsOK":[function(require,module,exports) {
+module.exports = require("ea7c360192673a66").getBundleURL("aAnGP") + "tree_2.9f85f3ac.png" + "?" + Date.now();
+
+},{"ea7c360192673a66":"lgJ39"}],"djXHd":[function(require,module,exports) {
+module.exports = require("5941717143b58257").getBundleURL("aAnGP") + "boulder.bc7f1f8f.png" + "?" + Date.now();
+
+},{"5941717143b58257":"lgJ39"}],"kktpJ":[function(require,module,exports) {
+module.exports = require("4f95cb931fd497f5").getBundleURL("aAnGP") + "exit.6fa79a1d.png" + "?" + Date.now();
+
+},{"4f95cb931fd497f5":"lgJ39"}],"iw4jJ":[function(require,module,exports) {
+module.exports = require("a35e1ea0c3f52980").getBundleURL("aAnGP") + "floor.f95b6eb2.png" + "?" + Date.now();
+
+},{"a35e1ea0c3f52980":"lgJ39"}],"eX1hi":[function(require,module,exports) {
+module.exports = require("e612b16897774314").getBundleURL("aAnGP") + "wall.09499add.png" + "?" + Date.now();
+
+},{"e612b16897774314":"lgJ39"}],"b6nPp":[function(require,module,exports) {
+module.exports = require("93e722e26d2ff862").getBundleURL("aAnGP") + "tree_1.3b30e16c.png" + "?" + Date.now();
+
+},{"93e722e26d2ff862":"lgJ39"}],"fsLCy":[function(require,module,exports) {
+module.exports = require("857c90d8cb0d4669").getBundleURL("aAnGP") + "tree_2.d6782b0f.png" + "?" + Date.now();
+
+},{"857c90d8cb0d4669":"lgJ39"}],"4K8XV":[function(require,module,exports) {
+module.exports = require("db4fa505026ca621").getBundleURL("aAnGP") + "boulder.42ffddab.png" + "?" + Date.now();
+
+},{"db4fa505026ca621":"lgJ39"}],"cs4tf":[function(require,module,exports) {
+module.exports = require("b46007950dc04b13").getBundleURL("aAnGP") + "exit.65a3bbe8.png" + "?" + Date.now();
+
+},{"b46007950dc04b13":"lgJ39"}],"6xGJQ":[function(require,module,exports) {
+module.exports = require("e6fb4abff87f0665").getBundleURL("aAnGP") + "floor.57ec2539.png" + "?" + Date.now();
+
+},{"e6fb4abff87f0665":"lgJ39"}],"7tpoG":[function(require,module,exports) {
+module.exports = require("add0643a5e7fa982").getBundleURL("aAnGP") + "wall.32004326.png" + "?" + Date.now();
+
+},{"add0643a5e7fa982":"lgJ39"}],"7coCV":[function(require,module,exports) {
+module.exports = require("a49b8f9ad48e4b82").getBundleURL("aAnGP") + "obstacle_1.603daa90.png" + "?" + Date.now();
+
+},{"a49b8f9ad48e4b82":"lgJ39"}],"byxh4":[function(require,module,exports) {
+module.exports = require("89844af4c58a45fb").getBundleURL("aAnGP") + "obstacle_2.552e8bc9.png" + "?" + Date.now();
+
+},{"89844af4c58a45fb":"lgJ39"}],"enjv0":[function(require,module,exports) {
+module.exports = require("9ae66daa07eb04f").getBundleURL("aAnGP") + "boulder.773484af.png" + "?" + Date.now();
+
+},{"9ae66daa07eb04f":"lgJ39"}],"5AKUg":[function(require,module,exports) {
+module.exports = require("398d64d2fd3c60ad").getBundleURL("aAnGP") + "exit.e1114455.png" + "?" + Date.now();
+
+},{"398d64d2fd3c60ad":"lgJ39"}],"04CyO":[function(require,module,exports) {
 module.exports = require("6db897c9d2656c50").getBundleURL("aAnGP") + "key.843913e9.png" + "?" + Date.now();
 
 },{"6db897c9d2656c50":"lgJ39"}],"iTkbG":[function(require,module,exports) {
