@@ -16,10 +16,13 @@ class Guard extends Entity {
   #healthBarMs = 0;
   // Active knockback push: direction vector plus remaining duration
   #knockback = null;
+  #deathElapsedMs = 0;
+  #ranged = false;
+  #rangedCooldownMs = 0;
 
   #isBoss;
 
-  constructor(x, y, type, assets, { boss = false } = {}) {
+  constructor(x, y, type, assets, { boss = false, ranged = false, healthScale = 1 } = {}) {
     super(
       x,
       y,
@@ -29,15 +32,23 @@ class Guard extends Entity {
       boss ? bossSettings.height : entitySettings.enemyHeight
     );
     this.#isBoss = boss;
+    this.#ranged = ranged && !boss;
     this.animator = new Animator(guardSpriteManifest);
     this.movement = ["down", "up", "left", "right"][randomInt(0, 3)];
     this.animator.setDirection(this.movement);
     this.action = "idle";
-    this.damage = boss ? bossSettings.damage : 10;
-    this.#maxHealth = boss ? bossSettings.health : 100;
+    this.damage = boss ? bossSettings.damage : this.#ranged ? combatSettings.archerDamage : 10;
+    this.#maxHealth = boss
+      ? bossSettings.health
+      : Math.round((this.#ranged ? combatSettings.archerHealth : 100) * healthScale);
     this.#health = this.#maxHealth;
-    this.#speed = boss ? bossSettings.speed : 60; // pixels per second
-    this.#detectionRange = (boss ? bossSettings.detectionRangeCells : 5) * canvasSettings.cellWidth;
+    this.#speed = boss ? bossSettings.speed : this.#ranged ? 70 : 60; // pixels per second
+    this.#detectionRange = (boss
+      ? bossSettings.detectionRangeCells
+      : this.#ranged
+        ? combatSettings.archerRangeCells
+        : 5) * canvasSettings.cellWidth;
+    if (this.#ranged && this._sprites.bowAttack) this._sprites.attack = this._sprites.bowAttack;
     this.#currentSprite = this._sprites.idle;
     this.currentFrame = 0;
   }
@@ -63,6 +74,7 @@ class Guard extends Entity {
   selectSprites(assets) {
     return {
       attack: assets[`${this._type}_Attack`],
+      bowAttack: assets[`${this._type}_Bow_Attack`],
       death: assets[`${this._type}_Death`],
       hurt: assets[`${this._type}_Hurt`],
       idle: assets[`${this._type}_Idle`],
@@ -70,6 +82,17 @@ class Guard extends Entity {
       runAttack: assets[`${this._type}_Run_Attack`],
       walk: assets[`${this._type}_Walk`],
       walkAttack: assets[`${this._type}_Walk_Attack`],
+    };
+  }
+
+  isRanged() {
+    return this.#ranged;
+  }
+
+  getCenter() {
+    return {
+      x: this._position.x + this._width / 2,
+      y: this._position.y + this._height / 2,
     };
   }
 
@@ -154,6 +177,7 @@ class Guard extends Entity {
     const dx = playerPosition.x - this._position.x;
     const dy = playerPosition.y - this._position.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance === 0) return true;
 
     if (distance <= this.#detectionRange) {
       const step = {
@@ -248,11 +272,16 @@ class Guard extends Entity {
   }
 
   isReadyToRemove() {
-    return this.isDefeated() && this.animator.isComplete("dead");
+    return (
+      this.isDefeated() &&
+      this.animator.isComplete("dead") &&
+      this.#deathElapsedMs >= combatSettings.corpseLingerMs
+    );
   }
 
   defeat() {
     this.#health = 0;
+    this.#deathElapsedMs = 0;
     this.animator.play("dead", { restart: true, direction: this.movement });
     this.#syncAnimationState();
   }
@@ -271,17 +300,92 @@ class Guard extends Entity {
     this.animator.update(deltaMs);
     this.#syncAnimationState();
     this.#healthBarMs = Math.max(0, this.#healthBarMs - deltaMs);
+    this.#rangedCooldownMs = Math.max(0, this.#rangedCooldownMs - deltaMs);
 
-    if (this.isDefeated()) return;
+    if (this.isDefeated()) {
+      this.#deathElapsedMs += deltaMs;
+      return null;
+    }
 
     // A knockback push overrides normal movement while it lasts
     if (this.#knockback) {
       this.#applyKnockback(walls, deltaMs);
-      return;
+      return null;
+    }
+
+    if (this.#ranged) {
+      return this.#updateRanged(playerPosition, walls, deltaMs);
     }
 
     if (this.detectPlayer(playerPosition, walls)) {
       this.moveTowards(playerPosition, walls, deltaMs);
+    } else {
+      this.idle();
+    }
+    return null;
+  }
+
+  #updateRanged(playerPosition, walls, deltaMs) {
+    const targetCenter = {
+      x: playerPosition.x + playerPosition.width / 2,
+      y: playerPosition.y + playerPosition.height / 2,
+    };
+    const ownCenter = this.getCenter();
+    const dx = targetCenter.x - ownCenter.x;
+    const dy = targetCenter.y - ownCenter.y;
+    const distance = Math.hypot(dx, dy) || 1;
+
+    this.movement = Math.abs(dx) > Math.abs(dy)
+      ? (dx > 0 ? "right" : "left")
+      : (dy > 0 ? "down" : "up");
+    this.animator.setDirection(this.movement);
+
+    if (this.detectPlayer(playerPosition, walls)) {
+      if (distance < combatSettings.archerKeepDistanceCells * canvasSettings.cellWidth) {
+        this.#retreatFrom(dx, dy, walls, deltaMs);
+      } else {
+        this.idle();
+      }
+      if (this.#rangedCooldownMs <= 0) {
+        this.attack();
+        this.#rangedCooldownMs = combatSettings.archerCooldownMs;
+        return {
+          x: ownCenter.x,
+          y: ownCenter.y,
+          direction: { x: dx / distance, y: dy / distance },
+          damage: 20,
+        };
+      }
+      return null;
+    }
+
+    this.idle();
+    return null;
+  }
+
+  #retreatFrom(dx, dy, walls, deltaMs) {
+    const distance = this.#speed * (deltaMs / 1000);
+    const axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    const nextPosition = {
+      x: this._position.x,
+      y: this._position.y,
+      width: canvasSettings.cellWidth / 2,
+      height: canvasSettings.cellHeight / 2,
+    };
+
+    if (axis === "x") {
+      nextPosition.x += dx > 0 ? -distance : distance;
+      this.movement = dx > 0 ? "left" : "right";
+    } else {
+      nextPosition.y += dy > 0 ? -distance : distance;
+      this.movement = dy > 0 ? "up" : "down";
+    }
+    this.animator.setDirection(this.movement);
+
+    const blocked = walls.some((wall) => isColliding(nextPosition, wall.getHitBox()));
+    if (!blocked) {
+      this._position = { x: nextPosition.x, y: nextPosition.y };
+      this.walk();
     } else {
       this.idle();
     }
@@ -306,6 +410,12 @@ class Guard extends Entity {
   draw(ctx) {
     const frame = this.animator.getFrame(this.movement);
 
+    ctx.save();
+    if (this.isDefeated() && this.animator.isComplete("dead")) {
+      const fadeStart = combatSettings.corpseLingerMs - combatSettings.corpseFadeMs;
+      const fadeElapsed = Math.max(0, this.#deathElapsedMs - fadeStart);
+      ctx.globalAlpha = 1 - Math.min(1, fadeElapsed / combatSettings.corpseFadeMs);
+    }
     ctx.drawImage(
       this.#currentSprite,
       frame.sourceX,
@@ -317,6 +427,7 @@ class Guard extends Entity {
       this._width,
       this._height
     );
+    ctx.restore();
 
     this.#drawHealthBar(ctx);
   }

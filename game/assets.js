@@ -16,11 +16,13 @@
 const PLAYER_ASSET_URLS = {
   playerMovement: new URL("../assets/images/player/Player.png", import.meta.url),
   playerActions: new URL("../assets/images/player/Player_Actions.png", import.meta.url),
+  playerBow: new URL("../assets/images/player/Player_Bow.png", import.meta.url),
 };
 
 const GUARD_ASSET_URLS = {
   // ORC 1
   orc1_Attack: new URL("../assets/images/enemies/orc1/orc1_attack_full.png", import.meta.url),
+  orc1_Bow_Attack: new URL("../assets/images/enemies/orc1/orc1_bow_attack_full.png", import.meta.url),
   orc1_Death: new URL("../assets/images/enemies/orc1/orc1_death_full.png", import.meta.url),
   orc1_Hurt: new URL("../assets/images/enemies/orc1/orc1_hurt_full.png", import.meta.url),
   orc1_Idle: new URL("../assets/images/enemies/orc1/orc1_idle_full.png", import.meta.url),
@@ -31,6 +33,7 @@ const GUARD_ASSET_URLS = {
 
   // ORC 2
   orc2_Attack: new URL("../assets/images/enemies/orc2/orc2_attack_full.png", import.meta.url),
+  orc2_Bow_Attack: new URL("../assets/images/enemies/orc2/orc2_bow_attack_full.png", import.meta.url),
   orc2_Death: new URL("../assets/images/enemies/orc2/orc2_death_full.png", import.meta.url),
   orc2_Hurt: new URL("../assets/images/enemies/orc2/orc2_hurt_full.png", import.meta.url),
   orc2_Idle: new URL("../assets/images/enemies/orc2/orc2_idle_full.png", import.meta.url),
@@ -41,6 +44,7 @@ const GUARD_ASSET_URLS = {
 
   // ORC 3
   orc3_Attack: new URL("../assets/images/enemies/orc3/orc3_attack_full.png", import.meta.url),
+  orc3_Bow_Attack: new URL("../assets/images/enemies/orc3/orc3_bow_attack_full.png", import.meta.url),
   orc3_Death: new URL("../assets/images/enemies/orc3/orc3_death_full.png", import.meta.url),
   orc3_Hurt: new URL("../assets/images/enemies/orc3/orc3_hurt_full.png", import.meta.url),
   orc3_Idle: new URL("../assets/images/enemies/orc3/orc3_idle_full.png", import.meta.url),
@@ -103,6 +107,8 @@ const ITEM_ASSET_URLS = {
   key: new URL("../assets/images/generated/items/key.png", import.meta.url),
   potion: new URL("../assets/images/generated/items/potion.png", import.meta.url),
   explosive: new URL("../assets/images/generated/items/explosive.png", import.meta.url),
+  dreamShard: new URL("../assets/images/powerups/Green_crystal2.png", import.meta.url),
+  arrowBundle: new URL("../assets/images/projectiles/arrow.png", import.meta.url),
   steelSword: new URL("../assets/images/generated/items/sword_steel.png", import.meta.url),
   warAxe: new URL("../assets/images/generated/items/axe_war.png", import.meta.url),
   runeHaste: new URL("../assets/images/generated/items/rune_haste.png", import.meta.url),
@@ -128,9 +134,15 @@ const STORY_ASSET_URLS = {
   endingDawn: new URL("../assets/images/story/ending_dawn.png", import.meta.url),
 };
 
+const PROJECTILE_ASSET_URLS = {
+  arrow: new URL("../assets/images/projectiles/arrow.png", import.meta.url),
+};
+
 // Total number of images the splash screen progress bar should expect.
 // Derived from the URL maps so it can never drift out of sync with the
 // actual asset lists (which previously caused progress above 100%).
+// Story assets are excluded: they are heavy cinematics that load lazily
+// in the background after the game becomes playable.
 export function getTotalAssetCount() {
   return [
     PLAYER_ASSET_URLS,
@@ -138,7 +150,7 @@ export function getTotalAssetCount() {
     LEVEL_ASSET_URLS,
     ITEM_ASSET_URLS,
     POWERUP_ASSET_URLS,
-    STORY_ASSET_URLS,
+    PROJECTILE_ASSET_URLS,
   ].reduce((total, urls) => total + Object.keys(urls).length, 0);
 }
 
@@ -148,7 +160,7 @@ function loadImage(src, onProgress) {
       const img = new Image();
       img.src = src;
       img.onload = () => {
-        onProgress(src, img);
+        if (onProgress) onProgress(src, img);
         resolve(img);
       };
       img.onerror = (error) => {
@@ -162,13 +174,17 @@ function loadImage(src, onProgress) {
   });
 }
 
-// Loads every image in a { name: URL } map and returns { name: HTMLImageElement }.
-async function loadImages(urlMap, onProgress) {
-  const images = {};
-  for (const [name, url] of Object.entries(urlMap)) {
-    images[name] = await loadImage(url.href, onProgress);
-  }
-  return images;
+// Loads every image in a { name: URL } map in parallel and returns
+// { name: HTMLImageElement }. Images are written to `target` as soon as each
+// one finishes, so callers holding a reference to `target` (e.g. a lazily
+// loaded asset map) can use images before the whole batch completes.
+async function loadImages(urlMap, onProgress, target = {}) {
+  await Promise.all(
+    Object.entries(urlMap).map(async ([name, url]) => {
+      target[name] = await loadImage(url.href, onProgress);
+    })
+  );
+  return target;
 }
 
 export async function loadPlayerAssets(onProgress) {
@@ -196,7 +212,31 @@ export async function loadPowerUpsAssets(onProgress) {
   return loadImages(POWERUP_ASSET_URLS, onProgress);
 }
 
-export async function loadStoryAssets(onProgress) {
-  console.log("Loading story assets...");
-  return loadImages(STORY_ASSET_URLS, onProgress);
+export async function loadProjectileAssets(onProgress) {
+  console.log("Loading projectile assets...");
+  return loadImages(PROJECTILE_ASSET_URLS, onProgress);
+}
+
+// Story cinematics are by far the heaviest assets (~15 MB) but are only
+// shown on the story and game-won screens, so they load lazily in the
+// background instead of blocking the splash screen. The returned map is
+// shared and fills in progressively; screens fall back to a gradient for
+// any image that hasn't arrived yet.
+const storyAssets = {};
+let storyAssetsPromise = null;
+
+export function loadStoryAssetsInBackground() {
+  if (!storyAssetsPromise) {
+    console.log("Loading story assets in the background...");
+    storyAssetsPromise = loadImages(STORY_ASSET_URLS, null, storyAssets).catch((error) => {
+      // Non-fatal: screens render a gradient fallback without these images.
+      console.error("Error loading story assets:", error);
+      return storyAssets;
+    });
+  }
+  return storyAssetsPromise;
+}
+
+export function getStoryAssets() {
+  return storyAssets;
 }

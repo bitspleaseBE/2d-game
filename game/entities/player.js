@@ -2,7 +2,7 @@ import Entity from './entity.js';
 import { canvasSettings, playerSettings, powerupSettings } from "../utils/settings.js";
 import Animator from "./animator.js";
 import { playerSpriteManifest } from "../assets/sprite-manifest.js";
-import { itemCatalog } from "../items.js";
+import { itemCatalog, weaponCatalog, weaponOrder } from "../items.js";
 
 class Player extends Entity {
   #health;
@@ -16,14 +16,18 @@ class Player extends Entity {
     super(x, y, 'player', assets);
     this.#health = 100;
     this.#baseSpeed = playerSettings.speed;
-    this.#attackPower = 50;
+    this.#attackPower = playerSettings.baseAttackPower;
     this.powerups = [];
     // Item ids (see items.js) mapped to how many the player carries; the pack
     // survives level changes (see Game.initializePlayer) but not a new run
     this.inventory = {};
-    // One weapon and one rune can be equipped at a time
+    // Weapons are learned verbs; runes still equip from inventory.
+    this.ownedWeapons = ["woodenAxe"];
     this.equipment = { weapon: null, rune: null };
-    this.weaponId = "axe";
+    this.weaponId = "woodenAxe";
+    this.arrowCount = 0;
+    this.arrowCapacity = 10;
+    this.quiverUpgraded = false;
 
     this.animator = new Animator(playerSpriteManifest);
     this.currentFrame = 0;
@@ -35,7 +39,8 @@ class Player extends Entity {
   selectSprites(assets) {
     return {
       movement: assets.playerMovement,
-      actions: assets.playerActions
+      actions: assets.playerActions,
+      bow: assets.playerBow,
     };
   }
 
@@ -78,12 +83,11 @@ class Player extends Entity {
   }
 
   get attackPower() {
-    let power = this.#attackPower;
-    // Equipped weapon and rune bonuses
-    for (const equippedId of Object.values(this.equipment)) {
-      const bonus = equippedId && itemCatalog[equippedId].attackBonus;
-      if (bonus) power += bonus;
-    }
+    const weapon = this.getSelectedWeapon();
+    let power = weapon?.damage || this.#attackPower;
+    const rune = this.equipment.rune;
+    const runeBonus = rune && itemCatalog[rune].attackBonus;
+    if (runeBonus) power += runeBonus;
     if (this.#effectMs.strength > 0) power *= powerupSettings.strengthMultiplier;
     return power;
   }
@@ -175,7 +179,14 @@ class Player extends Entity {
   }
 
   attack() {
-    this.animator.play("attack", { restart: true, direction: this.movement });
+    this.attackWithWeapon(this.weaponId);
+    this.#syncAnimationState();
+  }
+
+  attackWithWeapon(weaponId = this.weaponId) {
+    const weapon = weaponCatalog[weaponId] || weaponCatalog.woodenAxe;
+    this.weaponId = weapon.itemId;
+    this.animator.play(weapon.actionState, { restart: true, direction: this.movement });
     this.#syncAnimationState();
   }
 
@@ -185,7 +196,7 @@ class Player extends Entity {
   }
 
   axe() {
-    const weapon = playerSpriteManifest.weapons[this.weaponId];
+    const weapon = weaponCatalog.woodenAxe;
     this.animator.play(weapon?.actionState || "axe", { restart: true, direction: this.movement });
     this.#syncAnimationState();
   }
@@ -249,14 +260,67 @@ class Player extends Entity {
   // cannot be equipped.
   equip(itemId) {
     const item = itemCatalog[itemId];
-    if (!item || (item.kind !== "weapon" && item.kind !== "rune")) return null;
-    if (!this.hasItem(itemId)) return null;
-    if (this.equipment[item.kind] === itemId) {
-      this.equipment[item.kind] = null;
+    if (!item) return null;
+    if (item.kind === "weapon") {
+      return this.selectWeapon(item.weaponId || itemId) ? "equipped" : null;
+    }
+    if (item.kind !== "rune" || !this.hasItem(itemId)) return null;
+    if (this.equipment.rune === itemId) {
+      this.equipment.rune = null;
       return "unequipped";
     }
-    this.equipment[item.kind] = itemId;
+    this.equipment.rune = itemId;
     return "equipped";
+  }
+
+  unlockWeapon(weaponId) {
+    if (!weaponCatalog[weaponId]) return false;
+    if (!this.ownedWeapons.includes(weaponId)) this.ownedWeapons.push(weaponId);
+    this.weaponId = weaponId;
+    if (weaponId === "dreamBow") {
+      this.addArrows(weaponCatalog.dreamBow.unlockArrows);
+    }
+    return true;
+  }
+
+  unlockQuiver() {
+    this.quiverUpgraded = true;
+    this.arrowCapacity = 20;
+    this.addArrows(10);
+  }
+
+  hasWeapon(weaponId) {
+    return this.ownedWeapons.includes(weaponId);
+  }
+
+  selectWeapon(weaponId) {
+    if (!this.hasWeapon(weaponId)) return false;
+    this.weaponId = weaponId;
+    return true;
+  }
+
+  cycleWeapon(delta = 1) {
+    const available = weaponOrder.filter((id) => this.hasWeapon(id));
+    if (available.length === 0) return null;
+    const index = available.indexOf(this.weaponId);
+    const nextIndex = (index + delta + available.length) % available.length;
+    this.weaponId = available[nextIndex];
+    return this.getSelectedWeapon();
+  }
+
+  getSelectedWeapon() {
+    return weaponCatalog[this.weaponId] || weaponCatalog.woodenAxe;
+  }
+
+  addArrows(amount) {
+    this.arrowCount = Math.min(this.arrowCapacity, this.arrowCount + amount);
+    return this.arrowCount;
+  }
+
+  useArrow() {
+    if (this.arrowCount <= 0) return false;
+    this.arrowCount -= 1;
+    return true;
   }
 
   applyPowerup(effect) {
@@ -332,7 +396,9 @@ class Player extends Entity {
 
     const frame = this.animator.getFrame(this.movement);
     const spriteSheet = this._sprites[frame.sheet];
-    const pixelScale = canvasSettings.cellWidth / 32;
+    const pixelScale = frame.frameWidth >= canvasSettings.cellWidth
+      ? 1
+      : canvasSettings.cellWidth / 32;
     const destWidth = frame.frameWidth * pixelScale;
     const destHeight = frame.frameHeight * pixelScale;
     const offsetX = (canvasSettings.cellWidth - destWidth) / 2;

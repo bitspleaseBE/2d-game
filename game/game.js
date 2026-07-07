@@ -24,8 +24,11 @@ import Powerup, { powerupDescriptions } from "./entities/powerup.js";
 import Exit from "./entities/exit.js";
 import Drop from "./entities/drop.js";
 import Door from "./entities/door.js";
-import { itemCatalog, guardDropPool } from "./items.js";
+import Projectile from "./entities/projectile.js";
+import { itemCatalog, guardDropPool, lateGuardDropPool, weaponCatalog } from "./items.js";
 import { resolveThemeAssets } from "./assets/theme-manifest.js";
+import { random } from "./utils/rng.js";
+import { getWeaponUnlockCopy } from "./screens/weapon-unlocked.js";
 
 // Main game logic
 // - Initialize the game board (labyrinth)
@@ -61,7 +64,11 @@ export class Game {
     this.notifications = [];
     this.drops = [];
     this.doors = [];
+    this.projectiles = [];
+    this.weaponPedestals = [];
     this.inventoryOpen = false;
+    this.weaponUnlock = null;
+    this.weaponUnlockDemoMs = 0;
     this.mouse = { x: 0, y: 0 };
     this.inventorySlotRects = [];
     this.onGameOver = callbacks.onGameOver || (() => {});
@@ -72,6 +79,8 @@ export class Game {
     this.pressedDirections = new Set();
     this.lastFrameTime = null;
     this.pendingGameOverMs = null;
+    this.pendingRespawnMs = null;
+    this.pendingPlayerShot = null;
     // Remaining time before the player may swing again
     this.attackCooldownMs = 0;
     // Fog of war (per-level option): explored[row][col] persists until the
@@ -149,6 +158,11 @@ export class Game {
             if (previousPlayer) {
               this.player.inventory = { ...previousPlayer.inventory };
               this.player.equipment = { ...previousPlayer.equipment };
+              this.player.ownedWeapons = [...previousPlayer.ownedWeapons];
+              this.player.weaponId = previousPlayer.weaponId;
+              this.player.arrowCount = previousPlayer.arrowCount;
+              this.player.arrowCapacity = previousPlayer.arrowCapacity;
+              this.player.quiverUpgraded = previousPlayer.quiverUpgraded;
             }
             this.setupInput();
             return;
@@ -192,12 +206,20 @@ export class Game {
 
     window.addEventListener("keydown", (event) => {
       if (!this.started || this.paused || this.isGameOver) return;
+      if (this.weaponUnlock) {
+        if (event.key === " " || event.key === "Enter" || event.key === "Escape") {
+          event.preventDefault();
+          this.dismissWeaponUnlock();
+        }
+        return;
+      }
       if (this.levelIntro) {
         event.preventDefault();
         this.dismissLevelIntro();
+        return;
       }
       // Stop the space bar (and arrow keys) from scrolling the page
-      if (event.key === " " || event.key.startsWith("Arrow")) {
+      if (event.key === " " || event.key === "Tab" || event.key.startsWith("Arrow")) {
         event.preventDefault();
       }
       if (event.key === controlSettings.inventory) {
@@ -206,12 +228,25 @@ export class Game {
       }
       // The world is frozen while the inventory is open
       if (this.inventoryOpen) return;
+      if (this.isPlayerDown()) return;
       const direction = directionForKey(event.key);
       if (direction) {
         this.pressedDirections.add(direction);
         return;
       }
       switch (event.key) {
+        case "Tab":
+          this.cycleWeapon();
+          break;
+        case "1":
+          this.selectWeapon("woodenAxe");
+          break;
+        case "2":
+          this.selectWeapon("steelSword");
+          break;
+        case "3":
+          this.selectWeapon("dreamBow");
+          break;
         case controlSettings.attack:
           debounceAction(() => this.playerAttack(), 250)();
           break;
@@ -241,6 +276,10 @@ export class Game {
       };
     });
     this.canvas.addEventListener("click", () => {
+      if (this.weaponUnlock) {
+        this.dismissWeaponUnlock();
+        return;
+      }
       if (!this.inventoryOpen) return;
       const slot = this.inventorySlotRects.find(
         (r) =>
@@ -384,11 +423,16 @@ export class Game {
     // Ignore swings while the previous one is still recovering, so holding
     // the key down (auto-repeat) cannot land a hit every keyboard event
     if (this.attackCooldownMs > 0) return;
-    this.attackCooldownMs = combatSettings.attackCooldownMs;
+    const weapon = this.player.getSelectedWeapon();
+    if (weapon.itemId === "dreamBow") {
+      this.playerBowAttack(weapon);
+      return;
+    }
+    this.attackCooldownMs = weapon.cooldownMs || combatSettings.attackCooldownMs;
 
-    this.player.attack();
+    this.player.attackWithWeapon(weapon.itemId);
     sfx.swing();
-    if (!this.player.isActionActive("attack")) return;
+    if (!this.player.isActionActive(weapon.actionState)) return;
     const attackBox = this.player.getAttackBox();
 
     // Damage guards caught in the swing; defeated guards play their death
@@ -412,7 +456,7 @@ export class Game {
     const obstaclesBefore = this.obstacles.length;
     this.obstacles = this.obstacles.filter((obstacle) => {
       if (isColliding(attackBox, obstacle.getHitBox())) {
-        obstacle.takeDamage(this.player.attackPower);
+        obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
         return !obstacle.isDestroyed();
       }
       return true;
@@ -420,9 +464,25 @@ export class Game {
     if (this.obstacles.length < obstaclesBefore) sfx.chop();
   }
 
+  playerBowAttack(weapon) {
+    if (!this.player.hasWeapon("dreamBow")) {
+      this.notifyOnce("The bow has not awakened yet.");
+      return;
+    }
+    if (!this.player.useArrow()) {
+      this.notifyOnce("No arrows left.");
+      return;
+    }
+    this.attackCooldownMs = weapon.cooldownMs || combatSettings.attackCooldownMs;
+    this.player.attackWithWeapon("dreamBow");
+    sfx.swing();
+    this.pendingPlayerShot = { fired: false, damage: weapon.damage };
+  }
+
   playerAxe() {
     if (this.attackCooldownMs > 0) return;
-    this.attackCooldownMs = combatSettings.attackCooldownMs;
+    const weapon = weaponCatalog.woodenAxe;
+    this.attackCooldownMs = weapon.cooldownMs || combatSettings.attackCooldownMs;
 
     this.player.axe();
     sfx.swing();
@@ -432,7 +492,7 @@ export class Game {
     const obstaclesBefore = this.obstacles.length;
     this.obstacles = this.obstacles.filter((obstacle) => {
       if (isColliding(attackBox, obstacle.getHitBox())) {
-        obstacle.takeDamage(this.player.attackPower);
+        obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
         return !obstacle.isDestroyed();
       }
       return true;
@@ -470,6 +530,9 @@ export class Game {
       this.obstacles = [];
       this.powerups = [];
       this.drops = [];
+      this.projectiles = [];
+      this.weaponPedestals = [];
+      const healthScale = this.guardHealthScale(level.number);
 
       for (let y = 0; y < level.layout.length; y++) {
         for (let x = 0; x < level.layout[y].length; x++) {
@@ -485,7 +548,15 @@ export class Game {
               break;
             case "G":
               const randomOrc = randomInt(1, 4);
-              this.guards.push(new Guard(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets));
+              this.guards.push(new Guard(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets, { healthScale }));
+              break;
+            case "A":
+              this.guards.push(
+                new Guard(position.x, position.y, `orc${randomInt(1, 3)}`, this.assets.guardAssets, {
+                  ranged: true,
+                  healthScale,
+                })
+              );
               break;
             case "B":
               // A boss: bigger, tougher and harder-hitting than a guard
@@ -510,10 +581,33 @@ export class Game {
                 new Powerup(position.x, position.y, powerupTypes[randomPowerup - 1], this.assets.powerupsAssets)
               );
               break;
+            case "W":
+              if (level.weaponReward) {
+                this.weaponPedestals.push({
+                  x: position.x,
+                  y: position.y,
+                  itemId: level.weaponReward,
+                  collected: this.hasCollectedReward(level.weaponReward),
+                });
+              }
+              break;
+            case "H":
+              this.drops.push(new Drop(position.x, position.y, "runeHaste", this.assets.itemAssets));
+              break;
+            case "V":
+              this.drops.push(new Drop(position.x, position.y, "runeWarding", this.assets.itemAssets));
+              break;
+            case "M":
+              this.drops.push(new Drop(position.x, position.y, "runeMight", this.assets.itemAssets));
+              break;
           }
         }
       }
     }
+  }
+
+  guardHealthScale(levelNumber) {
+    return 1 + Math.floor((levelNumber - 1) / 3) * 0.1;
   }
 
   // Something a defeated guard leaves behind on the ground
@@ -528,9 +622,23 @@ export class Game {
     if (this.lockedDoors().length > 0 && !keyInReach) {
       itemId = "key";
     } else {
-      itemId = guardDropPool[randomInt(1, guardDropPool.length) - 1];
+      itemId = this.rollGuardDrop();
     }
-    this.drops.push(new Drop(x, y, itemId, this.assets.itemAssets));
+    if (!itemId) return null;
+    const drop = new Drop(x, y, itemId, this.assets.itemAssets);
+    this.drops.push(drop);
+    return drop;
+  }
+
+  rollGuardDrop() {
+    const pool = this.player && this.player.hasWeapon("dreamBow") ? lateGuardDropPool : guardDropPool;
+    const total = pool.reduce((sum, entry) => sum + entry.weight, 0);
+    let roll = random() * total;
+    for (const entry of pool) {
+      roll -= entry.weight;
+      if (roll <= 0) return entry.itemId;
+    }
+    return null;
   }
 
   // Queue a short-lived message shown at the top of the canvas (e.g. what a
@@ -543,6 +651,121 @@ export class Game {
   // (for messages that would otherwise repeat every frame)
   notifyOnce(text) {
     if (!this.notifications.some((n) => n.text === text)) this.notify(text);
+  }
+
+  updateNotifications(deltaMs) {
+    this.notifications = this.notifications.filter((n) => {
+      n.msLeft -= deltaMs;
+      return n.msLeft > 0;
+    });
+  }
+
+  cycleWeapon() {
+    const weapon = this.player.cycleWeapon();
+    if (weapon) this.notify(`${weapon.name} readied`);
+  }
+
+  selectWeapon(weaponId) {
+    if (this.player.selectWeapon(weaponId)) {
+      this.notify(`${this.player.getSelectedWeapon().name} readied`);
+    }
+  }
+
+  hasCollectedReward(itemId) {
+    if (!this.player) return false;
+    if (itemId === "moonlitQuiver") return this.player.quiverUpgraded;
+    const item = itemCatalog[itemId];
+    return item?.kind === "weapon" && this.player.hasWeapon(item.weaponId || itemId);
+  }
+
+  showWeaponUnlock(itemId) {
+    this.weaponUnlock = getWeaponUnlockCopy(itemId);
+    if (!this.weaponUnlock) return;
+    this.weaponUnlockDemoMs = 0;
+    this.pressedDirections.clear();
+  }
+
+  dismissWeaponUnlock() {
+    this.weaponUnlock = null;
+    this.weaponUnlockDemoMs = 0;
+  }
+
+  updateWeaponUnlock(deltaMs) {
+    this.weaponUnlockDemoMs += deltaMs;
+    this.updateNotifications(deltaMs);
+  }
+
+  updatePlayerShot() {
+    if (!this.pendingPlayerShot || this.pendingPlayerShot.fired) return;
+    if (!this.player.isActionActive("bow")) return;
+    const center = this.playerCenter();
+    this.spawnProjectile({
+      x: center.x,
+      y: center.y,
+      direction: this.directionVector(this.player.movement),
+      owner: "player",
+      damage: this.pendingPlayerShot.damage,
+    });
+    this.pendingPlayerShot.fired = true;
+  }
+
+  directionVector(direction) {
+    return {
+      up: { x: 0, y: -1 },
+      down: { x: 0, y: 1 },
+      left: { x: -1, y: 0 },
+      right: { x: 1, y: 0 },
+    }[direction] || { x: 1, y: 0 };
+  }
+
+  spawnProjectile({ x, y, direction, owner, damage }) {
+    const projectile = new Projectile(
+      x - 12,
+      y - 6,
+      direction,
+      this.assets.projectileAssets,
+      { owner, damage }
+    );
+    this.projectiles.push(projectile);
+    return projectile;
+  }
+
+  updateProjectiles(deltaMs) {
+    const blockers = [...this.walls, ...this.lockedDoors(), ...this.obstacles];
+    this.projectiles.forEach((projectile) => {
+      projectile.update(deltaMs);
+      const box = projectile.getHitBox();
+      if (
+        box.x < 0 ||
+        box.y < 0 ||
+        box.x > this.canvas.width ||
+        box.y > this.canvas.height ||
+        blockers.some((blocker) => isColliding(box, blocker.getHitBox()))
+      ) {
+        projectile.destroy();
+        return;
+      }
+
+      if (projectile.owner === "player") {
+        const guard = this.guards.find((candidate) =>
+          !candidate.isDefeated() && isColliding(box, candidate.getHitBox())
+        );
+        if (!guard) return;
+        guard.takeDamage(projectile.damage, this.player.movement);
+        projectile.destroy();
+        if (guard.consumeDefeatAward()) {
+          sfx.guardDown();
+          this.score += guard.isBoss() ? bossSettings.scoreValue : gameSettings.scoreIncrement;
+          this.spawnDrop(guard.getPosition());
+        } else {
+          sfx.hit();
+        }
+      } else if (isColliding(box, this.player.getHitBox())) {
+        this.damagePlayer(projectile.damage);
+        projectile.destroy();
+      }
+    });
+    this.projectiles = this.projectiles.filter((projectile) => !projectile.isDone());
   }
 
   showLevelIntro({ narrate = true } = {}) {
@@ -596,21 +819,33 @@ export class Game {
       if (this.levelIntro.msLeft <= 0) this.dismissLevelIntro();
       return;
     }
+    if (this.weaponUnlock) {
+      this.updateWeaponUnlock(deltaMs);
+      return;
+    }
     this.attackCooldownMs = Math.max(0, this.attackCooldownMs - deltaMs);
+    if (this.isPlayerDown()) {
+      this.checkPlayerDeath(deltaMs);
+      this.player.update(deltaMs);
+      this.updateNotifications(deltaMs);
+      return;
+    }
     this.applyMovementInput(deltaMs);
     this.revealAroundPlayer();
     this.checkCollisions();
     this.checkPlayerDeath(deltaMs);
     if (this.isGameOver) return;
-    this.notifications = this.notifications.filter((n) => {
-      n.msLeft -= deltaMs;
-      return n.msLeft > 0;
-    });
+    this.updateNotifications(deltaMs);
     this.player.update(deltaMs);
+    this.updatePlayerShot();
     this.updateExplosives(deltaMs);
     // Locked doors block guards (and their line of sight) like walls
     const guardBlockers = [...this.walls, ...this.lockedDoors()];
-    this.guards.forEach((guard) => guard.update(this.player.getHitBox(), guardBlockers, deltaMs));
+    this.guards.forEach((guard) => {
+      const shot = guard.update(this.player.getHitBox(), guardBlockers, deltaMs);
+      if (shot) this.spawnProjectile({ ...shot, owner: "guard" });
+    });
+    this.updateProjectiles(deltaMs);
     this.guards = this.guards.filter((guard) => !guard.isReadyToRemove());
     this.obstacles.forEach((obstacle) => obstacle.update());
     this.powerups.forEach((powerup) => powerup.update());
@@ -668,6 +903,14 @@ export class Game {
 
   checkPlayerDeath(deltaMs = 1000 / 60) {
     if (this.player.getHealth() > 0) return;
+    if (this.pendingRespawnMs !== null) {
+      this.pendingRespawnMs -= deltaMs;
+      if (this.pendingRespawnMs <= 0) {
+        this.pendingRespawnMs = null;
+        this.player.respawn(this.playerStart.x, this.playerStart.y);
+      }
+      return;
+    }
     if (this.pendingGameOverMs !== null) {
       this.pendingGameOverMs -= deltaMs;
       if (this.pendingGameOverMs <= 0) {
@@ -682,11 +925,16 @@ export class Game {
     this.lives -= 1;
     if (this.lives <= 0) {
       this.player.defeat();
-      this.pendingGameOverMs = 700;
+      this.pendingGameOverMs = playerSettings.defeatPauseMs;
       sfx.gameOver();
       return;
     }
-    this.player.respawn(this.playerStart.x, this.playerStart.y);
+    this.player.defeat();
+    this.pendingRespawnMs = playerSettings.defeatPauseMs;
+  }
+
+  isPlayerDown() {
+    return this.pendingRespawnMs !== null || this.pendingGameOverMs !== null;
   }
 
   // Hidden traps arm when the player comes close, burn a fuse, then blast
@@ -770,13 +1018,53 @@ export class Game {
     // Items dropped by defeated guards go into the inventory
     this.drops = this.drops.filter((drop) => {
       if (isColliding(this.player.getPickupRange(), drop.getHitBox())) {
-        this.player.addItem(drop.getType());
-        this.notifyPickup(drop.getType());
+        this.collectDrop(drop.getType());
         sfx.pickup();
         return false;
       }
       return true;
     });
+
+    this.weaponPedestals.forEach((pedestal) => {
+      if (pedestal.collected) return;
+      const box = { x: pedestal.x, y: pedestal.y, width: canvasSettings.cellWidth, height: canvasSettings.cellHeight };
+      if (!isColliding(this.player.getPickupRange(), box)) return;
+      pedestal.collected = true;
+      this.collectWeaponReward(pedestal.itemId);
+    });
+  }
+
+  collectDrop(itemId) {
+    const item = itemCatalog[itemId];
+    if (!item) return;
+    if (item.kind === "score") {
+      this.score += item.scoreValue;
+      this.notify(`Dream-shard reclaimed! +${item.scoreValue}`);
+      return;
+    }
+    if (item.kind === "ammo") {
+      this.player.addArrows(item.arrowAmount);
+      this.notify(`Arrows gathered +${item.arrowAmount} (${this.player.arrowCount}/${this.player.arrowCapacity})`);
+      return;
+    }
+    if (item.kind === "potion" && (this.player.inventory.potion || 0) >= 3) {
+      this.score += 50;
+      this.notify("Your pack is full - +50");
+      return;
+    }
+    this.player.addItem(itemId);
+    this.notifyPickup(itemId);
+  }
+
+  collectWeaponReward(itemId) {
+    if (itemId === "moonlitQuiver") {
+      this.player.unlockQuiver();
+    } else {
+      const item = itemCatalog[itemId];
+      this.player.unlockWeapon(item?.weaponId || itemId);
+    }
+    sfx.pickup();
+    this.showWeaponUnlock(itemId);
   }
 
   notifyPickup(itemId) {
@@ -830,9 +1118,11 @@ export class Game {
     // Draw the entities
     this.obstacles.forEach((obstacle) => obstacle.draw(this.context));
     this.powerups.forEach((powerup) => powerup.draw(this.context));
+    this.drawWeaponPedestals();
     this.drops.forEach((drop) => drop.draw(this.context));
     this.guards.forEach((guard) => guard.draw(this.context));
     this.explosives.forEach((explosive) => explosive.draw(this.context));
+    this.projectiles.forEach((projectile) => projectile.draw(this.context));
 
     // Draw the exit
     if (this.exit) {
@@ -853,6 +1143,7 @@ export class Game {
     if (this.inventoryOpen) this.drawInventory();
     this.drawNotifications();
     if (this.levelIntro) this.drawLevelIntro();
+    if (this.weaponUnlock) this.drawWeaponUnlock();
   }
 
   drawLevelIntro() {
@@ -933,6 +1224,113 @@ export class Game {
     ctx.restore();
   }
 
+  drawWeaponPedestals() {
+    const ctx = this.context;
+    this.weaponPedestals.forEach((pedestal) => {
+      if (pedestal.collected) return;
+      const item = itemCatalog[pedestal.itemId];
+      const icon = item && this.assets.itemAssets[item.icon];
+      if (!icon) return;
+      const pulse = (Math.sin(performance.now() / 220) + 1) / 2;
+      ctx.save();
+      ctx.fillStyle = "rgba(20, 12, 34, 0.82)";
+      ctx.strokeStyle = `rgba(255, 213, 79, ${0.55 + pulse * 0.45})`;
+      ctx.lineWidth = 3;
+      ctx.fillRect(pedestal.x + 8, pedestal.y + 10, 48, 44);
+      ctx.strokeRect(pedestal.x + 8, pedestal.y + 10, 48, 44);
+      ctx.drawImage(icon, pedestal.x + 16, pedestal.y + 14, 32, 32);
+      ctx.restore();
+    });
+  }
+
+  drawWeaponUnlock() {
+    const ctx = this.context;
+    const panelWidth = 760;
+    const panelHeight = 360;
+    const panelX = (this.canvas.width - panelWidth) / 2;
+    const panelY = (this.canvas.height - panelHeight) / 2;
+    const item = itemCatalog[this.weaponUnlock.itemId];
+
+    ctx.save();
+    ctx.fillStyle = "rgba(5, 4, 10, 0.7)";
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.fillStyle = "rgba(18, 12, 24, 0.96)";
+    ctx.strokeStyle = "#ffd54f";
+    ctx.lineWidth = 2;
+    ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+    ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#80d8ff";
+    ctx.font = "bold 18px monospace";
+    ctx.fillText("Dream-shard awakened", this.canvas.width / 2, panelY + 36);
+
+    ctx.fillStyle = "#ffd54f";
+    ctx.font = "bold 34px monospace";
+    ctx.fillText(this.weaponUnlock.title, this.canvas.width / 2, panelY + 78);
+
+    ctx.fillStyle = "#f8e7a1";
+    ctx.font = "18px monospace";
+    this.drawWrappedText(this.weaponUnlock.line || item.description, this.canvas.width / 2, panelY + 126, panelWidth - 90, 24);
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "16px monospace";
+    this.drawWrappedText(this.weaponUnlock.hint || item.description, this.canvas.width / 2, panelY + 172, panelWidth - 100, 22);
+
+    this.drawWeaponDemo(panelX + 120, panelY + 210, panelWidth - 240, 78);
+
+    ctx.fillStyle = "rgba(255, 255, 255, 0.68)";
+    ctx.font = "14px monospace";
+    ctx.fillText("Press Space, Enter or click to continue", this.canvas.width / 2, panelY + panelHeight - 32);
+    ctx.restore();
+  }
+
+  drawWeaponDemo(x, y, width, height) {
+    const ctx = this.context;
+    const item = itemCatalog[this.weaponUnlock.itemId];
+    const weaponId = item?.weaponId || this.weaponUnlock.itemId;
+    const weapon = weaponCatalog[weaponId] || weaponCatalog.dreamBow;
+    const manifestState = weapon.actionState || "attack";
+    const cycleMs = weaponId === "dreamBow" ? 900 : 620;
+    const frameMs = this.weaponUnlockDemoMs % cycleMs;
+    const frame = Math.floor(frameMs / (weaponId === "dreamBow" ? 70 : 80));
+    const row = weaponId === "dreamBow" ? 3 : manifestState === "axe" ? 10 : 7;
+    const sheet = weaponId === "dreamBow"
+      ? this.assets.playerAssets.playerBow
+      : manifestState === "axe"
+        ? this.assets.playerAssets.playerActions
+        : this.assets.playerAssets.playerMovement;
+    const frameSize = weaponId === "dreamBow" ? 64 : manifestState === "axe" ? 48 : 32;
+    const frames = weaponId === "dreamBow" ? 8 : manifestState === "axe" ? 2 : 4;
+
+    ctx.save();
+    ctx.fillStyle = this.themeAssets.floor
+      ? ctx.createPattern(this.assets.levelAssets.grassTile, "repeat")
+      : "#2f7d3b";
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = "#80d8ff";
+    ctx.strokeRect(x, y, width, height);
+
+    ctx.drawImage(
+      sheet,
+      (frame % frames) * frameSize,
+      row * frameSize,
+      frameSize,
+      frameSize,
+      x + 32,
+      y + (height - 64) / 2,
+      64,
+      64
+    );
+
+    if (weaponId === "dreamBow" && frameMs > 430) {
+      const arrowX = x + 110 + ((frameMs - 430) / 470) * (width - 160);
+      ctx.drawImage(this.assets.projectileAssets.arrow, arrowX, y + height / 2 - 32, 64, 64);
+    }
+    ctx.restore();
+  }
+
   // Full-screen inventory: equipment slots on top, carried items below.
   // Hovering a slot shows the item's description; clicking equips or drinks.
   drawInventory() {
@@ -972,14 +1370,28 @@ export class Game {
     // Equipment slots
     const equipY = panelY + 84;
     [
-      { label: "Weapon", slot: "weapon" },
-      { label: "Rune", slot: "rune" },
+      { label: "Weapon", itemId: this.player.getSelectedWeapon().itemId },
+      { label: "Rune", itemId: this.player.equipment.rune },
     ].forEach((equip, i) => {
       const x = panelX + 24 + i * 170;
       ctx.font = "bold 14px monospace";
       ctx.fillStyle = "#80d8ff";
       ctx.fillText(equip.label, x, equipY - 12);
-      this.drawInventorySlot(x, equipY, slotSize, this.player.equipment[equip.slot], 0);
+      this.drawInventorySlot(x, equipY, slotSize, equip.itemId, 0);
+    });
+
+    ctx.font = "bold 14px monospace";
+    ctx.fillStyle = "#80d8ff";
+    ctx.fillText("Weapons", panelX + 370, equipY - 12);
+    ["woodenAxe", "steelSword", "dreamBow"].forEach((weaponId, i) => {
+      const itemId = weaponCatalog[weaponId].itemId;
+      this.drawInventorySlot(
+        panelX + 370 + i * (slotSize + 10),
+        equipY,
+        slotSize,
+        this.player.hasWeapon(weaponId) ? itemId : null,
+        0
+      );
     });
 
     // Carried items
@@ -991,7 +1403,7 @@ export class Game {
     if (entries.length === 0) {
       ctx.font = "14px monospace";
       ctx.fillStyle = "#999";
-      ctx.fillText("Nothing yet — defeat guards to find weapons, runes and potions.", panelX + 24, gridY + 28);
+      ctx.fillText("Nothing yet - guards may drop potions, shards and arrows.", panelX + 24, gridY + 28);
     }
     entries.forEach((entry, i) => {
       const columns = 9;
@@ -1004,7 +1416,7 @@ export class Game {
     ctx.font = "14px monospace";
     ctx.fillStyle = "#999";
     ctx.fillText(
-      "Click a weapon or rune to equip it — click a potion to drink it.",
+      "Click a weapon to ready it, a rune to equip it, or a potion to drink it.",
       panelX + 24,
       panelY + panelHeight - 24
     );
@@ -1021,7 +1433,10 @@ export class Game {
       this.mouse.x >= x && this.mouse.x <= x + size &&
       this.mouse.y >= y && this.mouse.y <= y + size;
     const item = itemId ? itemCatalog[itemId] : null;
-    const equipped = item && this.player.equipment[item.kind] === itemId;
+    const equipped = item && (
+      (item.kind === "weapon" && this.player.weaponId === (item.weaponId || itemId)) ||
+      this.player.equipment[item.kind] === itemId
+    );
 
     ctx.fillStyle = "#2c2f3d";
     ctx.fillRect(x, y, size, size);
@@ -1057,8 +1472,10 @@ export class Game {
     const ctx = this.context;
     const item = itemCatalog[hoveredSlot.itemId];
     const hint =
-      item.kind === "weapon" || item.kind === "rune"
-        ? "Click to equip or take off"
+      item.kind === "weapon"
+        ? "Click to ready"
+        : item.kind === "rune"
+          ? "Click to equip or take off"
         : item.kind === "potion"
           ? "Click to drink"
           : null;
@@ -1091,7 +1508,7 @@ export class Game {
 
     // Background strip
     ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-    ctx.fillRect(8, 8, 452, 40);
+    ctx.fillRect(8, 8, 640, 40);
 
     ctx.font = "bold 18px monospace";
     ctx.textBaseline = "middle";
@@ -1124,10 +1541,16 @@ export class Game {
     ctx.drawImage(icons.potion, 356, 15, iconSize, iconSize);
     ctx.fillText(`${this.player.inventory.potion || 0}`, 356 + iconSize + 2, 28);
 
+    const weapon = this.player.getSelectedWeapon();
+    ctx.drawImage(icons[weapon.icon], 412, 15, iconSize, iconSize);
+    ctx.fillText(weapon.name.replace("Wooden ", "").replace("Steel ", ""), 442, 28);
+    ctx.drawImage(icons.arrowBundle, 548, 15, iconSize, iconSize);
+    ctx.fillText(`${this.player.arrowCount}`, 578, 28);
+
     // Reminder that the inventory exists
     ctx.font = "14px monospace";
     ctx.fillStyle = "#aaa";
-    ctx.fillText("(i)", 412, 28);
+    ctx.fillText("(i)", 616, 28);
 
     // Active powerup effects with their remaining time
     const effects = this.player.getActiveEffects();
@@ -1208,10 +1631,7 @@ export class Game {
     if (this.inventoryOpen) {
       // The world stands still while the player inspects the inventory, but
       // messages keep fading and the screen keeps rendering for hover effects
-      this.notifications = this.notifications.filter((n) => {
-        n.msLeft -= deltaMs;
-        return n.msLeft > 0;
-      });
+      this.updateNotifications(deltaMs);
     } else {
       this.updateGameState(deltaMs);
     }
@@ -1242,8 +1662,13 @@ export class Game {
     this.notifications = [];
     this.player = null; // a fresh run starts with an empty pack
     this.inventoryOpen = false;
+    this.weaponUnlock = null;
     this.pendingGameOverMs = null;
+    this.pendingRespawnMs = null;
+    this.pendingPlayerShot = null;
     this.attackCooldownMs = 0;
+    this.projectiles = [];
+    this.weaponPedestals = [];
     this.pressedDirections.clear();
     this.lastFrameTime = null;
     if (this.rafId) cancelAnimationFrame(this.rafId);

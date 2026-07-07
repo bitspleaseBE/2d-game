@@ -8,4 +8,6 @@ Their Wardens guard the deeper halls, and far below them the Orc King gathers th
 
 Theo tightens his pyjama sleeves, lifts his sword, and steps forward. Reclaim the shards. Defeat the Orc King. Wake before dawn.
 
+As Theo pushes deeper, some shards remember useful shapes. The first becomes a Wooden Axe for cutting through the dream's thorns. Another sharpens into the Steel Sword. In the frozen halls, moonlight bends into the Dream Bow, and near the throne the Moonlit Quiver steadies his last arrows.
+
 When the last shard is restored, the Wandertrap fades into sunrise and Theo wakes safe beneath his blanket, still brave in his blue pyjamas.

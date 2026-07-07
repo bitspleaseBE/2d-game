@@ -6,18 +6,23 @@ This document provides an overview of the entities in "Wandertrap" and the lette
 
 - **Player (P)**
   - Moves left, right, up, and down — movement is applied every frame while a key is held, so diagonals work and speed is frame-consistent.
-  - Attacks with the sword (Space). Attacks have a short cooldown (~0.4s) and only hit in the facing direction.
+  - Starts with the Wooden Axe, then unlocks Steel Sword, Dream Bow, and Moonlit Quiver at fixed pedestals. Space attacks with the selected weapon; Tab or number keys swap weapons.
+  - Bow shots consume arrows and travel until they hit a guard, wall, locked door, obstacle, or their max range.
   - Collects powerup crystals by walking over them.
   - Has 100 health and a short invulnerability window (with a flicker) after each hit.
 
 - **Guard (G)**
   - Patrols in place, looking around; detects the player within 5 cells when it has a clear line of sight.
   - Chases the player and deals contact damage (10).
-  - Takes two sword hits to defeat; plays a hurt flash and a death animation.
-  - Has a 40% chance to drop a random powerup where it fell.
+  - Takes multiple hits depending on the current weapon and act; plays a hurt flash, death animation, then lingers as a fading corpse for 1.5 seconds.
+  - Drops are scarce: locked-door keys are guaranteed when needed; otherwise guards may drop a potion, dream-shard, arrows after the bow unlocks, or nothing.
+
+- **Archer (A)**
+  - A lighter Sleep Thief variant using the orc bow sheets.
+  - Keeps distance from Theo, fires on line of sight, and deals low contact damage if cornered.
 
 - **Boss (B)**
-  - A hulking guard that protects the final exit on level 5.
+  - A hulking guard that protects milestone arenas.
   - Triple health (300, with a visible health bar), double contact damage (20), faster, and spots the player from 7 cells.
   - Defeating it awards 500 points. It can also be lured onto an explosive trap.
 
@@ -31,8 +36,13 @@ This document provides an overview of the entities in "Wandertrap" and the lette
     - **Speed** (blue): +60% movement speed for ~8 seconds.
     - **Strength** (green): double attack damage for ~8 seconds.
     - **Invincibility** (yellow): blocks all damage for ~8 seconds (golden aura).
-    - **Potion** (flask, dropped by guards): adds a potion to the inventory instead of an instant effect.
   - Active timed effects are shown in the HUD with seconds remaining.
+
+- **Weapon Pedestal (W)**
+  - A fixed story reward. Touching it unlocks the level's weapon or quiver upgrade and pauses the game with an explainer panel.
+
+- **Runes (H / V / M)**
+  - Fixed pickups for Haste, Warding, and Might. Runes live in the inventory and one rune can be equipped at a time.
 
 - **Explosive (E)**
   - A hidden trap. Invisible until the player comes within 1.5 cells, then it reveals itself and arms: the fuse burns for ~1.5 seconds with an accelerating red warning flash.
@@ -77,10 +87,10 @@ An automated test BFS-checks every level for solvability and asserts that no two
 
 ## Player actions
 
-- **Sword (Space)** — damages guards and chops obstacles (2 hits), cooldown-gated.
-- **Axe (X)** — destroys an obstacle in a single swing (shares the sword cooldown) but never hurts guards.
+- **Selected weapon (Space)** — Wooden Axe chops and weakly hurts orcs, Steel Sword is stronger melee with knockback, Dream Bow fires arrows.
+- **Axe (X)** — shortcut to the Wooden Axe chop.
 - **Pick (P)** — disarms an armed explosive trap the player is standing next to (+50 points).
-- **Potion (U)** — drinks a carried potion, restoring 50 health. Every run starts with one potion; more drop from guards. Potions carry over between levels; keys do not.
+- **Potion (U)** — drinks a carried potion, restoring 50 health. Potions carry between levels and cap at 3; overflow pickups convert to score.
 
 ## Touch controls
 

@@ -624,18 +624,25 @@ class GameEngine {
                 const progress = Math.min(100, Math.floor(loadedAssets / totalAssets * 100));
                 (0, _splashJs.updateSplashScreenProgress)(progress);
             };
-            const playerAssets = await (0, _assetsJs.loadPlayerAssets)(onProgress);
-            const levelAssets = await (0, _assetsJs.loadLevelAssets)(onProgress);
-            const guardAssets = await (0, _assetsJs.loadGuardAssets)(onProgress);
-            const powerupsAssets = await (0, _assetsJs.loadPowerUpsAssets)(onProgress);
-            const itemAssets = await (0, _assetsJs.loadItemAssets)(onProgress);
-            const storyAssets = await (0, _assetsJs.loadStoryAssets)(onProgress);
+            const [playerAssets, levelAssets, guardAssets, powerupsAssets, itemAssets, projectileAssets] = await Promise.all([
+                (0, _assetsJs.loadPlayerAssets)(onProgress),
+                (0, _assetsJs.loadLevelAssets)(onProgress),
+                (0, _assetsJs.loadGuardAssets)(onProgress),
+                (0, _assetsJs.loadPowerUpsAssets)(onProgress),
+                (0, _assetsJs.loadItemAssets)(onProgress),
+                (0, _assetsJs.loadProjectileAssets)(onProgress)
+            ]);
+            // Heavy story cinematics load lazily after the game is playable;
+            // getStoryAssets() returns a live map that fills in as they arrive.
+            const storyAssets = (0, _assetsJs.getStoryAssets)();
+            (0, _assetsJs.loadStoryAssetsInBackground)();
             this.assets = {
                 playerAssets,
                 levelAssets,
                 guardAssets,
                 powerupsAssets,
                 itemAssets,
+                projectileAssets,
                 storyAssets
             };
             this.game = new (0, _gameJs.Game)(this.container.id, this.canvas, this.context, this.assets, {
@@ -774,8 +781,11 @@ var _dropJs = require("./entities/drop.js");
 var _dropJsDefault = parcelHelpers.interopDefault(_dropJs);
 var _doorJs = require("./entities/door.js");
 var _doorJsDefault = parcelHelpers.interopDefault(_doorJs);
+var _projectileJs = require("./entities/projectile.js");
+var _projectileJsDefault = parcelHelpers.interopDefault(_projectileJs);
 var _itemsJs = require("./items.js");
 var _themeManifestJs = require("./assets/theme-manifest.js");
+var _weaponUnlockedJs = require("./screens/weapon-unlocked.js");
 class Game {
     constructor(containerId, canvas, context, assets, callbacks = {}){
         this.container = document.getElementById(containerId);
@@ -805,7 +815,11 @@ class Game {
         this.notifications = [];
         this.drops = [];
         this.doors = [];
+        this.projectiles = [];
+        this.weaponPedestals = [];
         this.inventoryOpen = false;
+        this.weaponUnlock = null;
+        this.weaponUnlockDemoMs = 0;
         this.mouse = {
             x: 0,
             y: 0
@@ -819,6 +833,8 @@ class Game {
         this.pressedDirections = new Set();
         this.lastFrameTime = null;
         this.pendingGameOverMs = null;
+        this.pendingRespawnMs = null;
+        this.pendingPlayerShot = null;
         // Remaining time before the player may swing again
         this.attackCooldownMs = 0;
         // Fog of war (per-level option): explored[row][col] persists until the
@@ -865,6 +881,13 @@ class Game {
                     this.player.equipment = {
                         ...previousPlayer.equipment
                     };
+                    this.player.ownedWeapons = [
+                        ...previousPlayer.ownedWeapons
+                    ];
+                    this.player.weaponId = previousPlayer.weaponId;
+                    this.player.arrowCount = previousPlayer.arrowCount;
+                    this.player.arrowCapacity = previousPlayer.arrowCapacity;
+                    this.player.quiverUpgraded = previousPlayer.quiverUpgraded;
                 }
                 this.setupInput();
                 return;
@@ -902,24 +925,45 @@ class Game {
         };
         window.addEventListener("keydown", (event)=>{
             if (!this.started || this.paused || this.isGameOver) return;
+            if (this.weaponUnlock) {
+                if (event.key === " " || event.key === "Enter" || event.key === "Escape") {
+                    event.preventDefault();
+                    this.dismissWeaponUnlock();
+                }
+                return;
+            }
             if (this.levelIntro) {
                 event.preventDefault();
                 this.dismissLevelIntro();
+                return;
             }
             // Stop the space bar (and arrow keys) from scrolling the page
-            if (event.key === " " || event.key.startsWith("Arrow")) event.preventDefault();
+            if (event.key === " " || event.key === "Tab" || event.key.startsWith("Arrow")) event.preventDefault();
             if (event.key === (0, _settingsJs.controlSettings).inventory) {
                 this.toggleInventory();
                 return;
             }
             // The world is frozen while the inventory is open
             if (this.inventoryOpen) return;
+            if (this.isPlayerDown()) return;
             const direction = directionForKey(event.key);
             if (direction) {
                 this.pressedDirections.add(direction);
                 return;
             }
             switch(event.key){
+                case "Tab":
+                    this.cycleWeapon();
+                    break;
+                case "1":
+                    this.selectWeapon("woodenAxe");
+                    break;
+                case "2":
+                    this.selectWeapon("steelSword");
+                    break;
+                case "3":
+                    this.selectWeapon("dreamBow");
+                    break;
                 case (0, _settingsJs.controlSettings).attack:
                     debounceAction(()=>this.playerAttack(), 250)();
                     break;
@@ -947,6 +991,10 @@ class Game {
             };
         });
         this.canvas.addEventListener("click", ()=>{
+            if (this.weaponUnlock) {
+                this.dismissWeaponUnlock();
+                return;
+            }
             if (!this.inventoryOpen) return;
             const slot = this.inventorySlotRects.find((r)=>this.mouse.x >= r.x && this.mouse.x <= r.x + r.size && this.mouse.y >= r.y && this.mouse.y <= r.y + r.size);
             if (slot && slot.itemId) this.activateInventoryItem(slot.itemId);
@@ -1060,10 +1108,15 @@ class Game {
         // Ignore swings while the previous one is still recovering, so holding
         // the key down (auto-repeat) cannot land a hit every keyboard event
         if (this.attackCooldownMs > 0) return;
-        this.attackCooldownMs = (0, _settingsJs.combatSettings).attackCooldownMs;
-        this.player.attack();
+        const weapon = this.player.getSelectedWeapon();
+        if (weapon.itemId === "dreamBow") {
+            this.playerBowAttack(weapon);
+            return;
+        }
+        this.attackCooldownMs = weapon.cooldownMs || (0, _settingsJs.combatSettings).attackCooldownMs;
+        this.player.attackWithWeapon(weapon.itemId);
         (0, _soundJs.sfx).swing();
-        if (!this.player.isActionActive("attack")) return;
+        if (!this.player.isActionActive(weapon.actionState)) return;
         const attackBox = this.player.getAttackBox();
         // Damage guards caught in the swing; defeated guards play their death
         // animation before updateGameState removes them. Survivors are knocked
@@ -1083,16 +1136,34 @@ class Game {
         const obstaclesBefore = this.obstacles.length;
         this.obstacles = this.obstacles.filter((obstacle)=>{
             if ((0, _gameJs.isColliding)(attackBox, obstacle.getHitBox())) {
-                obstacle.takeDamage(this.player.attackPower);
+                obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
                 return !obstacle.isDestroyed();
             }
             return true;
         });
         if (this.obstacles.length < obstaclesBefore) (0, _soundJs.sfx).chop();
     }
+    playerBowAttack(weapon) {
+        if (!this.player.hasWeapon("dreamBow")) {
+            this.notifyOnce("The bow has not awakened yet.");
+            return;
+        }
+        if (!this.player.useArrow()) {
+            this.notifyOnce("No arrows left.");
+            return;
+        }
+        this.attackCooldownMs = weapon.cooldownMs || (0, _settingsJs.combatSettings).attackCooldownMs;
+        this.player.attackWithWeapon("dreamBow");
+        (0, _soundJs.sfx).swing();
+        this.pendingPlayerShot = {
+            fired: false,
+            damage: weapon.damage
+        };
+    }
     playerAxe() {
         if (this.attackCooldownMs > 0) return;
-        this.attackCooldownMs = (0, _settingsJs.combatSettings).attackCooldownMs;
+        const weapon = (0, _itemsJs.weaponCatalog).woodenAxe;
+        this.attackCooldownMs = weapon.cooldownMs || (0, _settingsJs.combatSettings).attackCooldownMs;
         this.player.axe();
         (0, _soundJs.sfx).swing();
         if (!this.player.isActionActive("axe")) return;
@@ -1100,7 +1171,7 @@ class Game {
         const obstaclesBefore = this.obstacles.length;
         this.obstacles = this.obstacles.filter((obstacle)=>{
             if ((0, _gameJs.isColliding)(attackBox, obstacle.getHitBox())) {
-                obstacle.takeDamage(this.player.attackPower);
+                obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
                 return !obstacle.isDestroyed();
             }
             return true;
@@ -1133,6 +1204,9 @@ class Game {
             this.obstacles = [];
             this.powerups = [];
             this.drops = [];
+            this.projectiles = [];
+            this.weaponPedestals = [];
+            const healthScale = this.guardHealthScale(level.number);
             for(let y = 0; y < level.layout.length; y++)for(let x = 0; x < level.layout[y].length; x++){
                 const cell = level.layout[y][x];
                 const position = {
@@ -1145,7 +1219,15 @@ class Game {
                         break;
                     case "G":
                         const randomOrc = (0, _rngJs.randomInt)(1, 4);
-                        this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets));
+                        this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets, {
+                            healthScale
+                        }));
+                        break;
+                    case "A":
+                        this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${(0, _rngJs.randomInt)(1, 3)}`, this.assets.guardAssets, {
+                            ranged: true,
+                            healthScale
+                        }));
                         break;
                     case "B":
                         // A boss: bigger, tougher and harder-hitting than a guard
@@ -1164,9 +1246,29 @@ class Game {
                         const randomPowerup = (0, _rngJs.randomInt)(1, powerupTypes.length);
                         this.powerups.push(new (0, _powerupJsDefault.default)(position.x, position.y, powerupTypes[randomPowerup - 1], this.assets.powerupsAssets));
                         break;
+                    case "W":
+                        if (level.weaponReward) this.weaponPedestals.push({
+                            x: position.x,
+                            y: position.y,
+                            itemId: level.weaponReward,
+                            collected: this.hasCollectedReward(level.weaponReward)
+                        });
+                        break;
+                    case "H":
+                        this.drops.push(new (0, _dropJsDefault.default)(position.x, position.y, "runeHaste", this.assets.itemAssets));
+                        break;
+                    case "V":
+                        this.drops.push(new (0, _dropJsDefault.default)(position.x, position.y, "runeWarding", this.assets.itemAssets));
+                        break;
+                    case "M":
+                        this.drops.push(new (0, _dropJsDefault.default)(position.x, position.y, "runeMight", this.assets.itemAssets));
+                        break;
                 }
             }
         }
+    }
+    guardHealthScale(levelNumber) {
+        return 1 + Math.floor((levelNumber - 1) / 3) * 0.1;
     }
     // Something a defeated guard leaves behind on the ground
     spawnDrop({ x, y }) {
@@ -1176,8 +1278,21 @@ class Game {
         // levels with several locked doors: each door gets its key in turn.
         const keyInReach = this.player.hasItem("key") || this.drops.some((drop)=>drop.getType() === "key");
         if (this.lockedDoors().length > 0 && !keyInReach) itemId = "key";
-        else itemId = (0, _itemsJs.guardDropPool)[(0, _rngJs.randomInt)(1, (0, _itemsJs.guardDropPool).length) - 1];
-        this.drops.push(new (0, _dropJsDefault.default)(x, y, itemId, this.assets.itemAssets));
+        else itemId = this.rollGuardDrop();
+        if (!itemId) return null;
+        const drop = new (0, _dropJsDefault.default)(x, y, itemId, this.assets.itemAssets);
+        this.drops.push(drop);
+        return drop;
+    }
+    rollGuardDrop() {
+        const pool = this.player && this.player.hasWeapon("dreamBow") ? (0, _itemsJs.lateGuardDropPool) : (0, _itemsJs.guardDropPool);
+        const total = pool.reduce((sum, entry)=>sum + entry.weight, 0);
+        let roll = (0, _rngJs.random)() * total;
+        for (const entry of pool){
+            roll -= entry.weight;
+            if (roll <= 0) return entry.itemId;
+        }
+        return null;
     }
     // Queue a short-lived message shown at the top of the canvas (e.g. what a
     // picked-up item does); it fades out during its last second on screen
@@ -1191,6 +1306,113 @@ class Game {
     // (for messages that would otherwise repeat every frame)
     notifyOnce(text) {
         if (!this.notifications.some((n)=>n.text === text)) this.notify(text);
+    }
+    updateNotifications(deltaMs) {
+        this.notifications = this.notifications.filter((n)=>{
+            n.msLeft -= deltaMs;
+            return n.msLeft > 0;
+        });
+    }
+    cycleWeapon() {
+        const weapon = this.player.cycleWeapon();
+        if (weapon) this.notify(`${weapon.name} readied`);
+    }
+    selectWeapon(weaponId) {
+        if (this.player.selectWeapon(weaponId)) this.notify(`${this.player.getSelectedWeapon().name} readied`);
+    }
+    hasCollectedReward(itemId) {
+        if (!this.player) return false;
+        if (itemId === "moonlitQuiver") return this.player.quiverUpgraded;
+        const item = (0, _itemsJs.itemCatalog)[itemId];
+        return item?.kind === "weapon" && this.player.hasWeapon(item.weaponId || itemId);
+    }
+    showWeaponUnlock(itemId) {
+        this.weaponUnlock = (0, _weaponUnlockedJs.getWeaponUnlockCopy)(itemId);
+        if (!this.weaponUnlock) return;
+        this.weaponUnlockDemoMs = 0;
+        this.pressedDirections.clear();
+    }
+    dismissWeaponUnlock() {
+        this.weaponUnlock = null;
+        this.weaponUnlockDemoMs = 0;
+    }
+    updateWeaponUnlock(deltaMs) {
+        this.weaponUnlockDemoMs += deltaMs;
+        this.updateNotifications(deltaMs);
+    }
+    updatePlayerShot() {
+        if (!this.pendingPlayerShot || this.pendingPlayerShot.fired) return;
+        if (!this.player.isActionActive("bow")) return;
+        const center = this.playerCenter();
+        this.spawnProjectile({
+            x: center.x,
+            y: center.y,
+            direction: this.directionVector(this.player.movement),
+            owner: "player",
+            damage: this.pendingPlayerShot.damage
+        });
+        this.pendingPlayerShot.fired = true;
+    }
+    directionVector(direction) {
+        return ({
+            up: {
+                x: 0,
+                y: -1
+            },
+            down: {
+                x: 0,
+                y: 1
+            },
+            left: {
+                x: -1,
+                y: 0
+            },
+            right: {
+                x: 1,
+                y: 0
+            }
+        })[direction] || {
+            x: 1,
+            y: 0
+        };
+    }
+    spawnProjectile({ x, y, direction, owner, damage }) {
+        const projectile = new (0, _projectileJsDefault.default)(x - 12, y - 6, direction, this.assets.projectileAssets, {
+            owner,
+            damage
+        });
+        this.projectiles.push(projectile);
+        return projectile;
+    }
+    updateProjectiles(deltaMs) {
+        const blockers = [
+            ...this.walls,
+            ...this.lockedDoors(),
+            ...this.obstacles
+        ];
+        this.projectiles.forEach((projectile)=>{
+            projectile.update(deltaMs);
+            const box = projectile.getHitBox();
+            if (box.x < 0 || box.y < 0 || box.x > this.canvas.width || box.y > this.canvas.height || blockers.some((blocker)=>(0, _gameJs.isColliding)(box, blocker.getHitBox()))) {
+                projectile.destroy();
+                return;
+            }
+            if (projectile.owner === "player") {
+                const guard = this.guards.find((candidate)=>!candidate.isDefeated() && (0, _gameJs.isColliding)(box, candidate.getHitBox()));
+                if (!guard) return;
+                guard.takeDamage(projectile.damage, this.player.movement);
+                projectile.destroy();
+                if (guard.consumeDefeatAward()) {
+                    (0, _soundJs.sfx).guardDown();
+                    this.score += guard.isBoss() ? (0, _settingsJs.bossSettings).scoreValue : (0, _settingsJs.gameSettings).scoreIncrement;
+                    this.spawnDrop(guard.getPosition());
+                } else (0, _soundJs.sfx).hit();
+            } else if ((0, _gameJs.isColliding)(box, this.player.getHitBox())) {
+                this.damagePlayer(projectile.damage);
+                projectile.destroy();
+            }
+        });
+        this.projectiles = this.projectiles.filter((projectile)=>!projectile.isDone());
     }
     showLevelIntro({ narrate = true } = {}) {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
@@ -1236,24 +1458,39 @@ class Game {
             if (this.levelIntro.msLeft <= 0) this.dismissLevelIntro();
             return;
         }
+        if (this.weaponUnlock) {
+            this.updateWeaponUnlock(deltaMs);
+            return;
+        }
         this.attackCooldownMs = Math.max(0, this.attackCooldownMs - deltaMs);
+        if (this.isPlayerDown()) {
+            this.checkPlayerDeath(deltaMs);
+            this.player.update(deltaMs);
+            this.updateNotifications(deltaMs);
+            return;
+        }
         this.applyMovementInput(deltaMs);
         this.revealAroundPlayer();
         this.checkCollisions();
         this.checkPlayerDeath(deltaMs);
         if (this.isGameOver) return;
-        this.notifications = this.notifications.filter((n)=>{
-            n.msLeft -= deltaMs;
-            return n.msLeft > 0;
-        });
+        this.updateNotifications(deltaMs);
         this.player.update(deltaMs);
+        this.updatePlayerShot();
         this.updateExplosives(deltaMs);
         // Locked doors block guards (and their line of sight) like walls
         const guardBlockers = [
             ...this.walls,
             ...this.lockedDoors()
         ];
-        this.guards.forEach((guard)=>guard.update(this.player.getHitBox(), guardBlockers, deltaMs));
+        this.guards.forEach((guard)=>{
+            const shot = guard.update(this.player.getHitBox(), guardBlockers, deltaMs);
+            if (shot) this.spawnProjectile({
+                ...shot,
+                owner: "guard"
+            });
+        });
+        this.updateProjectiles(deltaMs);
         this.guards = this.guards.filter((guard)=>!guard.isReadyToRemove());
         this.obstacles.forEach((obstacle)=>obstacle.update());
         this.powerups.forEach((powerup)=>powerup.update());
@@ -1300,6 +1537,14 @@ class Game {
     }
     checkPlayerDeath(deltaMs = 1000 / 60) {
         if (this.player.getHealth() > 0) return;
+        if (this.pendingRespawnMs !== null) {
+            this.pendingRespawnMs -= deltaMs;
+            if (this.pendingRespawnMs <= 0) {
+                this.pendingRespawnMs = null;
+                this.player.respawn(this.playerStart.x, this.playerStart.y);
+            }
+            return;
+        }
         if (this.pendingGameOverMs !== null) {
             this.pendingGameOverMs -= deltaMs;
             if (this.pendingGameOverMs <= 0) {
@@ -1313,11 +1558,15 @@ class Game {
         this.lives -= 1;
         if (this.lives <= 0) {
             this.player.defeat();
-            this.pendingGameOverMs = 700;
+            this.pendingGameOverMs = (0, _settingsJs.playerSettings).defeatPauseMs;
             (0, _soundJs.sfx).gameOver();
             return;
         }
-        this.player.respawn(this.playerStart.x, this.playerStart.y);
+        this.player.defeat();
+        this.pendingRespawnMs = (0, _settingsJs.playerSettings).defeatPauseMs;
+    }
+    isPlayerDown() {
+        return this.pendingRespawnMs !== null || this.pendingGameOverMs !== null;
     }
     // Hidden traps arm when the player comes close, burn a fuse, then blast
     // everything (player and guards) inside the radius exactly once
@@ -1381,13 +1630,54 @@ class Game {
         // Items dropped by defeated guards go into the inventory
         this.drops = this.drops.filter((drop)=>{
             if ((0, _gameJs.isColliding)(this.player.getPickupRange(), drop.getHitBox())) {
-                this.player.addItem(drop.getType());
-                this.notifyPickup(drop.getType());
+                this.collectDrop(drop.getType());
                 (0, _soundJs.sfx).pickup();
                 return false;
             }
             return true;
         });
+        this.weaponPedestals.forEach((pedestal)=>{
+            if (pedestal.collected) return;
+            const box = {
+                x: pedestal.x,
+                y: pedestal.y,
+                width: (0, _settingsJs.canvasSettings).cellWidth,
+                height: (0, _settingsJs.canvasSettings).cellHeight
+            };
+            if (!(0, _gameJs.isColliding)(this.player.getPickupRange(), box)) return;
+            pedestal.collected = true;
+            this.collectWeaponReward(pedestal.itemId);
+        });
+    }
+    collectDrop(itemId) {
+        const item = (0, _itemsJs.itemCatalog)[itemId];
+        if (!item) return;
+        if (item.kind === "score") {
+            this.score += item.scoreValue;
+            this.notify(`Dream-shard reclaimed! +${item.scoreValue}`);
+            return;
+        }
+        if (item.kind === "ammo") {
+            this.player.addArrows(item.arrowAmount);
+            this.notify(`Arrows gathered +${item.arrowAmount} (${this.player.arrowCount}/${this.player.arrowCapacity})`);
+            return;
+        }
+        if (item.kind === "potion" && (this.player.inventory.potion || 0) >= 3) {
+            this.score += 50;
+            this.notify("Your pack is full - +50");
+            return;
+        }
+        this.player.addItem(itemId);
+        this.notifyPickup(itemId);
+    }
+    collectWeaponReward(itemId) {
+        if (itemId === "moonlitQuiver") this.player.unlockQuiver();
+        else {
+            const item = (0, _itemsJs.itemCatalog)[itemId];
+            this.player.unlockWeapon(item?.weaponId || itemId);
+        }
+        (0, _soundJs.sfx).pickup();
+        this.showWeaponUnlock(itemId);
     }
     notifyPickup(itemId) {
         const item = (0, _itemsJs.itemCatalog)[itemId];
@@ -1432,9 +1722,11 @@ class Game {
         // Draw the entities
         this.obstacles.forEach((obstacle)=>obstacle.draw(this.context));
         this.powerups.forEach((powerup)=>powerup.draw(this.context));
+        this.drawWeaponPedestals();
         this.drops.forEach((drop)=>drop.draw(this.context));
         this.guards.forEach((guard)=>guard.draw(this.context));
         this.explosives.forEach((explosive)=>explosive.draw(this.context));
+        this.projectiles.forEach((projectile)=>projectile.draw(this.context));
         // Draw the exit
         if (this.exit) this.exit.draw(this.context);
         // Draw the player
@@ -1448,6 +1740,7 @@ class Game {
         if (this.inventoryOpen) this.drawInventory();
         this.drawNotifications();
         if (this.levelIntro) this.drawLevelIntro();
+        if (this.weaponUnlock) this.drawWeaponUnlock();
     }
     drawLevelIntro() {
         const ctx = this.context;
@@ -1514,6 +1807,84 @@ class Game {
         });
         ctx.restore();
     }
+    drawWeaponPedestals() {
+        const ctx = this.context;
+        this.weaponPedestals.forEach((pedestal)=>{
+            if (pedestal.collected) return;
+            const item = (0, _itemsJs.itemCatalog)[pedestal.itemId];
+            const icon = item && this.assets.itemAssets[item.icon];
+            if (!icon) return;
+            const pulse = (Math.sin(performance.now() / 220) + 1) / 2;
+            ctx.save();
+            ctx.fillStyle = "rgba(20, 12, 34, 0.82)";
+            ctx.strokeStyle = `rgba(255, 213, 79, ${0.55 + pulse * 0.45})`;
+            ctx.lineWidth = 3;
+            ctx.fillRect(pedestal.x + 8, pedestal.y + 10, 48, 44);
+            ctx.strokeRect(pedestal.x + 8, pedestal.y + 10, 48, 44);
+            ctx.drawImage(icon, pedestal.x + 16, pedestal.y + 14, 32, 32);
+            ctx.restore();
+        });
+    }
+    drawWeaponUnlock() {
+        const ctx = this.context;
+        const panelWidth = 760;
+        const panelHeight = 360;
+        const panelX = (this.canvas.width - panelWidth) / 2;
+        const panelY = (this.canvas.height - panelHeight) / 2;
+        const item = (0, _itemsJs.itemCatalog)[this.weaponUnlock.itemId];
+        ctx.save();
+        ctx.fillStyle = "rgba(5, 4, 10, 0.7)";
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        ctx.fillStyle = "rgba(18, 12, 24, 0.96)";
+        ctx.strokeStyle = "#ffd54f";
+        ctx.lineWidth = 2;
+        ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+        ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#80d8ff";
+        ctx.font = "bold 18px monospace";
+        ctx.fillText("Dream-shard awakened", this.canvas.width / 2, panelY + 36);
+        ctx.fillStyle = "#ffd54f";
+        ctx.font = "bold 34px monospace";
+        ctx.fillText(this.weaponUnlock.title, this.canvas.width / 2, panelY + 78);
+        ctx.fillStyle = "#f8e7a1";
+        ctx.font = "18px monospace";
+        this.drawWrappedText(this.weaponUnlock.line || item.description, this.canvas.width / 2, panelY + 126, panelWidth - 90, 24);
+        ctx.fillStyle = "#fff";
+        ctx.font = "16px monospace";
+        this.drawWrappedText(this.weaponUnlock.hint || item.description, this.canvas.width / 2, panelY + 172, panelWidth - 100, 22);
+        this.drawWeaponDemo(panelX + 120, panelY + 210, panelWidth - 240, 78);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.68)";
+        ctx.font = "14px monospace";
+        ctx.fillText("Press Space, Enter or click to continue", this.canvas.width / 2, panelY + panelHeight - 32);
+        ctx.restore();
+    }
+    drawWeaponDemo(x, y, width, height) {
+        const ctx = this.context;
+        const item = (0, _itemsJs.itemCatalog)[this.weaponUnlock.itemId];
+        const weaponId = item?.weaponId || this.weaponUnlock.itemId;
+        const weapon = (0, _itemsJs.weaponCatalog)[weaponId] || (0, _itemsJs.weaponCatalog).dreamBow;
+        const manifestState = weapon.actionState || "attack";
+        const cycleMs = weaponId === "dreamBow" ? 900 : 620;
+        const frameMs = this.weaponUnlockDemoMs % cycleMs;
+        const frame = Math.floor(frameMs / (weaponId === "dreamBow" ? 70 : 80));
+        const row = weaponId === "dreamBow" ? 3 : manifestState === "axe" ? 10 : 7;
+        const sheet = weaponId === "dreamBow" ? this.assets.playerAssets.playerBow : manifestState === "axe" ? this.assets.playerAssets.playerActions : this.assets.playerAssets.playerMovement;
+        const frameSize = weaponId === "dreamBow" ? 64 : manifestState === "axe" ? 48 : 32;
+        const frames = weaponId === "dreamBow" ? 8 : manifestState === "axe" ? 2 : 4;
+        ctx.save();
+        ctx.fillStyle = this.themeAssets.floor ? ctx.createPattern(this.assets.levelAssets.grassTile, "repeat") : "#2f7d3b";
+        ctx.fillRect(x, y, width, height);
+        ctx.strokeStyle = "#80d8ff";
+        ctx.strokeRect(x, y, width, height);
+        ctx.drawImage(sheet, frame % frames * frameSize, row * frameSize, frameSize, frameSize, x + 32, y + (height - 64) / 2, 64, 64);
+        if (weaponId === "dreamBow" && frameMs > 430) {
+            const arrowX = x + 110 + (frameMs - 430) / 470 * (width - 160);
+            ctx.drawImage(this.assets.projectileAssets.arrow, arrowX, y + height / 2 - 32, 64, 64);
+        }
+        ctx.restore();
+    }
     // Full-screen inventory: equipment slots on top, carried items below.
     // Hovering a slot shows the item's description; clicking equips or drinks.
     drawInventory() {
@@ -1550,18 +1921,29 @@ class Game {
         [
             {
                 label: "Weapon",
-                slot: "weapon"
+                itemId: this.player.getSelectedWeapon().itemId
             },
             {
                 label: "Rune",
-                slot: "rune"
+                itemId: this.player.equipment.rune
             }
         ].forEach((equip, i)=>{
             const x = panelX + 24 + i * 170;
             ctx.font = "bold 14px monospace";
             ctx.fillStyle = "#80d8ff";
             ctx.fillText(equip.label, x, equipY - 12);
-            this.drawInventorySlot(x, equipY, slotSize, this.player.equipment[equip.slot], 0);
+            this.drawInventorySlot(x, equipY, slotSize, equip.itemId, 0);
+        });
+        ctx.font = "bold 14px monospace";
+        ctx.fillStyle = "#80d8ff";
+        ctx.fillText("Weapons", panelX + 370, equipY - 12);
+        [
+            "woodenAxe",
+            "steelSword",
+            "dreamBow"
+        ].forEach((weaponId, i)=>{
+            const itemId = (0, _itemsJs.weaponCatalog)[weaponId].itemId;
+            this.drawInventorySlot(panelX + 370 + i * (slotSize + 10), equipY, slotSize, this.player.hasWeapon(weaponId) ? itemId : null, 0);
         });
         // Carried items
         const gridY = equipY + slotSize + 44;
@@ -1572,7 +1954,7 @@ class Game {
         if (entries.length === 0) {
             ctx.font = "14px monospace";
             ctx.fillStyle = "#999";
-            ctx.fillText("Nothing yet \u2014 defeat guards to find weapons, runes and potions.", panelX + 24, gridY + 28);
+            ctx.fillText("Nothing yet - guards may drop potions, shards and arrows.", panelX + 24, gridY + 28);
         }
         entries.forEach((entry, i)=>{
             const columns = 9;
@@ -1583,7 +1965,7 @@ class Game {
         // Footer hint
         ctx.font = "14px monospace";
         ctx.fillStyle = "#999";
-        ctx.fillText("Click a weapon or rune to equip it \u2014 click a potion to drink it.", panelX + 24, panelY + panelHeight - 24);
+        ctx.fillText("Click a weapon to ready it, a rune to equip it, or a potion to drink it.", panelX + 24, panelY + panelHeight - 24);
         this.drawInventoryTooltip();
         ctx.restore();
     }
@@ -1597,7 +1979,7 @@ class Game {
         });
         const hovered = this.mouse.x >= x && this.mouse.x <= x + size && this.mouse.y >= y && this.mouse.y <= y + size;
         const item = itemId ? (0, _itemsJs.itemCatalog)[itemId] : null;
-        const equipped = item && this.player.equipment[item.kind] === itemId;
+        const equipped = item && (item.kind === "weapon" && this.player.weaponId === (item.weaponId || itemId) || this.player.equipment[item.kind] === itemId);
         ctx.fillStyle = "#2c2f3d";
         ctx.fillRect(x, y, size, size);
         ctx.strokeStyle = hovered ? "#ffd54f" : equipped ? "#80d8ff" : "#4a4e63";
@@ -1623,7 +2005,7 @@ class Game {
         if (!hoveredSlot) return;
         const ctx = this.context;
         const item = (0, _itemsJs.itemCatalog)[hoveredSlot.itemId];
-        const hint = item.kind === "weapon" || item.kind === "rune" ? "Click to equip or take off" : item.kind === "potion" ? "Click to drink" : null;
+        const hint = item.kind === "weapon" ? "Click to ready" : item.kind === "rune" ? "Click to equip or take off" : item.kind === "potion" ? "Click to drink" : null;
         const lines = [
             item.name,
             item.description
@@ -1651,7 +2033,7 @@ class Game {
         ctx.save();
         // Background strip
         ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-        ctx.fillRect(8, 8, 452, 40);
+        ctx.fillRect(8, 8, 640, 40);
         ctx.font = "bold 18px monospace";
         ctx.textBaseline = "middle";
         // Score
@@ -1678,10 +2060,15 @@ class Game {
         ctx.fillText(`${this.player.inventory.key || 0}`, 306 + iconSize + 2, 28);
         ctx.drawImage(icons.potion, 356, 15, iconSize, iconSize);
         ctx.fillText(`${this.player.inventory.potion || 0}`, 356 + iconSize + 2, 28);
+        const weapon = this.player.getSelectedWeapon();
+        ctx.drawImage(icons[weapon.icon], 412, 15, iconSize, iconSize);
+        ctx.fillText(weapon.name.replace("Wooden ", "").replace("Steel ", ""), 442, 28);
+        ctx.drawImage(icons.arrowBundle, 548, 15, iconSize, iconSize);
+        ctx.fillText(`${this.player.arrowCount}`, 578, 28);
         // Reminder that the inventory exists
         ctx.font = "14px monospace";
         ctx.fillStyle = "#aaa";
-        ctx.fillText("(i)", 412, 28);
+        ctx.fillText("(i)", 616, 28);
         // Active powerup effects with their remaining time
         const effects = this.player.getActiveEffects();
         if (effects.length > 0) {
@@ -1735,10 +2122,7 @@ class Game {
         this.lastFrameTime = timestamp;
         if (this.inventoryOpen) // The world stands still while the player inspects the inventory, but
         // messages keep fading and the screen keeps rendering for hover effects
-        this.notifications = this.notifications.filter((n)=>{
-            n.msLeft -= deltaMs;
-            return n.msLeft > 0;
-        });
+        this.updateNotifications(deltaMs);
         else this.updateGameState(deltaMs);
         if (this.isGameOver || this.paused) return;
         this.render();
@@ -1765,8 +2149,13 @@ class Game {
         this.notifications = [];
         this.player = null; // a fresh run starts with an empty pack
         this.inventoryOpen = false;
+        this.weaponUnlock = null;
         this.pendingGameOverMs = null;
+        this.pendingRespawnMs = null;
+        this.pendingPlayerShot = null;
         this.attackCooldownMs = 0;
+        this.projectiles = [];
+        this.weaponPedestals = [];
         this.pressedDirections.clear();
         this.lastFrameTime = null;
         if (this.rafId) cancelAnimationFrame(this.rafId);
@@ -1829,7 +2218,7 @@ class Game {
 }
 exports.default = Game;
 
-},{"./utils/settings.js":"hBndc","./utils/sound.js":"6QCfZ","./utils/narration.js":"402l2","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./items.js":"8gP9P","./assets/theme-manifest.js":"d5R3E","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
+},{"./utils/settings.js":"hBndc","./utils/sound.js":"6QCfZ","./utils/narration.js":"402l2","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./entities/projectile.js":"g7qsG","./items.js":"8gP9P","./assets/theme-manifest.js":"d5R3E","./screens/weapon-unlocked.js":"5sboX","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
 // Game settings and configurations
 // - This file contains global settings and configurations for the game
 // - These settings can be adjusted to change the game's behavior and appearance
@@ -1855,8 +2244,10 @@ const canvasSettings = {
 };
 const playerSettings = {
     initialLives: 3,
+    baseAttackPower: 25,
     speed: 300,
     respawnProtectionMs: 2000,
+    defeatPauseMs: 1500,
     color: "#ff69b4"
 };
 const gameSettings = {
@@ -1879,7 +2270,16 @@ const combatSettings = {
     attackCooldownMs: 400,
     knockbackSpeed: 300,
     knockbackDurationMs: 120,
-    healthBarVisibleMs: 3000
+    healthBarVisibleMs: 3000,
+    corpseLingerMs: 1500,
+    corpseFadeMs: 300,
+    projectileSpeed: 480,
+    projectileRangeCells: 7,
+    archerCooldownMs: 1500,
+    archerKeepDistanceCells: 2,
+    archerRangeCells: 6,
+    archerHealth: 60,
+    archerDamage: 5
 };
 const bossSettings = {
     health: 300,
@@ -2240,17 +2640,23 @@ class Player extends (0, _entityJsDefault.default) {
         super(x, y, "player", assets);
         this.#health = 100;
         this.#baseSpeed = (0, _settingsJs.playerSettings).speed;
-        this.#attackPower = 50;
+        this.#attackPower = (0, _settingsJs.playerSettings).baseAttackPower;
         this.powerups = [];
         // Item ids (see items.js) mapped to how many the player carries; the pack
         // survives level changes (see Game.initializePlayer) but not a new run
         this.inventory = {};
-        // One weapon and one rune can be equipped at a time
+        // Weapons are learned verbs; runes still equip from inventory.
+        this.ownedWeapons = [
+            "woodenAxe"
+        ];
         this.equipment = {
             weapon: null,
             rune: null
         };
-        this.weaponId = "axe";
+        this.weaponId = "woodenAxe";
+        this.arrowCount = 0;
+        this.arrowCapacity = 10;
+        this.quiverUpgraded = false;
         this.animator = new (0, _animatorJsDefault.default)((0, _spriteManifestJs.playerSpriteManifest));
         this.currentFrame = 0;
         this.movement = "down";
@@ -2260,7 +2666,8 @@ class Player extends (0, _entityJsDefault.default) {
     selectSprites(assets) {
         return {
             movement: assets.playerMovement,
-            actions: assets.playerActions
+            actions: assets.playerActions,
+            bow: assets.playerBow
         };
     }
     getPickupRange() {
@@ -2318,12 +2725,11 @@ class Player extends (0, _entityJsDefault.default) {
         return this.#health;
     }
     get attackPower() {
-        let power = this.#attackPower;
-        // Equipped weapon and rune bonuses
-        for (const equippedId of Object.values(this.equipment)){
-            const bonus = equippedId && (0, _itemsJs.itemCatalog)[equippedId].attackBonus;
-            if (bonus) power += bonus;
-        }
+        const weapon = this.getSelectedWeapon();
+        let power = weapon?.damage || this.#attackPower;
+        const rune = this.equipment.rune;
+        const runeBonus = rune && (0, _itemsJs.itemCatalog)[rune].attackBonus;
+        if (runeBonus) power += runeBonus;
         if (this.#effectMs.strength > 0) power *= (0, _settingsJs.powerupSettings).strengthMultiplier;
         return power;
     }
@@ -2412,7 +2818,13 @@ class Player extends (0, _entityJsDefault.default) {
         this.moveBy(0, distance);
     }
     attack() {
-        this.animator.play("attack", {
+        this.attackWithWeapon(this.weaponId);
+        this.#syncAnimationState();
+    }
+    attackWithWeapon(weaponId = this.weaponId) {
+        const weapon = (0, _itemsJs.weaponCatalog)[weaponId] || (0, _itemsJs.weaponCatalog).woodenAxe;
+        this.weaponId = weapon.itemId;
+        this.animator.play(weapon.actionState, {
             restart: true,
             direction: this.movement
         });
@@ -2426,7 +2838,7 @@ class Player extends (0, _entityJsDefault.default) {
         this.#syncAnimationState();
     }
     axe() {
-        const weapon = (0, _spriteManifestJs.playerSpriteManifest).weapons[this.weaponId];
+        const weapon = (0, _itemsJs.weaponCatalog).woodenAxe;
         this.animator.play(weapon?.actionState || "axe", {
             restart: true,
             direction: this.movement
@@ -2489,14 +2901,55 @@ class Player extends (0, _entityJsDefault.default) {
     // cannot be equipped.
     equip(itemId) {
         const item = (0, _itemsJs.itemCatalog)[itemId];
-        if (!item || item.kind !== "weapon" && item.kind !== "rune") return null;
-        if (!this.hasItem(itemId)) return null;
-        if (this.equipment[item.kind] === itemId) {
-            this.equipment[item.kind] = null;
+        if (!item) return null;
+        if (item.kind === "weapon") return this.selectWeapon(item.weaponId || itemId) ? "equipped" : null;
+        if (item.kind !== "rune" || !this.hasItem(itemId)) return null;
+        if (this.equipment.rune === itemId) {
+            this.equipment.rune = null;
             return "unequipped";
         }
-        this.equipment[item.kind] = itemId;
+        this.equipment.rune = itemId;
         return "equipped";
+    }
+    unlockWeapon(weaponId) {
+        if (!(0, _itemsJs.weaponCatalog)[weaponId]) return false;
+        if (!this.ownedWeapons.includes(weaponId)) this.ownedWeapons.push(weaponId);
+        this.weaponId = weaponId;
+        if (weaponId === "dreamBow") this.addArrows((0, _itemsJs.weaponCatalog).dreamBow.unlockArrows);
+        return true;
+    }
+    unlockQuiver() {
+        this.quiverUpgraded = true;
+        this.arrowCapacity = 20;
+        this.addArrows(10);
+    }
+    hasWeapon(weaponId) {
+        return this.ownedWeapons.includes(weaponId);
+    }
+    selectWeapon(weaponId) {
+        if (!this.hasWeapon(weaponId)) return false;
+        this.weaponId = weaponId;
+        return true;
+    }
+    cycleWeapon(delta = 1) {
+        const available = (0, _itemsJs.weaponOrder).filter((id)=>this.hasWeapon(id));
+        if (available.length === 0) return null;
+        const index = available.indexOf(this.weaponId);
+        const nextIndex = (index + delta + available.length) % available.length;
+        this.weaponId = available[nextIndex];
+        return this.getSelectedWeapon();
+    }
+    getSelectedWeapon() {
+        return (0, _itemsJs.weaponCatalog)[this.weaponId] || (0, _itemsJs.weaponCatalog).woodenAxe;
+    }
+    addArrows(amount) {
+        this.arrowCount = Math.min(this.arrowCapacity, this.arrowCount + amount);
+        return this.arrowCount;
+    }
+    useArrow() {
+        if (this.arrowCount <= 0) return false;
+        this.arrowCount -= 1;
+        return true;
     }
     applyPowerup(effect) {
         if (!effect) return;
@@ -2562,7 +3015,7 @@ class Player extends (0, _entityJsDefault.default) {
         if (!this.visible) return;
         const frame = this.animator.getFrame(this.movement);
         const spriteSheet = this._sprites[frame.sheet];
-        const pixelScale = (0, _settingsJs.canvasSettings).cellWidth / 32;
+        const pixelScale = frame.frameWidth >= (0, _settingsJs.canvasSettings).cellWidth ? 1 : (0, _settingsJs.canvasSettings).cellWidth / 32;
         const destWidth = frame.frameWidth * pixelScale;
         const destHeight = frame.frameHeight * pixelScale;
         const offsetX = ((0, _settingsJs.canvasSettings).cellWidth - destWidth) / 2;
@@ -2735,7 +3188,8 @@ const playerSpriteManifest = {
     defaultDirection: directions.down,
     sheets: {
         movement: "movement",
-        actions: "actions"
+        actions: "actions",
+        bow: "bow"
     },
     states: {
         idle: {
@@ -2834,7 +3288,7 @@ const playerSpriteManifest = {
         }
     },
     weapons: {
-        axe: {
+        woodenAxe: {
             actionState: "axe",
             states: {
                 axe: {
@@ -2854,6 +3308,32 @@ const playerSpriteManifest = {
                     returnTo: "idle",
                     activeStartMs: 0,
                     activeEndMs: 210
+                }
+            }
+        },
+        steelSword: {
+            actionState: "attack",
+            states: {}
+        },
+        dreamBow: {
+            actionState: "bow",
+            states: {
+                bow: {
+                    sheet: "bow",
+                    frameWidth: 64,
+                    frameHeight: 64,
+                    frames: 8,
+                    frameDurationMs: 70,
+                    rows: {
+                        down: 0,
+                        up: 1,
+                        left: 2,
+                        right: 3
+                    },
+                    oneShot: true,
+                    returnTo: "idle",
+                    activeStartMs: 360,
+                    activeEndMs: 460
                 }
             }
         }
@@ -2937,12 +3417,15 @@ const guardSpriteManifest = {
 // - Single source of truth for every item that can live in the player's
 //   inventory: pickups, guard drops, weapons and runes
 // - `icon` refers to a key in the itemAssets loaded by assets.js
-// - Weapons and runes are equipped from the inventory screen (one of each);
-//   their bonuses are applied by the Player while equipped
+// - Weapons are progression verbs (owned by the Player), while inventory still
+//   carries keys, potions, runes and late-game arrow bundles.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "itemCatalog", ()=>itemCatalog);
+parcelHelpers.export(exports, "weaponCatalog", ()=>weaponCatalog);
+parcelHelpers.export(exports, "weaponOrder", ()=>weaponOrder);
 parcelHelpers.export(exports, "guardDropPool", ()=>guardDropPool);
+parcelHelpers.export(exports, "lateGuardDropPool", ()=>lateGuardDropPool);
 const itemCatalog = {
     key: {
         name: "Key",
@@ -2966,21 +3449,55 @@ const itemCatalog = {
         icon: "explosive",
         description: "Unstable and powerful. No use for it yet \u2014 handle with care."
     },
+    dreamShard: {
+        name: "Dream-Shard",
+        article: "a",
+        kind: "score",
+        icon: "dreamShard",
+        scoreValue: 150,
+        description: "A stolen glimmer of morning. Collect for +150 score."
+    },
+    arrowBundle: {
+        name: "Arrow Bundle",
+        article: "an",
+        kind: "ammo",
+        icon: "arrowBundle",
+        arrowAmount: 5,
+        description: "Five dream-arrows for the bow."
+    },
+    woodenAxe: {
+        name: "Wooden Axe",
+        article: "a",
+        kind: "weapon",
+        icon: "warAxe",
+        weaponId: "woodenAxe",
+        damage: 30,
+        description: "Theo's first dream-tool. Chops obstacles and hurts orcs a little."
+    },
     steelSword: {
         name: "Steel Sword",
         article: "a",
         kind: "weapon",
         icon: "steelSword",
-        attackBonus: 25,
-        description: "A sturdy blade. +25 attack power while equipped."
+        weaponId: "steelSword",
+        damage: 60,
+        description: "A sturdy blade. Strong melee damage and reliable knockback."
     },
-    warAxe: {
-        name: "War Axe",
+    dreamBow: {
+        name: "Dream Bow",
         article: "a",
         kind: "weapon",
-        icon: "warAxe",
-        attackBonus: 50,
-        description: "Heavy and brutal. +50 attack power while equipped."
+        icon: "arrowBundle",
+        weaponId: "dreamBow",
+        damage: 35,
+        description: "Fires arrows across the dream. Uses one arrow per shot."
+    },
+    moonlitQuiver: {
+        name: "Moonlit Quiver",
+        article: "a",
+        kind: "upgrade",
+        icon: "arrowBundle",
+        description: "Raises arrow capacity and steadies Theo's bow draw."
     },
     runeHaste: {
         name: "Rune of Haste",
@@ -3006,14 +3523,77 @@ const itemCatalog = {
         description: "A protective sigil. Halves all damage taken while equipped."
     }
 };
-const guardDropPool = [
-    "potion",
-    "potion",
+const weaponCatalog = {
+    woodenAxe: {
+        itemId: "woodenAxe",
+        name: "Wooden Axe",
+        icon: "warAxe",
+        actionState: "axe",
+        damage: 30,
+        cooldownMs: 430,
+        obstacleDamage: 100,
+        unlockLine: "The first shard remembers a wooden axe. It can carve paths through the dream.",
+        hint: "Chops trees and boulders. Weak, but dependable."
+    },
+    steelSword: {
+        itemId: "steelSword",
+        name: "Steel Sword",
+        icon: "steelSword",
+        actionState: "attack",
+        damage: 60,
+        cooldownMs: 360,
+        obstacleDamage: 60,
+        unlockLine: "The second shard sharpens into a steel sword.",
+        hint: "Higher melee damage with knockback."
+    },
+    dreamBow: {
+        itemId: "dreamBow",
+        name: "Dream Bow",
+        icon: "arrowBundle",
+        actionState: "bow",
+        damage: 35,
+        cooldownMs: 520,
+        unlockArrows: 10,
+        unlockLine: "The sixth shard bends moonlight into a bow.",
+        hint: "Fires arrows at range. Watch your ammo."
+    }
+};
+const weaponOrder = [
+    "woodenAxe",
     "steelSword",
-    "warAxe",
-    "runeHaste",
-    "runeMight",
-    "runeWarding"
+    "dreamBow"
+];
+const guardDropPool = [
+    {
+        itemId: "potion",
+        weight: 35
+    },
+    {
+        itemId: "dreamShard",
+        weight: 15
+    },
+    {
+        itemId: null,
+        weight: 50
+    }
+];
+const lateGuardDropPool = [
+    {
+        itemId: "potion",
+        weight: 30
+    },
+    {
+        itemId: "dreamShard",
+        weight: 15
+    },
+    {
+        itemId: "arrowBundle",
+        weight: 20
+    },
+    {
+        itemId: null,
+        weight: 35
+    }
 ];
 
 },{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"57eJ8":[function(require,module,exports) {
@@ -3025,7 +3605,9 @@ const guardDropPool = [
 // Layout legend:
 //   '#' wall          ' ' floor         'P' player spawn   'X' exit
 //   'T' tree (solid, choppable)         'O' boulder (solid, choppable)
-//   'G' guard         'B' boss          'C' crystal        'E' explosive
+//   'G' guard         'A' archer        'B' boss          'C' crystal
+//   'E' explosive     'W' weapon pedestal
+//   'H' Haste rune    'V' Warding rune  'M' Might rune
 //   'D' locked door (a defeated guard drops the key)
 //
 // Every layout is 10 rows of exactly 20 characters. Trees and boulders can
@@ -3055,6 +3637,7 @@ class Level {
         this.story = options.story || storyBeat && storyBeat.story || "";
         this.audioId = options.audioId || storyBeat && storyBeat.audioId || "";
         this.theme = options.theme || "forest";
+        this.weaponReward = options.weaponReward || null;
         // With fog of war on, only explored parts of the map are visible
         this.fogOfWar = Boolean(options.fogOfWar);
     }
@@ -3098,7 +3681,7 @@ levelData.addLevel(new Level(2, "easy", parse([
 // chop straight through or walk around via the side openings
 levelData.addLevel(new Level(3, "medium", parse([
     "####################",
-    "#P  TT   C  TT    C#",
+    "#P  TT   W  TT    C#",
     "#   TT      TT     #",
     "##T####T######T##T##",
     "#   G     E    G   #",
@@ -3108,13 +3691,14 @@ levelData.addLevel(new Level(3, "medium", parse([
     "#  TTT      TT    X#",
     "####################"
 ]), "The Orchard", {
-    theme: "forest"
+    theme: "forest",
+    weaponReward: "steelSword"
 }));
 // 4. The Quarry — boulders plug the wall gaps: every shortcut costs two
 // swings of the axe, every detour risks a patrol
 levelData.addLevel(new Level(4, "medium", parse([
     "####################",
-    "#P   #  C  O  G   C#",
+    "#P   #  H  O  G   C#",
     "#    O     #       #",
     "## ###### ####O### #",
     "#  G   #     C   G #",
@@ -3132,7 +3716,7 @@ levelData.addLevel(new Level(5, "medium", parse([
     "####################",
     "#P #  C    #      C#",
     "#  # ## ## #  ### ##",
-    "# G#  #  # #       #",
+    "# A#  #  # #       #",
     "#  ## # ###    B   #",
     "#     #            #",
     "# ###### ###   ### #",
@@ -3146,7 +3730,7 @@ levelData.addLevel(new Level(5, "medium", parse([
 // hall carry the key to the next
 levelData.addLevel(new Level(6, "hard", parse([
     "####################",
-    "#P   #  G   #  C  G#",
+    "#P   #  A   #  W  G#",
     "#  C #      #      #",
     "# G  #  E   #  ##  #",
     "#    D      D  ## X#",
@@ -3156,14 +3740,15 @@ levelData.addLevel(new Level(6, "hard", parse([
     "#  G #   G  #  C   #",
     "####################"
 ]), "Twin Halls", {
-    theme: "snow"
+    theme: "snow",
+    weaponReward: "dreamBow"
 }));
 // 7. The Serpent — one long winding corridor walked in the dark: fog of
 // war hides what waits beyond the next bend. Gates of trees and boulders
 // plug the wall gaps.
 levelData.addLevel(new Level(7, "hard", parse([
     "####################",
-    "#P  C      G      G#",
+    "#P  V      A      G#",
     "################## #",
     "#    G     C      T#",
     "#T##################",
@@ -3180,7 +3765,7 @@ levelData.addLevel(new Level(7, "hard", parse([
 // a boss patrols the loot
 levelData.addLevel(new Level(8, "hard", parse([
     "####################",
-    "#P   #   C  #     G#",
+    "#P   #   C  #     A#",
     "#  G #      #  C   #",
     "#### ## ## ## # ####",
     "#      G           #",
@@ -3196,9 +3781,9 @@ levelData.addLevel(new Level(8, "hard", parse([
 // every chamber's guards carry the next key
 levelData.addLevel(new Level(9, "expert", parse([
     "####################",
-    "#P  #C  G#   G# C  #",
+    "#P  #W  A#   G# M  #",
     "#   #    #    #    #",
-    "# G D  G D  E D  G #",
+    "# A D  G D  E D  A #",
     "#   #    #    #    #",
     "## ## ## # ## ## ###",
     "#C  #  G #  G #   G#",
@@ -3207,18 +3792,19 @@ levelData.addLevel(new Level(9, "expert", parse([
     "####################"
 ]), "The Gauntlet", {
     theme: "dungeon",
-    fogOfWar: true
+    fogOfWar: true,
+    weaponReward: "moonlitQuiver"
 }));
 // 10. The Throne — the final boss waits in an inner sanctum behind a locked
 // door, with the exit at its back. Sneak past it or bring it down for glory.
 levelData.addLevel(new Level(10, "expert", parse([
     "####################",
-    "#P   #     C    G  #",
+    "#P   #     C    A  #",
     "# G  # ##########  #",
     "#    # #      X##  #",
     "## # # #  B    ## C#",
     "#  # # #       ##  #",
-    "#  #   ####D##### G#",
+    "#  #   ####D##### A#",
     "#E ## G    C     ###",
     "#C     ##     G   T#",
     "####################"
@@ -3567,10 +4153,14 @@ class Guard extends (0, _entityJsDefault.default) {
     #healthBarMs = 0;
     // Active knockback push: direction vector plus remaining duration
     #knockback = null;
+    #deathElapsedMs = 0;
+    #ranged = false;
+    #rangedCooldownMs = 0;
     #isBoss;
-    constructor(x, y, type, assets, { boss = false } = {}){
+    constructor(x, y, type, assets, { boss = false, ranged = false, healthScale = 1 } = {}){
         super(x, y, type, assets, boss ? (0, _settingsJs.bossSettings).width : (0, _settingsJs.entitySettings).enemyWidth, boss ? (0, _settingsJs.bossSettings).height : (0, _settingsJs.entitySettings).enemyHeight);
         this.#isBoss = boss;
+        this.#ranged = ranged && !boss;
         this.animator = new (0, _animatorJsDefault.default)((0, _spriteManifestJs.guardSpriteManifest));
         this.movement = [
             "down",
@@ -3580,11 +4170,12 @@ class Guard extends (0, _entityJsDefault.default) {
         ][(0, _rngJs.randomInt)(0, 3)];
         this.animator.setDirection(this.movement);
         this.action = "idle";
-        this.damage = boss ? (0, _settingsJs.bossSettings).damage : 10;
-        this.#maxHealth = boss ? (0, _settingsJs.bossSettings).health : 100;
+        this.damage = boss ? (0, _settingsJs.bossSettings).damage : this.#ranged ? (0, _settingsJs.combatSettings).archerDamage : 10;
+        this.#maxHealth = boss ? (0, _settingsJs.bossSettings).health : Math.round((this.#ranged ? (0, _settingsJs.combatSettings).archerHealth : 100) * healthScale);
         this.#health = this.#maxHealth;
-        this.#speed = boss ? (0, _settingsJs.bossSettings).speed : 60; // pixels per second
-        this.#detectionRange = (boss ? (0, _settingsJs.bossSettings).detectionRangeCells : 5) * (0, _settingsJs.canvasSettings).cellWidth;
+        this.#speed = boss ? (0, _settingsJs.bossSettings).speed : this.#ranged ? 70 : 60; // pixels per second
+        this.#detectionRange = (boss ? (0, _settingsJs.bossSettings).detectionRangeCells : this.#ranged ? (0, _settingsJs.combatSettings).archerRangeCells : 5) * (0, _settingsJs.canvasSettings).cellWidth;
+        if (this.#ranged && this._sprites.bowAttack) this._sprites.attack = this._sprites.bowAttack;
         this.#currentSprite = this._sprites.idle;
         this.currentFrame = 0;
     }
@@ -3607,6 +4198,7 @@ class Guard extends (0, _entityJsDefault.default) {
     selectSprites(assets) {
         return {
             attack: assets[`${this._type}_Attack`],
+            bowAttack: assets[`${this._type}_Bow_Attack`],
             death: assets[`${this._type}_Death`],
             hurt: assets[`${this._type}_Hurt`],
             idle: assets[`${this._type}_Idle`],
@@ -3614,6 +4206,15 @@ class Guard extends (0, _entityJsDefault.default) {
             runAttack: assets[`${this._type}_Run_Attack`],
             walk: assets[`${this._type}_Walk`],
             walkAttack: assets[`${this._type}_Walk_Attack`]
+        };
+    }
+    isRanged() {
+        return this.#ranged;
+    }
+    getCenter() {
+        return {
+            x: this._position.x + this._width / 2,
+            y: this._position.y + this._height / 2
         };
     }
     #setSpriteForAction(action) {
@@ -3684,6 +4285,7 @@ class Guard extends (0, _entityJsDefault.default) {
         const dx = playerPosition.x - this._position.x;
         const dy = playerPosition.y - this._position.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance === 0) return true;
         if (distance <= this.#detectionRange) {
             const step = {
                 x: dx / distance,
@@ -3783,10 +4385,11 @@ class Guard extends (0, _entityJsDefault.default) {
         return true;
     }
     isReadyToRemove() {
-        return this.isDefeated() && this.animator.isComplete("dead");
+        return this.isDefeated() && this.animator.isComplete("dead") && this.#deathElapsedMs >= (0, _settingsJs.combatSettings).corpseLingerMs;
     }
     defeat() {
         this.#health = 0;
+        this.#deathElapsedMs = 0;
         this.animator.play("dead", {
             restart: true,
             direction: this.movement
@@ -3809,14 +4412,78 @@ class Guard extends (0, _entityJsDefault.default) {
         this.animator.update(deltaMs);
         this.#syncAnimationState();
         this.#healthBarMs = Math.max(0, this.#healthBarMs - deltaMs);
-        if (this.isDefeated()) return;
+        this.#rangedCooldownMs = Math.max(0, this.#rangedCooldownMs - deltaMs);
+        if (this.isDefeated()) {
+            this.#deathElapsedMs += deltaMs;
+            return null;
+        }
         // A knockback push overrides normal movement while it lasts
         if (this.#knockback) {
             this.#applyKnockback(walls, deltaMs);
-            return;
+            return null;
         }
+        if (this.#ranged) return this.#updateRanged(playerPosition, walls, deltaMs);
         if (this.detectPlayer(playerPosition, walls)) this.moveTowards(playerPosition, walls, deltaMs);
         else this.idle();
+        return null;
+    }
+    #updateRanged(playerPosition, walls, deltaMs) {
+        const targetCenter = {
+            x: playerPosition.x + playerPosition.width / 2,
+            y: playerPosition.y + playerPosition.height / 2
+        };
+        const ownCenter = this.getCenter();
+        const dx = targetCenter.x - ownCenter.x;
+        const dy = targetCenter.y - ownCenter.y;
+        const distance = Math.hypot(dx, dy) || 1;
+        this.movement = Math.abs(dx) > Math.abs(dy) ? dx > 0 ? "right" : "left" : dy > 0 ? "down" : "up";
+        this.animator.setDirection(this.movement);
+        if (this.detectPlayer(playerPosition, walls)) {
+            if (distance < (0, _settingsJs.combatSettings).archerKeepDistanceCells * (0, _settingsJs.canvasSettings).cellWidth) this.#retreatFrom(dx, dy, walls, deltaMs);
+            else this.idle();
+            if (this.#rangedCooldownMs <= 0) {
+                this.attack();
+                this.#rangedCooldownMs = (0, _settingsJs.combatSettings).archerCooldownMs;
+                return {
+                    x: ownCenter.x,
+                    y: ownCenter.y,
+                    direction: {
+                        x: dx / distance,
+                        y: dy / distance
+                    },
+                    damage: 20
+                };
+            }
+            return null;
+        }
+        this.idle();
+        return null;
+    }
+    #retreatFrom(dx, dy, walls, deltaMs) {
+        const distance = this.#speed * (deltaMs / 1000);
+        const axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+        const nextPosition = {
+            x: this._position.x,
+            y: this._position.y,
+            width: (0, _settingsJs.canvasSettings).cellWidth / 2,
+            height: (0, _settingsJs.canvasSettings).cellHeight / 2
+        };
+        if (axis === "x") {
+            nextPosition.x += dx > 0 ? -distance : distance;
+            this.movement = dx > 0 ? "left" : "right";
+        } else {
+            nextPosition.y += dy > 0 ? -distance : distance;
+            this.movement = dy > 0 ? "up" : "down";
+        }
+        this.animator.setDirection(this.movement);
+        const blocked = walls.some((wall)=>(0, _gameJs.isColliding)(nextPosition, wall.getHitBox()));
+        if (!blocked) {
+            this._position = {
+                x: nextPosition.x,
+                y: nextPosition.y
+            };
+            this.walk();
+        } else this.idle();
     }
     #applyKnockback(walls, deltaMs) {
         const distance = (0, _settingsJs.combatSettings).knockbackSpeed * (deltaMs / 1000);
@@ -3836,7 +4503,14 @@ class Guard extends (0, _entityJsDefault.default) {
     }
     draw(ctx) {
         const frame = this.animator.getFrame(this.movement);
+        ctx.save();
+        if (this.isDefeated() && this.animator.isComplete("dead")) {
+            const fadeStart = (0, _settingsJs.combatSettings).corpseLingerMs - (0, _settingsJs.combatSettings).corpseFadeMs;
+            const fadeElapsed = Math.max(0, this.#deathElapsedMs - fadeStart);
+            ctx.globalAlpha = 1 - Math.min(1, fadeElapsed / (0, _settingsJs.combatSettings).corpseFadeMs);
+        }
         ctx.drawImage(this.#currentSprite, frame.sourceX, frame.sourceY, frame.frameWidth, frame.frameHeight, this._position.x - 10, this._position.y - 10, this._width, this._height);
+        ctx.restore();
         this.#drawHealthBar(ctx);
     }
     // Small health bar above the guard, visible for a few seconds after a hit.
@@ -4109,7 +4783,71 @@ class Door extends (0, _entityJsDefault.default) {
 }
 exports.default = Door;
 
-},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d5R3E":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"g7qsG":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+var _entityJs = require("./entity.js");
+var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
+var _settingsJs = require("../utils/settings.js");
+class Projectile extends (0, _entityJsDefault.default) {
+    #direction;
+    #distanceTravelled = 0;
+    #maxDistance;
+    #damage;
+    #owner;
+    #done = false;
+    constructor(x, y, direction, assets, { owner, damage, speed = (0, _settingsJs.combatSettings).projectileSpeed } = {}){
+        super(x, y, "arrow", assets, 24, 12);
+        const length = Math.hypot(direction.x, direction.y) || 1;
+        this.#direction = {
+            x: direction.x / length,
+            y: direction.y / length
+        };
+        this.#owner = owner;
+        this.#damage = damage;
+        this.speed = speed;
+        this.#maxDistance = (0, _settingsJs.combatSettings).projectileRangeCells * (0, _settingsJs.canvasSettings).cellWidth;
+    }
+    selectSprites(assets) {
+        return {
+            arrow: assets.arrow
+        };
+    }
+    get owner() {
+        return this.#owner;
+    }
+    get damage() {
+        return this.#damage;
+    }
+    update(deltaMs = 1000 / 60) {
+        if (this.#done) return;
+        const distance = this.speed * (deltaMs / 1000);
+        this._position.x += this.#direction.x * distance;
+        this._position.y += this.#direction.y * distance;
+        this.#distanceTravelled += distance;
+        if (this.#distanceTravelled >= this.#maxDistance) this.#done = true;
+    }
+    isDone() {
+        return this.#done;
+    }
+    destroy() {
+        this.#done = true;
+    }
+    draw(ctx) {
+        if (this.#done) return;
+        const angle = Math.atan2(this.#direction.y, this.#direction.x);
+        const centerX = this._position.x + this._width / 2;
+        const centerY = this._position.y + this._height / 2;
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(angle);
+        ctx.drawImage(this._sprites.arrow, -(0, _settingsJs.canvasSettings).cellWidth / 2, -(0, _settingsJs.canvasSettings).cellHeight / 2, (0, _settingsJs.canvasSettings).cellWidth, (0, _settingsJs.canvasSettings).cellHeight);
+        ctx.restore();
+    }
+}
+exports.default = Projectile;
+
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d5R3E":[function(require,module,exports) {
 // Per-level visual theme registry.
 // Theme entries point at keys in the loaded level-assets object.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -4189,7 +4927,30 @@ function resolveThemeAssets(levelAssets, themeId = DEFAULT_THEME) {
     };
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2MtDO":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"5sboX":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "getWeaponUnlockCopy", ()=>getWeaponUnlockCopy);
+var _itemsJs = require("../items.js");
+function getWeaponUnlockCopy(itemId) {
+    const item = (0, _itemsJs.itemCatalog)[itemId];
+    if (!item) return null;
+    if (itemId === "moonlitQuiver") return {
+        itemId,
+        title: item.name,
+        line: "The ninth shard becomes a quiver bright enough to carry more moonlit arrows.",
+        hint: "Arrow capacity raised to 20. Press 3 for the bow."
+    };
+    const weapon = (0, _itemsJs.weaponCatalog)[item.weaponId || itemId];
+    return {
+        itemId,
+        title: item.name,
+        line: weapon?.unlockLine || item.description,
+        hint: weapon?.hint || item.description
+    };
+}
+
+},{"../items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2MtDO":[function(require,module,exports) {
 // handle the assets
 // Load player sprite sheets
 // Load enemy sprite sheets
@@ -4208,20 +4969,26 @@ parcelHelpers.defineInteropFlag(exports);
 // Total number of images the splash screen progress bar should expect.
 // Derived from the URL maps so it can never drift out of sync with the
 // actual asset lists (which previously caused progress above 100%).
+// Story assets are excluded: they are heavy cinematics that load lazily
+// in the background after the game becomes playable.
 parcelHelpers.export(exports, "getTotalAssetCount", ()=>getTotalAssetCount);
 parcelHelpers.export(exports, "loadPlayerAssets", ()=>loadPlayerAssets);
 parcelHelpers.export(exports, "loadGuardAssets", ()=>loadGuardAssets);
 parcelHelpers.export(exports, "loadLevelAssets", ()=>loadLevelAssets);
 parcelHelpers.export(exports, "loadItemAssets", ()=>loadItemAssets);
 parcelHelpers.export(exports, "loadPowerUpsAssets", ()=>loadPowerUpsAssets);
-parcelHelpers.export(exports, "loadStoryAssets", ()=>loadStoryAssets);
+parcelHelpers.export(exports, "loadProjectileAssets", ()=>loadProjectileAssets);
+parcelHelpers.export(exports, "loadStoryAssetsInBackground", ()=>loadStoryAssetsInBackground);
+parcelHelpers.export(exports, "getStoryAssets", ()=>getStoryAssets);
 const PLAYER_ASSET_URLS = {
     playerMovement: new URL(require("93fa132a23469ad3")),
-    playerActions: new URL(require("24d061bc9070758b"))
+    playerActions: new URL(require("24d061bc9070758b")),
+    playerBow: new URL(require("3832bd2522ea840f"))
 };
 const GUARD_ASSET_URLS = {
     // ORC 1
     orc1_Attack: new URL(require("da839ad1c17fe6f0")),
+    orc1_Bow_Attack: new URL(require("898fb160ea64be84")),
     orc1_Death: new URL(require("e0bc205cb3c5c0bf")),
     orc1_Hurt: new URL(require("9fcd0329138ebc13")),
     orc1_Idle: new URL(require("fff618a47255eb1a")),
@@ -4231,6 +4998,7 @@ const GUARD_ASSET_URLS = {
     orc1_Walk_Attack: new URL(require("297e02e827843629")),
     // ORC 2
     orc2_Attack: new URL(require("6c2f82508ca9a3bb")),
+    orc2_Bow_Attack: new URL(require("37feb728f1d13a47")),
     orc2_Death: new URL(require("47ee9c0f63ff8828")),
     orc2_Hurt: new URL(require("4b946ae5fc174647")),
     orc2_Idle: new URL(require("301431c8769f658")),
@@ -4240,6 +5008,7 @@ const GUARD_ASSET_URLS = {
     orc2_Walk_Attack: new URL(require("f524f9f30597b7c3")),
     // ORC 3
     orc3_Attack: new URL(require("4af006d8495d5804")),
+    orc3_Bow_Attack: new URL(require("52bec872ae20d5b1")),
     orc3_Death: new URL(require("4bfabeb171e83a78")),
     orc3_Hurt: new URL(require("a88858287bda9b00")),
     orc3_Idle: new URL(require("8aa376bb259420aa")),
@@ -4299,6 +5068,8 @@ const ITEM_ASSET_URLS = {
     key: new URL(require("a5ba75c51d5504f7")),
     potion: new URL(require("d14d64b10e5d3b17")),
     explosive: new URL(require("900784a7c2730965")),
+    dreamShard: new URL(require("3d27847b46809984")),
+    arrowBundle: new URL(require("5977c7c4bb6708ee")),
     steelSword: new URL(require("1151ba85fd7a4a86")),
     warAxe: new URL(require("d570f7b0415d629f")),
     runeHaste: new URL(require("865739fa4646a4a3")),
@@ -4321,6 +5092,9 @@ const STORY_ASSET_URLS = {
     introStepForward: new URL(require("fa3619661867ba9b")),
     endingDawn: new URL(require("c8b406679ab87f82"))
 };
+const PROJECTILE_ASSET_URLS = {
+    arrow: new URL(require("5977c7c4bb6708ee"))
+};
 function getTotalAssetCount() {
     return [
         PLAYER_ASSET_URLS,
@@ -4328,7 +5102,7 @@ function getTotalAssetCount() {
         LEVEL_ASSET_URLS,
         ITEM_ASSET_URLS,
         POWERUP_ASSET_URLS,
-        STORY_ASSET_URLS
+        PROJECTILE_ASSET_URLS
     ].reduce((total, urls)=>total + Object.keys(urls).length, 0);
 }
 function loadImage(src, onProgress) {
@@ -4337,7 +5111,7 @@ function loadImage(src, onProgress) {
             const img = new Image();
             img.src = src;
             img.onload = ()=>{
-                onProgress(src, img);
+                if (onProgress) onProgress(src, img);
                 resolve(img);
             };
             img.onerror = (error)=>{
@@ -4350,11 +5124,15 @@ function loadImage(src, onProgress) {
         }
     });
 }
-// Loads every image in a { name: URL } map and returns { name: HTMLImageElement }.
-async function loadImages(urlMap, onProgress) {
-    const images = {};
-    for (const [name, url] of Object.entries(urlMap))images[name] = await loadImage(url.href, onProgress);
-    return images;
+// Loads every image in a { name: URL } map in parallel and returns
+// { name: HTMLImageElement }. Images are written to `target` as soon as each
+// one finishes, so callers holding a reference to `target` (e.g. a lazily
+// loaded asset map) can use images before the whole batch completes.
+async function loadImages(urlMap, onProgress, target = {}) {
+    await Promise.all(Object.entries(urlMap).map(async ([name, url])=>{
+        target[name] = await loadImage(url.href, onProgress);
+    }));
+    return target;
 }
 async function loadPlayerAssets(onProgress) {
     console.log("Loading player assets...");
@@ -4376,12 +5154,33 @@ async function loadPowerUpsAssets(onProgress) {
     console.log("Loading powerups assets...");
     return loadImages(POWERUP_ASSET_URLS, onProgress);
 }
-async function loadStoryAssets(onProgress) {
-    console.log("Loading story assets...");
-    return loadImages(STORY_ASSET_URLS, onProgress);
+async function loadProjectileAssets(onProgress) {
+    console.log("Loading projectile assets...");
+    return loadImages(PROJECTILE_ASSET_URLS, onProgress);
+}
+// Story cinematics are by far the heaviest assets (~15 MB) but are only
+// shown on the story and game-won screens, so they load lazily in the
+// background instead of blocking the splash screen. The returned map is
+// shared and fills in progressively; screens fall back to a gradient for
+// any image that hasn't arrived yet.
+const storyAssets = {};
+let storyAssetsPromise = null;
+function loadStoryAssetsInBackground() {
+    if (!storyAssetsPromise) {
+        console.log("Loading story assets in the background...");
+        storyAssetsPromise = loadImages(STORY_ASSET_URLS, null, storyAssets).catch((error)=>{
+            // Non-fatal: screens render a gradient fallback without these images.
+            console.error("Error loading story assets:", error);
+            return storyAssets;
+        });
+    }
+    return storyAssetsPromise;
+}
+function getStoryAssets() {
+    return storyAssets;
 }
 
-},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","90e65dbd57ec3767":"NHO4l","b03deaaf9e9826a2":"9GntM","a1d2262c6b94caa1":"iR9wY","10c432a4f44dfea1":"3Sp0K","659e0d16ab1d5659":"5xasI","ec60246b8166a591":"ffckV","e8adfee72ce6ea0e":"9ZZyQ","94ad01c9957574a8":"2t70W","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","3d27847b46809984":"kAqHG","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","1f377051fc3892e5":"eTuGn","53b51ee34dc2d754":"hURqq","f1ccbf89b198689f":"13KtF","50fdaf1136bf476b":"afz4T","fa3619661867ba9b":"b5PuT","c8b406679ab87f82":"2r2jP","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","a2dc87d21fe801f":"etmZ3","fb766fed36809546":"4asaW","bf43b78db4cdb63f":"7HsG7","d5a9fbbce5525c52":"iXTG0","7ed8f93c79bf2794":"7iEqo","27b96fa82ff320fc":"ajtWG"}],"b9nou":[function(require,module,exports) {
+},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","3832bd2522ea840f":"Ce1lZ","da839ad1c17fe6f0":"fncWE","898fb160ea64be84":"4ZLXL","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","37feb728f1d13a47":"6hcNA","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","52bec872ae20d5b1":"3pTtO","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","90e65dbd57ec3767":"NHO4l","b03deaaf9e9826a2":"9GntM","a1d2262c6b94caa1":"iR9wY","10c432a4f44dfea1":"3Sp0K","659e0d16ab1d5659":"5xasI","ec60246b8166a591":"ffckV","e8adfee72ce6ea0e":"9ZZyQ","94ad01c9957574a8":"2t70W","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","a2dc87d21fe801f":"etmZ3","fb766fed36809546":"4asaW","bf43b78db4cdb63f":"7HsG7","d5a9fbbce5525c52":"iXTG0","7ed8f93c79bf2794":"7iEqo","27b96fa82ff320fc":"ajtWG","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","3d27847b46809984":"kAqHG","5977c7c4bb6708ee":"lfTOF","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","1f377051fc3892e5":"eTuGn","53b51ee34dc2d754":"hURqq","f1ccbf89b198689f":"13KtF","50fdaf1136bf476b":"afz4T","fa3619661867ba9b":"b5PuT","c8b406679ab87f82":"2r2jP","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
 module.exports = require("59afba6ea444a216").getBundleURL("aAnGP") + "Player.89df9642.png" + "?" + Date.now();
 
 },{"59afba6ea444a216":"lgJ39"}],"lgJ39":[function(require,module,exports) {
@@ -4422,10 +5221,16 @@ exports.getOrigin = getOrigin;
 },{}],"kYVSU":[function(require,module,exports) {
 module.exports = require("b530c5f1e0795902").getBundleURL("aAnGP") + "Player_Actions.640ec72d.png" + "?" + Date.now();
 
-},{"b530c5f1e0795902":"lgJ39"}],"fncWE":[function(require,module,exports) {
+},{"b530c5f1e0795902":"lgJ39"}],"Ce1lZ":[function(require,module,exports) {
+module.exports = require("839d16620b71cd0").getBundleURL("aAnGP") + "Player_Bow.eabd8cb9.png" + "?" + Date.now();
+
+},{"839d16620b71cd0":"lgJ39"}],"fncWE":[function(require,module,exports) {
 module.exports = require("7bebed16121566e2").getBundleURL("aAnGP") + "orc1_attack_full.34377da9.png" + "?" + Date.now();
 
-},{"7bebed16121566e2":"lgJ39"}],"2LeDo":[function(require,module,exports) {
+},{"7bebed16121566e2":"lgJ39"}],"4ZLXL":[function(require,module,exports) {
+module.exports = require("c14da4a2feb330af").getBundleURL("aAnGP") + "orc1_bow_attack_full.e4f1b15d.png" + "?" + Date.now();
+
+},{"c14da4a2feb330af":"lgJ39"}],"2LeDo":[function(require,module,exports) {
 module.exports = require("84fb28ca811647f").getBundleURL("aAnGP") + "orc1_death_full.416a7e96.png" + "?" + Date.now();
 
 },{"84fb28ca811647f":"lgJ39"}],"aZY6N":[function(require,module,exports) {
@@ -4449,7 +5254,10 @@ module.exports = require("c37c4d0419d8c36e").getBundleURL("aAnGP") + "orc1_walk_
 },{"c37c4d0419d8c36e":"lgJ39"}],"d6fML":[function(require,module,exports) {
 module.exports = require("997aed43d61de1c4").getBundleURL("aAnGP") + "orc2_attack_full.5d55d5be.png" + "?" + Date.now();
 
-},{"997aed43d61de1c4":"lgJ39"}],"cquXn":[function(require,module,exports) {
+},{"997aed43d61de1c4":"lgJ39"}],"6hcNA":[function(require,module,exports) {
+module.exports = require("4d8423f68569643f").getBundleURL("aAnGP") + "orc2_bow_attack_full.6598a9d9.png" + "?" + Date.now();
+
+},{"4d8423f68569643f":"lgJ39"}],"cquXn":[function(require,module,exports) {
 module.exports = require("f3f94ed1f1dda05").getBundleURL("aAnGP") + "orc2_death_full.71c106fc.png" + "?" + Date.now();
 
 },{"f3f94ed1f1dda05":"lgJ39"}],"4rHea":[function(require,module,exports) {
@@ -4473,7 +5281,10 @@ module.exports = require("ea7aa875f42242d4").getBundleURL("aAnGP") + "orc2_walk_
 },{"ea7aa875f42242d4":"lgJ39"}],"he3z7":[function(require,module,exports) {
 module.exports = require("e5e14d289bfdabd0").getBundleURL("aAnGP") + "orc3_attack_full.3880e5cd.png" + "?" + Date.now();
 
-},{"e5e14d289bfdabd0":"lgJ39"}],"9fl4N":[function(require,module,exports) {
+},{"e5e14d289bfdabd0":"lgJ39"}],"3pTtO":[function(require,module,exports) {
+module.exports = require("1ddf3b0b65dd8135").getBundleURL("aAnGP") + "orc3_bow_attack_full.90d80b26.png" + "?" + Date.now();
+
+},{"1ddf3b0b65dd8135":"lgJ39"}],"9fl4N":[function(require,module,exports) {
 module.exports = require("f3fe2338f0fce651").getBundleURL("aAnGP") + "orc3_death_full.8891ac64.png" + "?" + Date.now();
 
 },{"f3fe2338f0fce651":"lgJ39"}],"dNbts":[function(require,module,exports) {
@@ -4554,7 +5365,25 @@ module.exports = require("d7584db4a4d9b947").getBundleURL("aAnGP") + "Snow_ruins
 },{"d7584db4a4d9b947":"lgJ39"}],"d9SAV":[function(require,module,exports) {
 module.exports = require("f6fe50e58e8fedab").getBundleURL("aAnGP") + "exit_ruin.0d420dd3.png" + "?" + Date.now();
 
-},{"f6fe50e58e8fedab":"lgJ39"}],"7mv1Z":[function(require,module,exports) {
+},{"f6fe50e58e8fedab":"lgJ39"}],"etmZ3":[function(require,module,exports) {
+module.exports = require("639b269ef5b9f2a6").getBundleURL("aAnGP") + "floor.a437ade2.png" + "?" + Date.now();
+
+},{"639b269ef5b9f2a6":"lgJ39"}],"4asaW":[function(require,module,exports) {
+module.exports = require("6ea9afae9b79280a").getBundleURL("aAnGP") + "wall.8c8b4932.png" + "?" + Date.now();
+
+},{"6ea9afae9b79280a":"lgJ39"}],"7HsG7":[function(require,module,exports) {
+module.exports = require("2ba762bb49d3d69c").getBundleURL("aAnGP") + "tree_1.976973aa.png" + "?" + Date.now();
+
+},{"2ba762bb49d3d69c":"lgJ39"}],"iXTG0":[function(require,module,exports) {
+module.exports = require("d7721b4f77aa6f18").getBundleURL("aAnGP") + "tree_2.5c0e112d.png" + "?" + Date.now();
+
+},{"d7721b4f77aa6f18":"lgJ39"}],"7iEqo":[function(require,module,exports) {
+module.exports = require("f8a309e496047679").getBundleURL("aAnGP") + "boulder.016017bd.png" + "?" + Date.now();
+
+},{"f8a309e496047679":"lgJ39"}],"ajtWG":[function(require,module,exports) {
+module.exports = require("4fca6330cc7ab136").getBundleURL("aAnGP") + "exit.43e9fb8f.png" + "?" + Date.now();
+
+},{"4fca6330cc7ab136":"lgJ39"}],"7mv1Z":[function(require,module,exports) {
 module.exports = require("54635e7b2ca4709c").getBundleURL("aAnGP") + "floor.0bbfb544.png" + "?" + Date.now();
 
 },{"54635e7b2ca4709c":"lgJ39"}],"8K5FP":[function(require,module,exports) {
@@ -4617,7 +5446,13 @@ module.exports = require("f59b545bc58552b1").getBundleURL("aAnGP") + "potion.75b
 },{"f59b545bc58552b1":"lgJ39"}],"kr7ve":[function(require,module,exports) {
 module.exports = require("6e6b6af1a7a9e5e3").getBundleURL("aAnGP") + "explosive.6e1a6b86.png" + "?" + Date.now();
 
-},{"6e6b6af1a7a9e5e3":"lgJ39"}],"imXnd":[function(require,module,exports) {
+},{"6e6b6af1a7a9e5e3":"lgJ39"}],"kAqHG":[function(require,module,exports) {
+module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
+
+},{"f6b1d88be3588622":"lgJ39"}],"lfTOF":[function(require,module,exports) {
+module.exports = require("bc84e7cbbf3476a4").getBundleURL("aAnGP") + "arrow.1378276b.png" + "?" + Date.now();
+
+},{"bc84e7cbbf3476a4":"lgJ39"}],"imXnd":[function(require,module,exports) {
 module.exports = require("11d54df61439d3a4").getBundleURL("aAnGP") + "sword_steel.a6a16a95.png" + "?" + Date.now();
 
 },{"11d54df61439d3a4":"lgJ39"}],"jPYxu":[function(require,module,exports) {
@@ -4635,10 +5470,7 @@ module.exports = require("e2acc41bb21edb48").getBundleURL("aAnGP") + "rune_wardi
 },{"e2acc41bb21edb48":"lgJ39"}],"1ToI4":[function(require,module,exports) {
 module.exports = require("d034bf1a557e1fec").getBundleURL("aAnGP") + "door.07133bdd.png" + "?" + Date.now();
 
-},{"d034bf1a557e1fec":"lgJ39"}],"kAqHG":[function(require,module,exports) {
-module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
-
-},{"f6b1d88be3588622":"lgJ39"}],"9J8Br":[function(require,module,exports) {
+},{"d034bf1a557e1fec":"lgJ39"}],"9J8Br":[function(require,module,exports) {
 module.exports = require("2797bb0f8cdaa3cb").getBundleURL("aAnGP") + "health_crystal.0d30a58e.png" + "?" + Date.now();
 
 },{"2797bb0f8cdaa3cb":"lgJ39"}],"iwGdJ":[function(require,module,exports) {
@@ -4665,25 +5497,7 @@ module.exports = require("8a2f7f1dd78739f2").getBundleURL("aAnGP") + "intro_step
 },{"8a2f7f1dd78739f2":"lgJ39"}],"2r2jP":[function(require,module,exports) {
 module.exports = require("565a29e2cc853f4c").getBundleURL("aAnGP") + "ending_dawn.301611b5.png" + "?" + Date.now();
 
-},{"565a29e2cc853f4c":"lgJ39"}],"etmZ3":[function(require,module,exports) {
-module.exports = require("639b269ef5b9f2a6").getBundleURL("aAnGP") + "floor.a437ade2.png" + "?" + Date.now();
-
-},{"639b269ef5b9f2a6":"lgJ39"}],"4asaW":[function(require,module,exports) {
-module.exports = require("6ea9afae9b79280a").getBundleURL("aAnGP") + "wall.8c8b4932.png" + "?" + Date.now();
-
-},{"6ea9afae9b79280a":"lgJ39"}],"7HsG7":[function(require,module,exports) {
-module.exports = require("2ba762bb49d3d69c").getBundleURL("aAnGP") + "tree_1.976973aa.png" + "?" + Date.now();
-
-},{"2ba762bb49d3d69c":"lgJ39"}],"iXTG0":[function(require,module,exports) {
-module.exports = require("d7721b4f77aa6f18").getBundleURL("aAnGP") + "tree_2.5c0e112d.png" + "?" + Date.now();
-
-},{"d7721b4f77aa6f18":"lgJ39"}],"7iEqo":[function(require,module,exports) {
-module.exports = require("f8a309e496047679").getBundleURL("aAnGP") + "boulder.016017bd.png" + "?" + Date.now();
-
-},{"f8a309e496047679":"lgJ39"}],"ajtWG":[function(require,module,exports) {
-module.exports = require("4fca6330cc7ab136").getBundleURL("aAnGP") + "exit.43e9fb8f.png" + "?" + Date.now();
-
-},{"4fca6330cc7ab136":"lgJ39"}],"kNfRL":[function(require,module,exports) {
+},{"565a29e2cc853f4c":"lgJ39"}],"kNfRL":[function(require,module,exports) {
 // Splash screen
 // - Display game logo or animation
 // - Briefly show before transitioning to the welcome screen

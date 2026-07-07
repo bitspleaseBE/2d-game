@@ -14,8 +14,10 @@ export const canvasSettings = {
 // Player settings
 export const playerSettings = {
     initialLives: 3, // Initial number of lives for the player
+    baseAttackPower: 25, // Fallback damage; actual weapon damage comes from items.js
     speed: 300, // Player movement speed in pixels per second
     respawnProtectionMs: 2000, // Invincibility after respawning, so a guard camping the spawn cannot chain-kill
+    defeatPauseMs: 1500, // How long Theo stays down before respawn or game over
     color: '#ff69b4', // Color of the player (funny pink color)
 };
 
@@ -45,6 +47,15 @@ export const combatSettings = {
     knockbackSpeed: 300, // Knockback speed in pixels per second when a guard is hit
     knockbackDurationMs: 120, // How long the knockback push lasts
     healthBarVisibleMs: 3000, // How long a guard's health bar stays visible after taking damage
+    corpseLingerMs: 1500, // How long defeated guards lie after the death animation
+    corpseFadeMs: 300, // Fade corpses during the final part of the linger window
+    projectileSpeed: 480, // Arrow speed in pixels per second
+    projectileRangeCells: 7, // Maximum arrow flight distance
+    archerCooldownMs: 1500, // Time between orc archer shots
+    archerKeepDistanceCells: 2, // Archers try to back away inside this range
+    archerRangeCells: 6, // Line-of-sight range for archer shots
+    archerHealth: 60,
+    archerDamage: 5,
 };
 
 // Boss settings ('B' cells in level layouts). Bosses are tanky and hit harder,

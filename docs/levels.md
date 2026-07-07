@@ -2,7 +2,7 @@
 
 This document provides an overview of the ten levels in "Wandertrap," including their theme, the entities present, and a brief story for each.
 
-Layout legend: `#` wall · `P` player spawn · `X` exit · `G` guard · `B` boss · `E` hidden explosive trap · `C` powerup crystal · `K` key · `D` locked door · `O` boulder · `T` tree
+Layout legend: `#` wall · `P` player spawn · `X` exit · `G` guard · `A` archer · `B` boss · `E` hidden explosive trap · `C` powerup crystal · `W` weapon pedestal · `H` Haste rune · `V` Warding rune · `M` Might rune · `D` locked door · `O` boulder · `T` tree
 
 ## Level 1: Easy — The Glade
 
@@ -32,7 +32,7 @@ In the Orchard, crooked trees twist into gates and orcs drag more shards through
 
 ### Entities
 
-Player, walls, trees, 4 guards, powerups, 1 explosive trap, exit.
+Player, walls, trees, 4 guards, powerups, Steel Sword pedestal, 1 explosive trap, exit.
 
 ## Level 4: Medium — The Quarry
 
@@ -42,7 +42,7 @@ The Quarry rumbles with buried traps, but every broken stone brings Theo closer 
 
 ### Entities
 
-Player, walls, boulders, 5 guards, powerups, 1 explosive trap, exit.
+Player, walls, boulders, 5 guards, powerups, Haste rune, 1 explosive trap, exit.
 
 ## Level 5: Medium — The Warden
 
@@ -52,7 +52,7 @@ The first Warden waits in the sand, sworn to keep the Orc King's nightmare alive
 
 ### Entities
 
-Player, walls, 2 guards, 1 boss, powerups, exit.
+Player, walls, 1 guard, 1 archer, 1 boss, powerups, exit.
 
 ## Level 6: Hard — Twin Halls
 
@@ -62,7 +62,7 @@ Twin Halls split the dream in two; Theo must find the right keys before sleep cl
 
 ### Entities
 
-Player, walls, 6 guards, powerups, 2 locked doors, 1 explosive trap, exit.
+Player, walls, 5 guards, 1 archer, Dream Bow pedestal, powerups, 2 locked doors, 1 explosive trap, exit.
 
 ## Level 7: Hard — The Serpent
 
@@ -72,7 +72,7 @@ The Serpent coils through darkness, and Theo can only trust the small light arou
 
 ### Entities
 
-Player, walls, trees, a boulder, 5 guards, powerups, 1 explosive trap, fog of war, exit.
+Player, walls, trees, a boulder, 4 guards, 1 archer, Warding rune, powerups, 1 explosive trap, fog of war, exit.
 
 ## Level 8: Hard — The Crossroads
 
@@ -82,7 +82,7 @@ At the Crossroads, a second Warden patrols the center where stolen shards burn l
 
 ### Entities
 
-Player, walls, 6 guards, 1 boss, powerups, 1 explosive trap, exit.
+Player, walls, 5 guards, 1 archer, 1 boss, powerups, 1 explosive trap, exit.
 
 ## Level 9: Expert — The Gauntlet
 
@@ -92,7 +92,7 @@ The Gauntlet locks each dream behind another door, daring Theo to lose heart bef
 
 ### Entities
 
-Player, walls, 8 guards, powerups, 3 locked doors, 1 explosive trap, fog of war, exit.
+Player, walls, 5 guards, 3 archers, Moonlit Quiver pedestal, Might rune, powerups, 3 locked doors, 1 explosive trap, fog of war, exit.
 
 ## Level 10: Expert — The Throne
 
@@ -102,13 +102,15 @@ On the Throne, the Orc King clutches the final shard between Theo and his own be
 
 ### Entities
 
-Player, walls, trees, 5 guards, 1 boss, powerups, 1 locked door, 1 explosive trap, fog of war, exit.
+Player, walls, trees, 3 guards, 2 archers, 1 boss, powerups, 1 locked door, 1 explosive trap, fog of war, exit.
 
 ## Design notes
 
 - Levels are declared in `game/levels/level-data.js`; rows can be written as plain strings for readability.
 - Every level is BFS-verified solvable by an automated test (`all levels are distinct and solvable`), which also asserts no two levels share a layout and that any key is reachable before its door.
 - Each level has a `theme` (`forest`, `desert`, `snow`, `dungeon`) that controls the floor tile, wall tile, obstacle sprites, boulder sprite, and exit ruin.
+- Weapon progression is fixed: Wooden Axe at start, Steel Sword on level 3, Dream Bow on level 6, and Moonlit Quiver on level 9. Wardens intentionally do not grant a weapon.
+- Runes are fixed pickups in riskier spots: Haste on level 4, Warding on level 7, Might on level 9.
 
 ## Theme assignment
 

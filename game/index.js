@@ -1,5 +1,5 @@
 import { Game } from './game.js';
-import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, loadItemAssets, loadStoryAssets, getTotalAssetCount } from './assets.js';
+import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, loadItemAssets, loadProjectileAssets, loadStoryAssetsInBackground, getStoryAssets, getTotalAssetCount } from './assets.js';
 import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.js';
 import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
@@ -46,14 +46,21 @@ class GameEngine {
                 updateSplashScreenProgress(progress);
             };
 
-            const playerAssets = await loadPlayerAssets(onProgress);
-            const levelAssets = await loadLevelAssets(onProgress);
-            const guardAssets = await loadGuardAssets(onProgress);
-            const powerupsAssets = await loadPowerUpsAssets(onProgress);
-            const itemAssets = await loadItemAssets(onProgress);
-            const storyAssets = await loadStoryAssets(onProgress);
+            const [playerAssets, levelAssets, guardAssets, powerupsAssets, itemAssets, projectileAssets] = await Promise.all([
+                loadPlayerAssets(onProgress),
+                loadLevelAssets(onProgress),
+                loadGuardAssets(onProgress),
+                loadPowerUpsAssets(onProgress),
+                loadItemAssets(onProgress),
+                loadProjectileAssets(onProgress),
+            ]);
 
-            this.assets = { playerAssets, levelAssets, guardAssets, powerupsAssets, itemAssets, storyAssets };
+            // Heavy story cinematics load lazily after the game is playable;
+            // getStoryAssets() returns a live map that fills in as they arrive.
+            const storyAssets = getStoryAssets();
+            loadStoryAssetsInBackground();
+
+            this.assets = { playerAssets, levelAssets, guardAssets, powerupsAssets, itemAssets, projectileAssets, storyAssets };
             this.game = new Game(this.container.id, this.canvas, this.context, this.assets, {
                 onGameOver: () => this.showScreen('gameOver'),
                 onLevelCompleted: (score, completedLevel, nextLevel) => {

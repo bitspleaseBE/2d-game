@@ -42,6 +42,7 @@ async function startNewGame(page) {
   await page.getByRole('button', { name: 'New Game' }).click();
   await expect(page.locator('canvas')).toBeVisible();
   await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
+  await page.evaluate(() => window.__wandertrap.game.dismissLevelIntro());
 }
 
 let consoleErrors;
@@ -214,12 +215,16 @@ test('losing all health costs a life, respawns, and eventually ends the game', a
   await damage();
   await expect.poll(() => gameState(page).then((s) => s.lives)).toBe(2);
   let state = await gameState(page);
+  expect(state.health).toBe(0); // downed pose lingers before respawn
+  await page.waitForTimeout(1600);
+  state = await gameState(page);
   expect(state.health).toBe(100); // respawned with full health
   expect(state.position).toEqual({ x: 448, y: 128 }); // back at the level 1 spawn
 
   await waitOutRespawnProtection();
   await damage();
   await expect.poll(() => gameState(page).then((s) => s.lives)).toBe(1);
+  await page.waitForTimeout(1600);
 
   await waitOutRespawnProtection();
   await damage();
@@ -272,27 +277,36 @@ test('regression: attacking damages and defeats an adjacent guard', async ({ pag
     game.player.movement = 'down'; // face the guard
 
     const scoreBefore = game.score;
-    game.playerAttack(); // guard has 100 health, attackPower is 50
+    game.playerAttack(); // Wooden Axe deals 30 damage
     const guardsAfterOneHit = game.guards.length;
-    game.attackCooldownMs = 0; // skip the swing cooldown between test hits
-    game.playerAttack();
+    for (let i = 0; i < 3; i++) {
+      game.attackCooldownMs = 0; // skip the swing cooldown between test hits
+      game.playerAttack();
+    }
 
     return {
       guardsAfterOneHit,
-      guardsAfterTwoHits: game.guards.length,
-      defeatedAfterTwoHits: game.guards[0].isDefeated(),
+      guardsAfterFourHits: game.guards.length,
+      defeatedAfterFourHits: game.guards[0].isDefeated(),
       scoreGained: game.score - scoreBefore,
     };
   });
 
   expect(result.guardsAfterOneHit).toBe(1); // survives the first hit
-  expect(result.guardsAfterTwoHits).toBe(1); // remains while death animation plays
-  expect(result.defeatedAfterTwoHits).toBe(true);
+  expect(result.guardsAfterFourHits).toBe(1); // remains while death animation plays
+  expect(result.defeatedAfterFourHits).toBe(true);
   expect(result.scoreGained).toBe(100); // defeat awards score
+
+  const lingered = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.step(40);
+    return game.guards.length;
+  });
+  expect(lingered).toBe(1);
 
   const removed = await page.evaluate(() => {
     const game = window.__wandertrap.game;
-    game.step(40);
+    game.step(55);
     return game.guards.length;
   });
   expect(removed).toBe(0);
@@ -338,7 +352,7 @@ test('axe action clears an adjacent obstacle through the weapon action path', as
     };
   });
 
-  expect(result.afterOneHit).toBe(true);
+  expect(result.afterOneHit).toBe(false);
   expect(result.afterTwoHits).toBe(false);
   expect(result.action).toBe('axe');
 });
@@ -467,8 +481,8 @@ test('the attack cooldown blocks an immediate second swing', async ({ page }) =>
     };
   });
 
-  expect(result.healthAfterSpam).toBe(50); // only the first swing landed
-  expect(result.healthAfterCooldown).toBe(0); // swing after cooldown lands
+  expect(result.healthAfterSpam).toBe(70); // only the first swing landed
+  expect(result.healthAfterCooldown).toBe(40); // swing after cooldown lands
 });
 
 test('a boss is tanky but beatable, always shows its health bar, and awards bonus score', async ({ page }) => {
@@ -485,7 +499,7 @@ test('a boss is tanky but beatable, always shows its health bar, and awards bonu
     const barVisibleBeforeAnyHit = boss.isHealthBarVisible();
     const scoreBefore = game.score;
 
-    // 300 health / 50 per swing = 6 swings to bring the boss down
+    // 300 health / 30 per Wooden Axe swing = 10 swings to bring the boss down
     let swings = 0;
     while (!boss.isDefeated() && swings < 20) {
       game.attackCooldownMs = 0;
@@ -505,7 +519,7 @@ test('a boss is tanky but beatable, always shows its health bar, and awards bonu
   expect(result.isBoss).toBe(true);
   expect(result.barVisibleBeforeAnyHit).toBe(true); // danger is telegraphed up front
   expect(result.maxHealth).toBe(300);
-  expect(result.swings).toBe(6); // tanky, but goes down to persistent attack
+  expect(result.swings).toBe(10); // tanky, but goes down to persistent attack
   expect(result.scoreGained).toBe(500); // bosses are worth five guards
 });
 
@@ -530,7 +544,8 @@ test('respawning grants brief protection so a spawn-camping guard cannot chain-k
     const game = window.__wandertrap.game;
     game.pause();
     game.player.takeDamage(100); // lose the first life
-    game.step(1); // death is processed: life lost, player respawned
+    game.step(1); // death is processed: life lost, downed pose starts
+    game.step(91); // 1.5s linger passes: player respawns
     const effects = game.player.getActiveEffects().map((e) => e.name);
 
     game.player.takeDamage(50); // a guard on the spawn point strikes at once
@@ -637,9 +652,10 @@ test('defeated guards are inert until their death animation is removed', async (
     game.teleportPlayer(300, 300);
     const guard = game.spawnGuard(300, 360);
     game.player.movement = 'down';
-    game.playerAttack();
-    game.attackCooldownMs = 0; // skip the swing cooldown between test hits
-    game.playerAttack();
+    for (let i = 0; i < 4; i++) {
+      game.attackCooldownMs = 0; // skip the swing cooldown between test hits
+      game.playerAttack();
+    }
     const healthBefore = game.player.getHealth();
 
     game.step(10);
@@ -650,17 +666,21 @@ test('defeated guards are inert until their death animation is removed', async (
     };
 
     game.step(40);
+    const afterAnimationBeforeLinger = game.guards.length;
+    game.step(55);
     return {
       healthBefore,
       whileAnimating,
-      afterAnimation: game.guards.length,
+      afterAnimationBeforeLinger,
+      afterLinger: game.guards.length,
     };
   });
 
   expect(result.whileAnimating.guards).toBe(1);
   expect(result.whileAnimating.defeated).toBe(true);
   expect(result.whileAnimating.health).toBe(result.healthBefore);
-  expect(result.afterAnimation).toBe(0);
+  expect(result.afterAnimationBeforeLinger).toBe(1);
+  expect(result.afterLinger).toBe(0);
 });
 
 test('collecting a crystal applies its effect and shows a pickup message', async ({ page }) => {
@@ -729,22 +749,18 @@ test('regression: invincibility lasts 10 real seconds at 120Hz', async ({ page }
   expect(result.healthAfterExpiry).toBe(50);
 });
 
-test('a defeated guard drops an item that goes into the inventory with a message', async ({ page }) => {
+test('a guaranteed key drop goes into the inventory with a message', async ({ page }) => {
   await startNewGame(page);
 
   const result = await page.evaluate(() => {
     const game = window.__wandertrap.game;
     game.pause();
+    game.startAtLevel(2);
     game.guards = [];
     game.drops = [];
     game.notifications = [];
     game.teleportPlayer(300, 300);
-    game.spawnGuard(300, 360); // directly below the player
-    game.player.movement = 'down';
-
-    game.playerAttack();
-    game.attackCooldownMs = 0; // skip the swing cooldown between test hits
-    game.playerAttack(); // 2 x 50 damage defeats the guard -> drop spawns
+    game.spawnDrop({ x: 300, y: 300 }); // locked level: first drop is always the key
     const dropCount = game.drops.length;
     const droppedItem = game.drops[0]?.getType();
 
@@ -807,30 +823,184 @@ test("pressing 'u' drinks a carried potion and restores health", async ({ page }
   expect(potionsLeft).toBe(0);
 });
 
-test('equipping a weapon and a rune raises attack power; unequipping restores it', async ({ page }) => {
+test('owned weapon selection and rune bonuses update attack power', async ({ page }) => {
   await startNewGame(page);
 
   const result = await page.evaluate(() => {
     const player = window.__wandertrap.game.player;
-    player.addItem('warAxe');
     player.addItem('runeMight');
 
     const base = player.attackPower;
-    player.equip('warAxe');
-    const withWeapon = player.attackPower;
+    player.unlockWeapon('steelSword');
+    player.equip('steelSword');
+    const withSword = player.attackPower;
     player.equip('runeMight');
     const withBoth = player.attackPower;
-    player.equip('warAxe'); // equipping again takes it off
-    const afterUnequip = player.attackPower;
+    player.selectWeapon('woodenAxe');
+    const afterAxeSelected = player.attackPower;
 
-    return { base, withWeapon, withBoth, afterUnequip, equipment: player.equipment };
+    return { base, withSword, withBoth, afterAxeSelected, equipment: player.equipment, weaponId: player.weaponId };
   });
 
-  expect(result.base).toBe(50);
-  expect(result.withWeapon).toBe(100); // war axe: +50
-  expect(result.withBoth).toBe(125); // rune of might: +25
-  expect(result.afterUnequip).toBe(75); // rune stays on, axe is off
+  expect(result.base).toBe(30);
+  expect(result.withSword).toBe(60);
+  expect(result.withBoth).toBe(85); // rune of might: +25
+  expect(result.afterAxeSelected).toBe(55); // rune stays on, axe is readied
   expect(result.equipment).toEqual({ weapon: null, rune: 'runeMight' });
+  expect(result.weaponId).toBe('woodenAxe');
+});
+
+test('guard drop economy is sparse and bow owners can find arrows', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const { game, setSeed } = window.__wandertrap;
+    setSeed(1234);
+    const early = { potion: 0, dreamShard: 0, arrowBundle: 0, none: 0 };
+    for (let i = 0; i < 1000; i++) early[game.rollGuardDrop() || 'none']++;
+
+    game.player.unlockWeapon('dreamBow');
+    setSeed(1234);
+    const late = { potion: 0, dreamShard: 0, arrowBundle: 0, none: 0 };
+    for (let i = 0; i < 1000; i++) late[game.rollGuardDrop() || 'none']++;
+    return { early, late };
+  });
+
+  expect(result.early.potion).toBeGreaterThan(280);
+  expect(result.early.potion).toBeLessThan(420);
+  expect(result.early.dreamShard).toBeGreaterThan(100);
+  expect(result.early.dreamShard).toBeLessThan(210);
+  expect(result.early.none).toBeGreaterThan(420);
+  expect(result.early.arrowBundle).toBe(0);
+  expect(result.late.arrowBundle).toBeGreaterThan(140);
+  expect(result.late.arrowBundle).toBeLessThan(260);
+});
+
+test('potion pickups at the cap convert to score', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.player.inventory.potion = 3;
+    const scoreBefore = game.score;
+    game.collectDrop('potion');
+    return {
+      potions: game.player.inventory.potion,
+      scoreGained: game.score - scoreBefore,
+      notifications: game.notifications.map((n) => n.text),
+    };
+  });
+
+  expect(result.potions).toBe(3);
+  expect(result.scoreGained).toBe(50);
+  expect(result.notifications).toContain('Your pack is full - +50');
+});
+
+test('weapon pedestal unlocks a weapon, pauses, and dismisses', async ({ page }) => {
+  await startNewGame(page);
+
+  const unlocked = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.startAtLevel(3);
+    game.dismissLevelIntro();
+    const pedestal = game.weaponPedestals[0];
+    game.teleportPlayer(pedestal.x, pedestal.y);
+    game.step(1);
+    return {
+      hasSword: game.player.hasWeapon('steelSword'),
+      selected: game.player.weaponId,
+      overlayTitle: game.weaponUnlock?.title,
+    };
+  });
+
+  expect(unlocked.hasSword).toBe(true);
+  expect(unlocked.selected).toBe('steelSword');
+  expect(unlocked.overlayTitle).toBe('Steel Sword');
+
+  await page.keyboard.press('Space');
+  await expect.poll(() =>
+    page.evaluate(() => window.__wandertrap.game.weaponUnlock)
+  ).toBeNull();
+});
+
+test('bow arrows fly, hit guards, and stop at walls', async ({ page }) => {
+  await startNewGame(page);
+
+  const hit = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    game.walls = [];
+    game.obstacles = [];
+    game.projectiles = [];
+    game.player.unlockWeapon('dreamBow');
+    game.player.selectWeapon('dreamBow');
+    game.player.arrowCount = 10;
+    game.teleportPlayer(300, 300);
+    game.player.movement = 'right';
+    const guard = game.spawnGuard(430, 300);
+    game.playerAttack();
+    game.step(35);
+    return {
+      arrowsLeft: game.player.arrowCount,
+      guardHealth: guard.getHealth(),
+      projectilesLeft: game.projectiles.length,
+    };
+  });
+
+  expect(hit.arrowsLeft).toBe(9);
+  expect(hit.guardHealth).toBeLessThan(100);
+  expect(hit.projectilesLeft).toBe(0);
+
+  const blocked = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.projectiles = [];
+    game.player.arrowCount = 10;
+    game.teleportPlayer(300, 300);
+    game.player.movement = 'right';
+    game.walls = [{
+      getHitBox: () => ({ x: 390, y: 270, width: 64, height: 96 }),
+      draw: () => {},
+    }];
+    game.playerAttack();
+    game.step(35);
+    return { projectilesLeft: game.projectiles.length, arrowsLeft: game.player.arrowCount };
+  });
+
+  expect(blocked.projectilesLeft).toBe(0);
+  expect(blocked.arrowsLeft).toBe(9);
+});
+
+test('orc archers keep distance and fire arrows', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    game.walls = [];
+    game.obstacles = [];
+    game.projectiles = [];
+    game.teleportPlayer(300, 300);
+    const archer = game.spawnGuard(360, 300, 'orc1', { ranged: true });
+    const xBefore = archer.getPosition().x;
+    game.step(1);
+    return {
+      isRanged: archer.isRanged(),
+      maxHealth: archer.getMaxHealth(),
+      damage: archer.damage,
+      xBefore,
+      xAfter: archer.getPosition().x,
+      projectiles: game.projectiles.length,
+    };
+  });
+
+  expect(result.isRanged).toBe(true);
+  expect(result.maxHealth).toBe(60);
+  expect(result.damage).toBe(5);
+  expect(result.xAfter).toBeGreaterThan(result.xBefore);
+  expect(result.projectiles).toBeGreaterThan(0);
 });
 
 test('a locked door blocks the corridor until opened with a key', async ({ page }) => {
@@ -948,9 +1118,10 @@ test('the first guard defeated on a locked level always drops the key', async ({
     game.teleportPlayer(300, 300);
     game.spawnGuard(300, 360);
     game.player.movement = 'down';
-    game.playerAttack();
-    game.attackCooldownMs = 0; // skip the swing cooldown between test hits
-    game.playerAttack();
+    for (let i = 0; i < 4; i++) {
+      game.attackCooldownMs = 0; // skip the swing cooldown between test hits
+      game.playerAttack();
+    }
     return { dropped: game.drops.map((d) => d.getType()) };
   });
 

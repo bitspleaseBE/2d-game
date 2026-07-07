@@ -2,8 +2,8 @@
 // - Single source of truth for every item that can live in the player's
 //   inventory: pickups, guard drops, weapons and runes
 // - `icon` refers to a key in the itemAssets loaded by assets.js
-// - Weapons and runes are equipped from the inventory screen (one of each);
-//   their bonuses are applied by the Player while equipped
+// - Weapons are progression verbs (owned by the Player), while inventory still
+//   carries keys, potions, runes and late-game arrow bundles.
 
 export const itemCatalog = {
   key: {
@@ -28,21 +28,55 @@ export const itemCatalog = {
     icon: "explosive",
     description: "Unstable and powerful. No use for it yet — handle with care.",
   },
+  dreamShard: {
+    name: "Dream-Shard",
+    article: "a",
+    kind: "score",
+    icon: "dreamShard",
+    scoreValue: 150,
+    description: "A stolen glimmer of morning. Collect for +150 score.",
+  },
+  arrowBundle: {
+    name: "Arrow Bundle",
+    article: "an",
+    kind: "ammo",
+    icon: "arrowBundle",
+    arrowAmount: 5,
+    description: "Five dream-arrows for the bow.",
+  },
+  woodenAxe: {
+    name: "Wooden Axe",
+    article: "a",
+    kind: "weapon",
+    icon: "warAxe",
+    weaponId: "woodenAxe",
+    damage: 30,
+    description: "Theo's first dream-tool. Chops obstacles and hurts orcs a little.",
+  },
   steelSword: {
     name: "Steel Sword",
     article: "a",
     kind: "weapon",
     icon: "steelSword",
-    attackBonus: 25,
-    description: "A sturdy blade. +25 attack power while equipped.",
+    weaponId: "steelSword",
+    damage: 60,
+    description: "A sturdy blade. Strong melee damage and reliable knockback.",
   },
-  warAxe: {
-    name: "War Axe",
+  dreamBow: {
+    name: "Dream Bow",
     article: "a",
     kind: "weapon",
-    icon: "warAxe",
-    attackBonus: 50,
-    description: "Heavy and brutal. +50 attack power while equipped.",
+    icon: "arrowBundle",
+    weaponId: "dreamBow",
+    damage: 35,
+    description: "Fires arrows across the dream. Uses one arrow per shot.",
+  },
+  moonlitQuiver: {
+    name: "Moonlit Quiver",
+    article: "a",
+    kind: "upgrade",
+    icon: "arrowBundle",
+    description: "Raises arrow capacity and steadies Theo's bow draw.",
   },
   runeHaste: {
     name: "Rune of Haste",
@@ -69,13 +103,54 @@ export const itemCatalog = {
   },
 };
 
-// Items a defeated guard can drop (potions are twice as likely)
+export const weaponCatalog = {
+  woodenAxe: {
+    itemId: "woodenAxe",
+    name: "Wooden Axe",
+    icon: "warAxe",
+    actionState: "axe",
+    damage: 30,
+    cooldownMs: 430,
+    obstacleDamage: 100,
+    unlockLine: "The first shard remembers a wooden axe. It can carve paths through the dream.",
+    hint: "Chops trees and boulders. Weak, but dependable.",
+  },
+  steelSword: {
+    itemId: "steelSword",
+    name: "Steel Sword",
+    icon: "steelSword",
+    actionState: "attack",
+    damage: 60,
+    cooldownMs: 360,
+    obstacleDamage: 60,
+    unlockLine: "The second shard sharpens into a steel sword.",
+    hint: "Higher melee damage with knockback.",
+  },
+  dreamBow: {
+    itemId: "dreamBow",
+    name: "Dream Bow",
+    icon: "arrowBundle",
+    actionState: "bow",
+    damage: 35,
+    cooldownMs: 520,
+    unlockArrows: 10,
+    unlockLine: "The sixth shard bends moonlight into a bow.",
+    hint: "Fires arrows at range. Watch your ammo.",
+  },
+};
+
+export const weaponOrder = ["woodenAxe", "steelSword", "dreamBow"];
+
+// Weighted non-key guard drops. `null` means nothing falls.
 export const guardDropPool = [
-  "potion",
-  "potion",
-  "steelSword",
-  "warAxe",
-  "runeHaste",
-  "runeMight",
-  "runeWarding",
+  { itemId: "potion", weight: 35 },
+  { itemId: "dreamShard", weight: 15 },
+  { itemId: null, weight: 50 },
+];
+
+export const lateGuardDropPool = [
+  { itemId: "potion", weight: 30 },
+  { itemId: "dreamShard", weight: 15 },
+  { itemId: "arrowBundle", weight: 20 },
+  { itemId: null, weight: 35 },
 ];

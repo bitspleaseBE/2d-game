@@ -14,6 +14,7 @@ export const playerSpriteManifest = {
   sheets: {
     movement: "movement",
     actions: "actions",
+    bow: "bow",
   },
   states: {
     idle: {
@@ -82,7 +83,7 @@ export const playerSpriteManifest = {
     },
   },
   weapons: {
-    axe: {
+    woodenAxe: {
       actionState: "axe",
       states: {
         axe: {
@@ -97,6 +98,27 @@ export const playerSpriteManifest = {
           returnTo: "idle",
           activeStartMs: 0,
           activeEndMs: 210,
+        },
+      },
+    },
+    steelSword: {
+      actionState: "attack",
+      states: {},
+    },
+    dreamBow: {
+      actionState: "bow",
+      states: {
+        bow: {
+          sheet: "bow",
+          frameWidth: 64,
+          frameHeight: 64,
+          frames: 8,
+          frameDurationMs: 70,
+          rows: { down: 0, up: 1, left: 2, right: 3 },
+          oneShot: true,
+          returnTo: "idle",
+          activeStartMs: 360,
+          activeEndMs: 460,
         },
       },
     },

@@ -6,7 +6,9 @@
 // Layout legend:
 //   '#' wall          ' ' floor         'P' player spawn   'X' exit
 //   'T' tree (solid, choppable)         'O' boulder (solid, choppable)
-//   'G' guard         'B' boss          'C' crystal        'E' explosive
+//   'G' guard         'A' archer        'B' boss          'C' crystal
+//   'E' explosive     'W' weapon pedestal
+//   'H' Haste rune    'V' Warding rune  'M' Might rune
 //   'D' locked door (a defeated guard drops the key)
 //
 // Every layout is 10 rows of exactly 20 characters. Trees and boulders can
@@ -39,6 +41,7 @@ class Level {
         this.story = options.story || (storyBeat && storyBeat.story) || '';
         this.audioId = options.audioId || (storyBeat && storyBeat.audioId) || '';
         this.theme = options.theme || 'forest';
+        this.weaponReward = options.weaponReward || null;
         // With fog of war on, only explored parts of the map are visible
         this.fogOfWar = Boolean(options.fogOfWar);
     }
@@ -83,7 +86,7 @@ levelData.addLevel(new Level(2, 'easy', parse([
 // chop straight through or walk around via the side openings
 levelData.addLevel(new Level(3, 'medium', parse([
     '####################',
-    '#P  TT   C  TT    C#',
+    '#P  TT   W  TT    C#',
     '#   TT      TT     #',
     '##T####T######T##T##',
     '#   G     E    G   #',
@@ -92,13 +95,13 @@ levelData.addLevel(new Level(3, 'medium', parse([
     '#   G     C  G     #',
     '#  TTT      TT    X#',
     '####################',
-]), 'The Orchard', { theme: 'forest' }));
+]), 'The Orchard', { theme: 'forest', weaponReward: 'steelSword' }));
 
 // 4. The Quarry — boulders plug the wall gaps: every shortcut costs two
 // swings of the axe, every detour risks a patrol
 levelData.addLevel(new Level(4, 'medium', parse([
     '####################',
-    '#P   #  C  O  G   C#',
+    '#P   #  H  O  G   C#',
     '#    O     #       #',
     '## ###### ####O### #',
     '#  G   #     C   G #',
@@ -115,7 +118,7 @@ levelData.addLevel(new Level(5, 'medium', parse([
     '####################',
     '#P #  C    #      C#',
     '#  # ## ## #  ### ##',
-    '# G#  #  # #       #',
+    '# A#  #  # #       #',
     '#  ## # ###    B   #',
     '#     #            #',
     '# ###### ###   ### #',
@@ -128,7 +131,7 @@ levelData.addLevel(new Level(5, 'medium', parse([
 // hall carry the key to the next
 levelData.addLevel(new Level(6, 'hard', parse([
     '####################',
-    '#P   #  G   #  C  G#',
+    '#P   #  A   #  W  G#',
     '#  C #      #      #',
     '# G  #  E   #  ##  #',
     '#    D      D  ## X#',
@@ -137,14 +140,14 @@ levelData.addLevel(new Level(6, 'hard', parse([
     '# ## #      # ###  #',
     '#  G #   G  #  C   #',
     '####################',
-]), 'Twin Halls', { theme: 'snow' }));
+]), 'Twin Halls', { theme: 'snow', weaponReward: 'dreamBow' }));
 
 // 7. The Serpent — one long winding corridor walked in the dark: fog of
 // war hides what waits beyond the next bend. Gates of trees and boulders
 // plug the wall gaps.
 levelData.addLevel(new Level(7, 'hard', parse([
     '####################',
-    '#P  C      G      G#',
+    '#P  V      A      G#',
     '################## #',
     '#    G     C      T#',
     '#T##################',
@@ -159,7 +162,7 @@ levelData.addLevel(new Level(7, 'hard', parse([
 // a boss patrols the loot
 levelData.addLevel(new Level(8, 'hard', parse([
     '####################',
-    '#P   #   C  #     G#',
+    '#P   #   C  #     A#',
     '#  G #      #  C   #',
     '#### ## ## ## # ####',
     '#      G           #',
@@ -174,27 +177,27 @@ levelData.addLevel(new Level(8, 'hard', parse([
 // every chamber's guards carry the next key
 levelData.addLevel(new Level(9, 'expert', parse([
     '####################',
-    '#P  #C  G#   G# C  #',
+    '#P  #W  A#   G# M  #',
     '#   #    #    #    #',
-    '# G D  G D  E D  G #',
+    '# A D  G D  E D  A #',
     '#   #    #    #    #',
     '## ## ## # ## ## ###',
     '#C  #  G #  G #   G#',
     '#   #    #    #  ###',
     '# G #  C #  C #  X##',
     '####################',
-]), 'The Gauntlet', { theme: 'dungeon', fogOfWar: true }));
+]), 'The Gauntlet', { theme: 'dungeon', fogOfWar: true, weaponReward: 'moonlitQuiver' }));
 
 // 10. The Throne — the final boss waits in an inner sanctum behind a locked
 // door, with the exit at its back. Sneak past it or bring it down for glory.
 levelData.addLevel(new Level(10, 'expert', parse([
     '####################',
-    '#P   #     C    G  #',
+    '#P   #     C    A  #',
     '# G  # ##########  #',
     '#    # #      X##  #',
     '## # # #  B    ## C#',
     '#  # # #       ##  #',
-    '#  #   ####D##### G#',
+    '#  #   ####D##### A#',
     '#E ## G    C     ###',
     '#C     ##     G   T#',
     '####################',

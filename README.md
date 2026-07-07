@@ -14,11 +14,12 @@ Wandertrap is an exciting 2D top-down maze game that challenges players to navig
 
 - Engaging top-down maze gameplay with smooth, frame-based movement (diagonals included)
 - Ten distinct, themed levels (forest, desert, snow, dungeon) with increasing difficulty — all verified solvable by automated tests
-- Sword combat with an attack cooldown, guard hurt/death animations, and a final boss guarding the last exit
+- Hero weapon progression: Wooden Axe, Steel Sword, Dream Bow, and a Moonlit Quiver upgrade
+- Melee and ranged combat with attack cooldowns, arrows, lingering guard corpses, archers, Wardens, and a final boss guarding the last exit
 - Hidden explosive traps that arm on approach and damage player and guards alike
 - Four powerups — health, speed, strength, invincibility (timed effects shown in the HUD) — plus healing potions you carry between levels
 - Keys and locked doors gate the later exits; hidden traps can be disarmed with a well-timed pick
-- Sleep Thief orcs with line-of-sight detection that chase, attack, and sometimes drop useful items
+- Sleep Thief orcs with line-of-sight detection: melee guards chase, archers keep distance and fire arrows, and scarce drops make potions and arrows matter
 - Short story beats between levels, illustrated intro scenes, and optional generated narration
 - Pixel art graphics for a retro gaming feel, plus synthesized sound effects
 - Score tracking with a persistent local high score table
@@ -28,10 +29,12 @@ Wandertrap is an exciting 2D top-down maze game that challenges players to navig
 | Key | Action |
 | --- | --- |
 | Arrow keys | Move (hold for continuous movement) |
-| Space | Sword attack |
-| X | Axe — fells an obstacle in one swing |
+| Space | Attack with the selected weapon |
+| Tab / 1 / 2 / 3 | Cycle or select Wooden Axe / Steel Sword / Dream Bow |
+| X | Wooden Axe shortcut — fells an obstacle in one swing |
 | P | Pick — disarm an armed trap next to you |
 | U | Drink a healing potion |
+| I | Inventory and weapon recap |
 | Escape | Pause / back to menu |
 
 On touch devices an on-screen D-pad and action buttons appear automatically.

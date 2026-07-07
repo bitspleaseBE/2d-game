@@ -14,9 +14,9 @@
 
 import levelData from '../game/levels/level-data.js';
 
-const KNOWN = new Set(['#', ' ', 'P', 'X', 'T', 'O', 'G', 'B', 'C', 'E', 'D']);
+const KNOWN = new Set(['#', ' ', 'P', 'X', 'T', 'O', 'G', 'A', 'B', 'C', 'E', 'D', 'W', 'H', 'V', 'M']);
 // Cells the player can eventually occupy or clear out of the way
-const PASSABLE = new Set([' ', 'P', 'X', 'T', 'O', 'G', 'B', 'C', 'E', 'D']);
+const PASSABLE = new Set([' ', 'P', 'X', 'T', 'O', 'G', 'A', 'B', 'C', 'E', 'D', 'W', 'H', 'V', 'M']);
 
 let failures = 0;
 const fail = (level, message) => {
@@ -76,10 +76,15 @@ for (let number = 1; ; number++) {
   requireReachable('C', 'crystal');
   requireReachable('E', 'explosive');
   requireReachable('G', 'guard');
+  requireReachable('A', 'archer');
   requireReachable('B', 'boss');
+  requireReachable('W', 'weapon pedestal');
+  requireReachable('H', 'haste rune');
+  requireReachable('V', 'warding rune');
+  requireReachable('M', 'might rune');
 
   if (positionsOf('D').length > 0) {
-    const fighters = [...positionsOf('G'), ...positionsOf('B')]
+    const fighters = [...positionsOf('G'), ...positionsOf('A'), ...positionsOf('B')]
       .filter((p) => reachable.has(`${p.x},${p.y}`));
     if (fighters.length === 0) {
       fail(level, 'has a locked door but no reachable guard to drop the key');
