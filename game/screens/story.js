@@ -1,57 +1,55 @@
 import { theme, applyContainerStyles, styleButton } from '../utils/theme.js';
+import { introStoryBeats } from '../story-content.js';
+import { playNarration, stopNarration } from '../utils/narration.js';
 
 // Story screen
-export function showStoryScreen(onBack) {
+export function showStoryScreen(onBack, storyAssets = {}) {
     const container = document.getElementById('game-container');
     container.innerHTML = ''; // Clear previous content
 
     const storyScreen = document.createElement('div');
     storyScreen.id = 'story-screen';
 
-    // Remove book and pages
     const textContainer = document.createElement('div');
-    textContainer.id = 'text-container';
-    textContainer.style.textAlign = 'center';
+    textContainer.id = 'story-text-container';
+
+    const eyebrow = document.createElement('p');
+    eyebrow.textContent = 'Theo and the Dream-Shards';
+    eyebrow.style.margin = '0 0 12px';
+    eyebrow.style.letterSpacing = '3px';
+    eyebrow.style.textTransform = 'uppercase';
+    eyebrow.style.fontSize = '16px';
+
+    const paragraph = document.createElement('p');
+    paragraph.id = 'story-paragraph';
+    paragraph.style.margin = '0';
+
+    const counter = document.createElement('p');
+    counter.id = 'story-counter';
+    counter.style.margin = '18px 0 0';
+    counter.style.fontSize = '16px';
+    counter.style.opacity = '0.8';
+
+    textContainer.appendChild(eyebrow);
+    textContainer.appendChild(paragraph);
+    textContainer.appendChild(counter);
     storyScreen.appendChild(textContainer);
-
-    const paragraphs = [
-        "Meet Theo—a brilliant but clumsy game designer with a passion for crafting the most intricate fantasy campaigns.",
-        "One fateful evening, while putting the finishing touches on his masterpiece labyrinth, Theo accidentally spills a can of energy drink onto his keyboard.",
-        "Sparks fly, screens flash, and before he can say \"critical hit,\" he's zapped into the very world he created!",
-        "Blinking in disbelief, Theo finds himself standing at the entrance of his own labyrinth, a sprawling maze filled with mind-bending puzzles, hidden traps, and mythical creatures.",
-        "But he's not alone in there.",
-        "His former friend-turned-rival, Max, a fellow gamer notorious for stealing ideas, has hacked into Theo's game to claim the labyrinth as his own.",
-        "The power surge pulled Max into the game too, but with a devious advantage—he now controls the Minotaur, the maze's most formidable guardian.",
-        "Max taunts Theo through ethereal echoes: \"Good luck finding your way out, Theo! This maze is mine now, and the Minotaur is eager to meet you!\"",
-        "Determined to reclaim his creation and return to the real world, Theo must navigate through multiple levels of his labyrinth, solving his own riddles and overcoming challenges he designed to be unbeatable.",
-        "Along the way, he'll encounter quirky NPCs, unexpected allies, and maybe even a friendly dragon with a knack for sarcasm.",
-        "Can Theo outsmart Max, defeat the Minotaur, and escape the labyrinth?",
-        "The twists and turns of his own imagination stand between him and freedom.",
-        "Grab your wits, summon your courage, and step into the maze—an epic adventure awaits!"
-    ];
-
-    paragraphs.forEach((text, index) => {
-        const paragraph = document.createElement('p');
-        paragraph.innerHTML = text;
-        paragraph.style.opacity = 0;
-        paragraph.style.display = 'none';
-        paragraph.style.transition = 'opacity 1s';
-        paragraph.style.fontSize = '28px';
-        textContainer.appendChild(paragraph);
-    });
 
     const buttonContainer = document.createElement('div');
     buttonContainer.style.textAlign = 'center';
-    buttonContainer.style.marginTop = '20px';
+    buttonContainer.style.position = 'absolute';
+    buttonContainer.style.left = '0';
+    buttonContainer.style.right = '0';
+    buttonContainer.style.bottom = '28px';
 
     const nextButton = document.createElement('button');
     nextButton.textContent = 'Next';
-    nextButton.onclick = showNextParagraph;
+    nextButton.onclick = showNextScene;
     buttonContainer.appendChild(nextButton);
 
     const skipButton = document.createElement('button');
     skipButton.textContent = 'Skip';
-    skipButton.onclick = onBack;
+    skipButton.onclick = closeStory;
     buttonContainer.appendChild(skipButton);
 
     storyScreen.appendChild(buttonContainer);
@@ -59,50 +57,91 @@ export function showStoryScreen(onBack) {
 
     // Apply styles
     applyContainerStyles(container);
+    container.style.padding = '0';
     styleStoryScreen(storyScreen, textContainer);
     styleButton(nextButton, theme.colors.primary);
     styleButton(skipButton, theme.colors.primary);
 
-    let currentParagraph = 0;
-    function showNextParagraph() {
-        if (currentParagraph < paragraphs.length) {
-            if (currentParagraph > 0) {
-                textContainer.children[currentParagraph - 1].style.opacity = 0;
-                textContainer.children[currentParagraph - 1].style.display = 'none';
-            }
-            textContainer.children[currentParagraph].style.display = 'block';
-            textContainer.children[currentParagraph].style.opacity = 1;
-            currentParagraph++;
-        }
+    let currentScene = -1;
+    let autoAdvanceTimer = null;
+    let closed = false;
+
+    function closeStory() {
+        closed = true;
+        clearTimeout(autoAdvanceTimer);
+        stopNarration();
+        onBack();
     }
 
-    // Automatically show paragraphs with a delay
-    function autoShowParagraphs() {
-        if (currentParagraph < paragraphs.length) {
-            if (currentParagraph > 0) {
-                textContainer.children[currentParagraph - 1].style.opacity = 0;
-                textContainer.children[currentParagraph - 1].style.display = 'none';
-            }
-            textContainer.children[currentParagraph].style.display = 'block';
-            textContainer.children[currentParagraph].style.opacity = 1;
-            currentParagraph++;
-            setTimeout(autoShowParagraphs, 5000); // Adjust delay as needed
-        }
+    function scheduleFallbackAdvance() {
+        clearTimeout(autoAdvanceTimer);
+        autoAdvanceTimer = setTimeout(() => {
+            if (!closed && currentScene < introStoryBeats.length - 1) showNextScene();
+        }, 6500);
     }
 
-    autoShowParagraphs();
+    function showScene(index) {
+        const scene = introStoryBeats[index];
+        currentScene = index;
+        clearTimeout(autoAdvanceTimer);
+
+        const image = storyAssets[scene.imageKey];
+        storyScreen.style.opacity = '0';
+        setTimeout(() => {
+            storyScreen.style.backgroundImage = image
+                ? `linear-gradient(rgba(11, 8, 22, 0.25), rgba(11, 8, 22, 0.45)), url("${image.src}")`
+                : 'radial-gradient(circle at center, #2e1f56 0%, #110914 60%, #050306 100%)';
+            paragraph.textContent = scene.text;
+            counter.textContent = `${index + 1} / ${introStoryBeats.length}`;
+            nextButton.textContent = index === introStoryBeats.length - 1 ? 'Back' : 'Next';
+            storyScreen.style.opacity = '1';
+        }, 120);
+
+        const sceneIndex = index;
+        const isNarrating = playNarration(scene.audioId, {
+            onEnded: () => {
+                if (!closed && currentScene === sceneIndex && currentScene < introStoryBeats.length - 1) {
+                    autoAdvanceTimer = setTimeout(showNextScene, 700);
+                }
+            },
+            onError: () => {
+                if (!closed && currentScene === sceneIndex) scheduleFallbackAdvance();
+            },
+        });
+        if (!isNarrating) scheduleFallbackAdvance();
+    }
+
+    function showNextScene() {
+        if (currentScene >= introStoryBeats.length - 1) {
+            closeStory();
+            return;
+        }
+        showScene(currentScene + 1);
+    }
+
+    showNextScene();
 }
 
 function styleStoryScreen(storyScreen, textContainer) {
     storyScreen.style.position = 'relative';
     storyScreen.style.height = '100vh';
+    storyScreen.style.overflow = 'hidden';
+    storyScreen.style.backgroundSize = 'cover';
+    storyScreen.style.backgroundPosition = 'center';
+    storyScreen.style.transition = 'opacity 0.5s ease';
 
-    textContainer.style.margin = '50px auto';
-    textContainer.style.height = '200px';
-    textContainer.style.width = '70%';
-    textContainer.style.backgroundColor = theme.colors.primary;
+    textContainer.style.position = 'absolute';
+    textContainer.style.left = '50%';
+    textContainer.style.bottom = '140px';
+    textContainer.style.transform = 'translateX(-50%)';
+    textContainer.style.width = 'min(880px, 78vw)';
+    textContainer.style.background = 'linear-gradient(180deg, rgba(12, 9, 18, 0.86), rgba(37, 20, 11, 0.9))';
     textContainer.style.color = theme.colors.text;
-    textContainer.style.padding = '20px';
-    textContainer.style.boxShadow = '0 0 10px rgba(0, 0, 0, 0.5)';
-    textContainer.style.borderRadius = '10px';
+    textContainer.style.padding = '28px 36px';
+    textContainer.style.boxShadow = '0 0 35px rgba(0, 0, 0, 0.7)';
+    textContainer.style.border = '2px solid rgba(212, 175, 55, 0.75)';
+    textContainer.style.borderRadius = '14px';
+    textContainer.style.textAlign = 'center';
+    textContainer.style.fontSize = '30px';
+    textContainer.style.lineHeight = '1.35';
 }

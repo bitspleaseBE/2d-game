@@ -48,6 +48,16 @@ const GUARD_ASSET_URLS = {
   orc3_Run_Attack: new URL("../assets/images/enemies/orc3/orc3_run_attack_full.png", import.meta.url),
   orc3_Walk: new URL("../assets/images/enemies/orc3/orc3_walk_full.png", import.meta.url),
   orc3_Walk_Attack: new URL("../assets/images/enemies/orc3/orc3_walk_attack_full.png", import.meta.url),
+
+  // ORC 4
+  orc4_Attack: new URL("../assets/images/enemies/orc4/orc4_attack_full.png", import.meta.url),
+  orc4_Death: new URL("../assets/images/enemies/orc4/orc4_death_full.png", import.meta.url),
+  orc4_Hurt: new URL("../assets/images/enemies/orc4/orc4_hurt_full.png", import.meta.url),
+  orc4_Idle: new URL("../assets/images/enemies/orc4/orc4_idle_full.png", import.meta.url),
+  orc4_Run: new URL("../assets/images/enemies/orc4/orc4_run_full.png", import.meta.url),
+  orc4_Run_Attack: new URL("../assets/images/enemies/orc4/orc4_run_attack_full.png", import.meta.url),
+  orc4_Walk: new URL("../assets/images/enemies/orc4/orc4_walk_full.png", import.meta.url),
+  orc4_Walk_Attack: new URL("../assets/images/enemies/orc4/orc4_walk_attack_full.png", import.meta.url),
 };
 
 const LEVEL_ASSET_URLS = {
@@ -63,6 +73,12 @@ const LEVEL_ASSET_URLS = {
   sandRuin: new URL("../assets/images/exit/Sand_ruins3.png", import.meta.url),
   snowRuin: new URL("../assets/images/exit/Snow_ruins3.png", import.meta.url),
   yellowRuin: new URL("../assets/images/generated/exit_ruin.png", import.meta.url),
+  forestFloor: new URL("../assets/images/themes/forest/floor.png", import.meta.url),
+  forestWall: new URL("../assets/images/themes/forest/wall.png", import.meta.url),
+  forestTree1: new URL("../assets/images/themes/forest/tree_1.png", import.meta.url),
+  forestTree2: new URL("../assets/images/themes/forest/tree_2.png", import.meta.url),
+  forestBoulder: new URL("../assets/images/themes/forest/boulder.png", import.meta.url),
+  forestExit: new URL("../assets/images/themes/forest/exit.png", import.meta.url),
   desertFloor: new URL("../assets/images/themes/desert/floor.png", import.meta.url),
   desertWall: new URL("../assets/images/themes/desert/wall.png", import.meta.url),
   desertTree1: new URL("../assets/images/themes/desert/tree_1.png", import.meta.url),
@@ -103,6 +119,15 @@ const POWERUP_ASSET_URLS = {
   yellowCrystal: new URL("../assets/images/powerups/Yellow_crystal2.png", import.meta.url),
 };
 
+const STORY_ASSET_URLS = {
+  introBedroom: new URL("../assets/images/story/intro_bedroom.png", import.meta.url),
+  introDoorway: new URL("../assets/images/story/intro_doorway.png", import.meta.url),
+  introOrcs: new URL("../assets/images/story/intro_orcs.png", import.meta.url),
+  introThrone: new URL("../assets/images/story/intro_throne.png", import.meta.url),
+  introStepForward: new URL("../assets/images/story/intro_step_forward.png", import.meta.url),
+  endingDawn: new URL("../assets/images/story/ending_dawn.png", import.meta.url),
+};
+
 // Total number of images the splash screen progress bar should expect.
 // Derived from the URL maps so it can never drift out of sync with the
 // actual asset lists (which previously caused progress above 100%).
@@ -113,6 +138,7 @@ export function getTotalAssetCount() {
     LEVEL_ASSET_URLS,
     ITEM_ASSET_URLS,
     POWERUP_ASSET_URLS,
+    STORY_ASSET_URLS,
   ].reduce((total, urls) => total + Object.keys(urls).length, 0);
 }
 
@@ -168,4 +194,9 @@ export async function loadItemAssets(onProgress) {
 export async function loadPowerUpsAssets(onProgress) {
   console.log("Loading powerups assets...");
   return loadImages(POWERUP_ASSET_URLS, onProgress);
+}
+
+export async function loadStoryAssets(onProgress) {
+  console.log("Loading story assets...");
+  return loadImages(STORY_ASSET_URLS, onProgress);
 }

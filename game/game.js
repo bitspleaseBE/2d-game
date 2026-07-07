@@ -10,6 +10,7 @@ import {
   entitySettings,
 } from "./utils/settings.js";
 import { sfx } from "./utils/sound.js";
+import { playNarration, stopNarration } from "./utils/narration.js";
 import Player from "./entities/player.js";
 import levelData from "./levels/level-data.js";
 import { clearContainer } from "./utils/canvas.js";
@@ -78,6 +79,7 @@ export class Game {
     this.fogEnabled = false;
     this.explored = [];
     this.fogCanvas = null;
+    this.levelIntro = null;
   }
 
   initializeBoard() {
@@ -190,6 +192,10 @@ export class Game {
 
     window.addEventListener("keydown", (event) => {
       if (!this.started || this.paused || this.isGameOver) return;
+      if (this.levelIntro) {
+        event.preventDefault();
+        this.dismissLevelIntro();
+      }
       // Stop the space bar (and arrow keys) from scrolling the page
       if (event.key === " " || event.key.startsWith("Arrow")) {
         event.preventDefault();
@@ -478,13 +484,13 @@ export class Game {
               this.explosives.push(new Explosive(position.x, position.y));
               break;
             case "G":
-              const randomOrc = randomInt(1, 3);
+              const randomOrc = randomInt(1, 4);
               this.guards.push(new Guard(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets));
               break;
             case "B":
               // A boss: bigger, tougher and harder-hitting than a guard
               this.guards.push(
-                new Guard(position.x, position.y, `orc${randomInt(1, 3)}`, this.assets.guardAssets, { boss: true })
+                new Guard(position.x, position.y, `orc${randomInt(1, 4)}`, this.assets.guardAssets, { boss: true })
               );
               break;
             case "O":
@@ -539,6 +545,24 @@ export class Game {
     if (!this.notifications.some((n) => n.text === text)) this.notify(text);
   }
 
+  showLevelIntro({ narrate = true } = {}) {
+    const level = levelData.getLevel(this.currentLevel);
+    if (!level) return;
+    this.levelIntro = {
+      name: level.name,
+      number: level.number,
+      story: level.story,
+      msLeft: gameSettings.levelIntroDurationMs,
+    };
+    if (narrate) playNarration(level.audioId);
+  }
+
+  dismissLevelIntro() {
+    if (!this.levelIntro) return;
+    this.levelIntro = null;
+    stopNarration();
+  }
+
   // Mark every cell within the light radius of the player as explored
   revealAroundPlayer() {
     if (!this.fogEnabled) return;
@@ -567,6 +591,11 @@ export class Game {
   }
 
   updateGameState(deltaMs = 1000 / 60) {
+    if (this.levelIntro) {
+      this.levelIntro.msLeft -= deltaMs;
+      if (this.levelIntro.msLeft <= 0) this.dismissLevelIntro();
+      return;
+    }
     this.attackCooldownMs = Math.max(0, this.attackCooldownMs - deltaMs);
     this.applyMovementInput(deltaMs);
     this.revealAroundPlayer();
@@ -763,14 +792,16 @@ export class Game {
     this.score += gameSettings.scoreIncrement;
     sfx.levelComplete();
 
+    const completedLevel = levelData.getLevel(this.currentLevel);
     const nextLevel = levelData.getLevel(this.currentLevel + 1);
     if (nextLevel) {
       this.currentLevel += 1;
       this.initializeBoard();
       this.initializePlayer();
       this.initializeEntities();
+      this.showLevelIntro({ narrate: false });
       this.pause();
-      this.onLevelCompleted(this.score);
+      this.onLevelCompleted(this.score, completedLevel, nextLevel);
     } else {
       // Last level cleared: the player won the game
       this.isGameOver = true;
@@ -821,6 +852,66 @@ export class Game {
     // "equipped") stay visible above it
     if (this.inventoryOpen) this.drawInventory();
     this.drawNotifications();
+    if (this.levelIntro) this.drawLevelIntro();
+  }
+
+  drawLevelIntro() {
+    const ctx = this.context;
+    const panelWidth = 760;
+    const panelHeight = 250;
+    const panelX = (this.canvas.width - panelWidth) / 2;
+    const panelY = (this.canvas.height - panelHeight) / 2;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(5, 4, 10, 0.68)";
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    ctx.fillStyle = "rgba(18, 12, 24, 0.92)";
+    ctx.strokeStyle = "#ffd54f";
+    ctx.lineWidth = 2;
+    ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+    ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#80d8ff";
+    ctx.font = "bold 18px monospace";
+    ctx.fillText(`Dream ${this.levelIntro.number}`, this.canvas.width / 2, panelY + 42);
+
+    ctx.fillStyle = "#ffd54f";
+    ctx.font = "bold 34px monospace";
+    ctx.fillText(this.levelIntro.name, this.canvas.width / 2, panelY + 84);
+
+    ctx.fillStyle = "#f8e7a1";
+    ctx.font = "20px monospace";
+    this.drawWrappedText(this.levelIntro.story, this.canvas.width / 2, panelY + 136, panelWidth - 90, 28);
+
+    ctx.fillStyle = "rgba(255, 255, 255, 0.68)";
+    ctx.font = "14px monospace";
+    ctx.fillText("Press any key to begin", this.canvas.width / 2, panelY + panelHeight - 34);
+    ctx.restore();
+  }
+
+  drawWrappedText(text, centerX, y, maxWidth, lineHeight) {
+    const words = text.split(" ");
+    let line = "";
+    const lines = [];
+
+    words.forEach((word) => {
+      const testLine = line ? `${line} ${word}` : word;
+      if (this.context.measureText(testLine).width > maxWidth && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = testLine;
+      }
+    });
+    if (line) lines.push(line);
+
+    const startY = y - ((lines.length - 1) * lineHeight) / 2;
+    lines.forEach((wrappedLine, index) => {
+      this.context.fillText(wrappedLine, centerX, startY + index * lineHeight);
+    });
   }
 
   drawNotifications() {
@@ -1161,6 +1252,7 @@ export class Game {
     this.initializeBoard();
     this.initializePlayer();
     this.initializeEntities();
+    this.showLevelIntro();
     this.gameLoop();
   }
 
@@ -1171,6 +1263,10 @@ export class Game {
     clearContainer(this.container);
     this.container.appendChild(this.canvas);
     if (this.rafId) cancelAnimationFrame(this.rafId);
+    if (this.levelIntro) {
+      const level = levelData.getLevel(this.currentLevel);
+      playNarration(level && level.audioId);
+    }
     this.gameLoop();
   }
 
@@ -1185,6 +1281,7 @@ export class Game {
   // independently of requestAnimationFrame, then render the result
   step(frames = 1, deltaMs = 1000 / 60) {
     if (!this.player) return;
+    if (this.levelIntro) this.dismissLevelIntro();
     for (let i = 0; i < frames; i++) {
       if (this.isGameOver) break;
       this.updateGameState(deltaMs);
@@ -1210,6 +1307,7 @@ export class Game {
     this.initializeBoard();
     this.initializePlayer();
     this.initializeEntities();
+    this.showLevelIntro();
   }
 }
 

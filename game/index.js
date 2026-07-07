@@ -1,5 +1,5 @@
 import { Game } from './game.js';
-import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, loadItemAssets, getTotalAssetCount } from './assets.js';
+import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, loadItemAssets, loadStoryAssets, getTotalAssetCount } from './assets.js';
 import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.js';
 import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
@@ -51,11 +51,15 @@ class GameEngine {
             const guardAssets = await loadGuardAssets(onProgress);
             const powerupsAssets = await loadPowerUpsAssets(onProgress);
             const itemAssets = await loadItemAssets(onProgress);
+            const storyAssets = await loadStoryAssets(onProgress);
 
-            this.assets = { playerAssets, levelAssets, guardAssets, powerupsAssets, itemAssets };
+            this.assets = { playerAssets, levelAssets, guardAssets, powerupsAssets, itemAssets, storyAssets };
             this.game = new Game(this.container.id, this.canvas, this.context, this.assets, {
                 onGameOver: () => this.showScreen('gameOver'),
-                onLevelCompleted: () => this.showScreen('levelCompleted'),
+                onLevelCompleted: (score, completedLevel, nextLevel) => {
+                    this.levelCompletion = { score, completedLevel, nextLevel };
+                    this.showScreen('levelCompleted');
+                },
                 onGameWon: () => this.showScreen('gameWon'),
             });
             this.showScreen('welcome');
@@ -97,7 +101,7 @@ class GameEngine {
                 );
                 break;
             case 'story':
-                showStoryScreen(() => this.showScreen('welcome'));
+                showStoryScreen(() => this.showScreen('welcome'), this.assets.storyAssets);
                 break;
             case 'game':
                 console.log('Starting game...');
@@ -117,13 +121,18 @@ class GameEngine {
                 showGameOverScreen(this.game.score, () => this.startGame(), () => this.showScreen('welcome'));
                 break;
             case 'gameWon':
-                showGameWonScreen(this.game.score, () => this.startGame(), () => this.showScreen('welcome'));
+                showGameWonScreen(this.game.score, () => this.startGame(), () => this.showScreen('welcome'), this.assets.storyAssets);
                 break;
             case 'highScore':
                 showHighScoreScreen(() => this.showScreen('welcome'));
                 break;
             case 'levelCompleted':
-                showLevelCompletedScreen(this.game.score, () => this.startGame(), () => this.showScreen('welcome'));
+                showLevelCompletedScreen(
+                    this.game.score,
+                    () => this.startGame(),
+                    () => this.showScreen('welcome'),
+                    this.levelCompletion
+                );
                 break;
             default:
                 console.error('Unknown screen:', screen);

@@ -13,6 +13,8 @@
 // be chopped down (2 hits), so they make soft walls: a shortcut for players
 // willing to stop and swing, a detour for those who keep running.
 
+import { getLevelStoryBeat } from '../story-content.js';
+
 class LevelData {
     constructor() {
         this.levels = [];
@@ -29,10 +31,13 @@ class LevelData {
 
 class Level {
     constructor(number, difficulty, layout, name, options = {}) {
+        const storyBeat = getLevelStoryBeat(number);
         this.number = number;
         this.difficulty = difficulty;
         this.layout = layout;
         this.name = name;
+        this.story = options.story || (storyBeat && storyBeat.story) || '';
+        this.audioId = options.audioId || (storyBeat && storyBeat.audioId) || '';
         this.theme = options.theme || 'forest';
         // With fog of war on, only explored parts of the map are visible
         this.fogOfWar = Boolean(options.fogOfWar);

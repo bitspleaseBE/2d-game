@@ -6,11 +6,11 @@ export const DEFAULT_THEME = "forest";
 export const THEMES = {
   forest: {
     name: "Forest",
-    floor: "grassTile",
-    wall: "wall",
-    trees: ["palm1", "palm2", "tree1", "tree2", "tree3"],
-    boulder: "boulder",
-    exit: "yellowRuin",
+    floor: "forestFloor",
+    wall: "forestWall",
+    trees: ["forestTree1", "forestTree2"],
+    boulder: "forestBoulder",
+    exit: "forestExit",
     floorFallback: "#2f7d3b",
   },
   desert: {

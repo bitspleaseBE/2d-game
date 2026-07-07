@@ -629,16 +629,25 @@ class GameEngine {
             const guardAssets = await (0, _assetsJs.loadGuardAssets)(onProgress);
             const powerupsAssets = await (0, _assetsJs.loadPowerUpsAssets)(onProgress);
             const itemAssets = await (0, _assetsJs.loadItemAssets)(onProgress);
+            const storyAssets = await (0, _assetsJs.loadStoryAssets)(onProgress);
             this.assets = {
                 playerAssets,
                 levelAssets,
                 guardAssets,
                 powerupsAssets,
-                itemAssets
+                itemAssets,
+                storyAssets
             };
             this.game = new (0, _gameJs.Game)(this.container.id, this.canvas, this.context, this.assets, {
                 onGameOver: ()=>this.showScreen("gameOver"),
-                onLevelCompleted: ()=>this.showScreen("levelCompleted"),
+                onLevelCompleted: (score, completedLevel, nextLevel)=>{
+                    this.levelCompletion = {
+                        score,
+                        completedLevel,
+                        nextLevel
+                    };
+                    this.showScreen("levelCompleted");
+                },
                 onGameWon: ()=>this.showScreen("gameWon")
             });
             this.showScreen("welcome");
@@ -670,7 +679,7 @@ class GameEngine {
                 (0, _indexJs.showWelcomeScreen)(()=>this.startGame(), this.game && this.game.started ? ()=>this.continueGame() : null, ()=>this.highScore(), ()=>this.gameOver(), ()=>this.story());
                 break;
             case "story":
-                (0, _indexJs.showStoryScreen)(()=>this.showScreen("welcome"));
+                (0, _indexJs.showStoryScreen)(()=>this.showScreen("welcome"), this.assets.storyAssets);
                 break;
             case "game":
                 console.log("Starting game...");
@@ -687,13 +696,13 @@ class GameEngine {
                 (0, _indexJs.showGameOverScreen)(this.game.score, ()=>this.startGame(), ()=>this.showScreen("welcome"));
                 break;
             case "gameWon":
-                (0, _indexJs.showGameWonScreen)(this.game.score, ()=>this.startGame(), ()=>this.showScreen("welcome"));
+                (0, _indexJs.showGameWonScreen)(this.game.score, ()=>this.startGame(), ()=>this.showScreen("welcome"), this.assets.storyAssets);
                 break;
             case "highScore":
                 (0, _indexJs.showHighScoreScreen)(()=>this.showScreen("welcome"));
                 break;
             case "levelCompleted":
-                (0, _indexJs.showLevelCompletedScreen)(this.game.score, ()=>this.startGame(), ()=>this.showScreen("welcome"));
+                (0, _indexJs.showLevelCompletedScreen)(this.game.score, ()=>this.startGame(), ()=>this.showScreen("welcome"), this.levelCompletion);
                 break;
             default:
                 console.error("Unknown screen:", screen);
@@ -741,6 +750,7 @@ parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "Game", ()=>Game);
 var _settingsJs = require("./utils/settings.js");
 var _soundJs = require("./utils/sound.js");
+var _narrationJs = require("./utils/narration.js");
 var _playerJs = require("./entities/player.js");
 var _playerJsDefault = parcelHelpers.interopDefault(_playerJs);
 var _levelDataJs = require("./levels/level-data.js");
@@ -816,6 +826,7 @@ class Game {
         this.fogEnabled = false;
         this.explored = [];
         this.fogCanvas = null;
+        this.levelIntro = null;
     }
     initializeBoard() {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
@@ -891,6 +902,10 @@ class Game {
         };
         window.addEventListener("keydown", (event)=>{
             if (!this.started || this.paused || this.isGameOver) return;
+            if (this.levelIntro) {
+                event.preventDefault();
+                this.dismissLevelIntro();
+            }
             // Stop the space bar (and arrow keys) from scrolling the page
             if (event.key === " " || event.key.startsWith("Arrow")) event.preventDefault();
             if (event.key === (0, _settingsJs.controlSettings).inventory) {
@@ -1129,12 +1144,12 @@ class Game {
                         this.explosives.push(new (0, _explosiveJsDefault.default)(position.x, position.y));
                         break;
                     case "G":
-                        const randomOrc = (0, _rngJs.randomInt)(1, 3);
+                        const randomOrc = (0, _rngJs.randomInt)(1, 4);
                         this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${randomOrc}`, this.assets.guardAssets));
                         break;
                     case "B":
                         // A boss: bigger, tougher and harder-hitting than a guard
-                        this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${(0, _rngJs.randomInt)(1, 3)}`, this.assets.guardAssets, {
+                        this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${(0, _rngJs.randomInt)(1, 4)}`, this.assets.guardAssets, {
                             boss: true
                         }));
                         break;
@@ -1177,6 +1192,22 @@ class Game {
     notifyOnce(text) {
         if (!this.notifications.some((n)=>n.text === text)) this.notify(text);
     }
+    showLevelIntro({ narrate = true } = {}) {
+        const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
+        if (!level) return;
+        this.levelIntro = {
+            name: level.name,
+            number: level.number,
+            story: level.story,
+            msLeft: (0, _settingsJs.gameSettings).levelIntroDurationMs
+        };
+        if (narrate) (0, _narrationJs.playNarration)(level.audioId);
+    }
+    dismissLevelIntro() {
+        if (!this.levelIntro) return;
+        this.levelIntro = null;
+        (0, _narrationJs.stopNarration)();
+    }
     // Mark every cell within the light radius of the player as explored
     revealAroundPlayer() {
         if (!this.fogEnabled) return;
@@ -1200,6 +1231,11 @@ class Game {
         return Boolean(this.explored[row] && this.explored[row][col]);
     }
     updateGameState(deltaMs = 1000 / 60) {
+        if (this.levelIntro) {
+            this.levelIntro.msLeft -= deltaMs;
+            if (this.levelIntro.msLeft <= 0) this.dismissLevelIntro();
+            return;
+        }
         this.attackCooldownMs = Math.max(0, this.attackCooldownMs - deltaMs);
         this.applyMovementInput(deltaMs);
         this.revealAroundPlayer();
@@ -1361,14 +1397,18 @@ class Game {
         if (!this.isLevelComplete()) return;
         this.score += (0, _settingsJs.gameSettings).scoreIncrement;
         (0, _soundJs.sfx).levelComplete();
+        const completedLevel = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
         const nextLevel = (0, _levelDataJsDefault.default).getLevel(this.currentLevel + 1);
         if (nextLevel) {
             this.currentLevel += 1;
             this.initializeBoard();
             this.initializePlayer();
             this.initializeEntities();
+            this.showLevelIntro({
+                narrate: false
+            });
             this.pause();
-            this.onLevelCompleted(this.score);
+            this.onLevelCompleted(this.score, completedLevel, nextLevel);
         } else {
             // Last level cleared: the player won the game
             this.isGameOver = true;
@@ -1407,6 +1447,54 @@ class Game {
         // "equipped") stay visible above it
         if (this.inventoryOpen) this.drawInventory();
         this.drawNotifications();
+        if (this.levelIntro) this.drawLevelIntro();
+    }
+    drawLevelIntro() {
+        const ctx = this.context;
+        const panelWidth = 760;
+        const panelHeight = 250;
+        const panelX = (this.canvas.width - panelWidth) / 2;
+        const panelY = (this.canvas.height - panelHeight) / 2;
+        ctx.save();
+        ctx.fillStyle = "rgba(5, 4, 10, 0.68)";
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        ctx.fillStyle = "rgba(18, 12, 24, 0.92)";
+        ctx.strokeStyle = "#ffd54f";
+        ctx.lineWidth = 2;
+        ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+        ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#80d8ff";
+        ctx.font = "bold 18px monospace";
+        ctx.fillText(`Dream ${this.levelIntro.number}`, this.canvas.width / 2, panelY + 42);
+        ctx.fillStyle = "#ffd54f";
+        ctx.font = "bold 34px monospace";
+        ctx.fillText(this.levelIntro.name, this.canvas.width / 2, panelY + 84);
+        ctx.fillStyle = "#f8e7a1";
+        ctx.font = "20px monospace";
+        this.drawWrappedText(this.levelIntro.story, this.canvas.width / 2, panelY + 136, panelWidth - 90, 28);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.68)";
+        ctx.font = "14px monospace";
+        ctx.fillText("Press any key to begin", this.canvas.width / 2, panelY + panelHeight - 34);
+        ctx.restore();
+    }
+    drawWrappedText(text, centerX, y, maxWidth, lineHeight) {
+        const words = text.split(" ");
+        let line = "";
+        const lines = [];
+        words.forEach((word)=>{
+            const testLine = line ? `${line} ${word}` : word;
+            if (this.context.measureText(testLine).width > maxWidth && line) {
+                lines.push(line);
+                line = word;
+            } else line = testLine;
+        });
+        if (line) lines.push(line);
+        const startY = y - (lines.length - 1) * lineHeight / 2;
+        lines.forEach((wrappedLine, index)=>{
+            this.context.fillText(wrappedLine, centerX, startY + index * lineHeight);
+        });
     }
     drawNotifications() {
         const ctx = this.context;
@@ -1687,6 +1775,7 @@ class Game {
         this.initializeBoard();
         this.initializePlayer();
         this.initializeEntities();
+        this.showLevelIntro();
         this.gameLoop();
     }
     continue() {
@@ -1696,6 +1785,10 @@ class Game {
         (0, _canvasJs.clearContainer)(this.container);
         this.container.appendChild(this.canvas);
         if (this.rafId) cancelAnimationFrame(this.rafId);
+        if (this.levelIntro) {
+            const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
+            (0, _narrationJs.playNarration)(level && level.audioId);
+        }
         this.gameLoop();
     }
     // ---------------------------------------------------------------------
@@ -1708,6 +1801,7 @@ class Game {
     // independently of requestAnimationFrame, then render the result
     step(frames = 1, deltaMs = 1000 / 60) {
         if (!this.player) return;
+        if (this.levelIntro) this.dismissLevelIntro();
         for(let i = 0; i < frames; i++){
             if (this.isGameOver) break;
             this.updateGameState(deltaMs);
@@ -1730,11 +1824,12 @@ class Game {
         this.initializeBoard();
         this.initializePlayer();
         this.initializeEntities();
+        this.showLevelIntro();
     }
 }
 exports.default = Game;
 
-},{"./utils/settings.js":"hBndc","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","./utils/sound.js":"6QCfZ","./assets/theme-manifest.js":"d5R3E"}],"hBndc":[function(require,module,exports) {
+},{"./utils/settings.js":"hBndc","./utils/sound.js":"6QCfZ","./utils/narration.js":"402l2","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./items.js":"8gP9P","./assets/theme-manifest.js":"d5R3E","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
 // Game settings and configurations
 // - This file contains global settings and configurations for the game
 // - These settings can be adjusted to change the game's behavior and appearance
@@ -1768,7 +1863,8 @@ const gameSettings = {
     initialLevel: 1,
     maxLevels: 10,
     scoreIncrement: 100,
-    disarmScore: 50
+    disarmScore: 50,
+    levelIntroDurationMs: 5200
 };
 const powerupSettings = {
     healAmount: 25,
@@ -1860,7 +1956,266 @@ exports.export = function(dest, destName, get) {
     });
 };
 
-},{}],"1uqza":[function(require,module,exports) {
+},{}],"6QCfZ":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "sfx", ()=>sfx);
+var _settingsJs = require("./settings.js");
+// Tiny synthesized sound effects via the Web Audio API — no audio assets
+// needed. The AudioContext is created lazily on the first sound, which always
+// happens after a user gesture (a key press or button click), so autoplay
+// policies never block it. Every call is wrapped so a missing/blocked audio
+// backend can never break the game.
+let ctx = null;
+function getContext() {
+    if ((0, _settingsJs.soundSettings).mute) return null;
+    try {
+        if (!ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return null;
+            ctx = new AudioCtx();
+        }
+        if (ctx.state === "suspended") ctx.resume().catch(()=>{});
+        return ctx;
+    } catch  {
+        return null;
+    }
+}
+// Play a simple tone: oscillator + exponential decay envelope
+function tone({ type = "square", from = 440, to = from, duration = 0.1, volume = 0.3, delay = 0 }) {
+    const audio = getContext();
+    if (!audio) return;
+    try {
+        const t0 = audio.currentTime + delay;
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(from, t0);
+        osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + duration);
+        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        osc.connect(gain).connect(audio.destination);
+        osc.start(t0);
+        osc.stop(t0 + duration);
+    } catch  {
+    // Audio is best-effort; never let it break gameplay
+    }
+}
+// A burst of filtered noise, for impacts and explosions
+function noise({ duration = 0.3, volume = 0.4, delay = 0 }) {
+    const audio = getContext();
+    if (!audio) return;
+    try {
+        const t0 = audio.currentTime + delay;
+        const buffer = audio.createBuffer(1, audio.sampleRate * duration, audio.sampleRate);
+        const data = buffer.getChannelData(0);
+        for(let i = 0; i < data.length; i++)data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+        const src = audio.createBufferSource();
+        src.buffer = buffer;
+        const gain = audio.createGain();
+        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        src.connect(gain).connect(audio.destination);
+        src.start(t0);
+    } catch  {
+    // best-effort
+    }
+}
+const sfx = {
+    swing: ()=>tone({
+            type: "sawtooth",
+            from: 300,
+            to: 80,
+            duration: 0.08,
+            volume: 0.15
+        }),
+    hit: ()=>tone({
+            type: "square",
+            from: 150,
+            to: 60,
+            duration: 0.12,
+            volume: 0.25
+        }),
+    hurt: ()=>tone({
+            type: "triangle",
+            from: 220,
+            to: 110,
+            duration: 0.25,
+            volume: 0.3
+        }),
+    pickup: ()=>{
+        tone({
+            type: "sine",
+            from: 660,
+            to: 880,
+            duration: 0.08,
+            volume: 0.25
+        });
+        tone({
+            type: "sine",
+            from: 880,
+            to: 1320,
+            duration: 0.1,
+            volume: 0.2,
+            delay: 0.08
+        });
+    },
+    fuse: ()=>tone({
+            type: "square",
+            from: 1200,
+            to: 1200,
+            duration: 0.05,
+            volume: 0.08
+        }),
+    explosion: ()=>{
+        noise({
+            duration: 0.5,
+            volume: 0.5
+        });
+        tone({
+            type: "sine",
+            from: 100,
+            to: 30,
+            duration: 0.5,
+            volume: 0.4
+        });
+    },
+    guardDown: ()=>tone({
+            type: "sawtooth",
+            from: 200,
+            to: 40,
+            duration: 0.35,
+            volume: 0.3
+        }),
+    unlock: ()=>{
+        tone({
+            type: "square",
+            from: 500,
+            to: 500,
+            duration: 0.06,
+            volume: 0.2
+        });
+        tone({
+            type: "square",
+            from: 750,
+            to: 750,
+            duration: 0.1,
+            volume: 0.2,
+            delay: 0.08
+        });
+    },
+    disarm: ()=>tone({
+            type: "sine",
+            from: 900,
+            to: 300,
+            duration: 0.25,
+            volume: 0.2
+        }),
+    gulp: ()=>{
+        tone({
+            type: "sine",
+            from: 300,
+            to: 150,
+            duration: 0.1,
+            volume: 0.25
+        });
+        tone({
+            type: "sine",
+            from: 350,
+            to: 180,
+            duration: 0.12,
+            volume: 0.25,
+            delay: 0.12
+        });
+    },
+    chop: ()=>tone({
+            type: "square",
+            from: 120,
+            to: 50,
+            duration: 0.15,
+            volume: 0.3
+        }),
+    levelComplete: ()=>{
+        [
+            523,
+            659,
+            784,
+            1047
+        ].forEach((f, i)=>tone({
+                type: "triangle",
+                from: f,
+                to: f,
+                duration: 0.15,
+                volume: 0.25,
+                delay: i * 0.12
+            }));
+    },
+    gameOver: ()=>{
+        [
+            392,
+            330,
+            262,
+            196
+        ].forEach((f, i)=>tone({
+                type: "triangle",
+                from: f,
+                to: f,
+                duration: 0.25,
+                volume: 0.25,
+                delay: i * 0.2
+            }));
+    }
+};
+
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"402l2":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "stopNarration", ()=>stopNarration);
+parcelHelpers.export(exports, "playNarration", ()=>playNarration);
+var _settingsJs = require("./settings.js");
+// Narration is optional: if the ElevenLabs MP3s are missing, blocked by the
+// browser, or muted, story screens still advance using their text timers.
+let currentAudio = null;
+function narrationSrc(audioId) {
+    return `assets/audio/narration/${audioId}.mp3`;
+}
+function stopNarration() {
+    if (!currentAudio) return;
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
+}
+function playNarration(audioId, { onEnded, onError } = {}) {
+    stopNarration();
+    if ((0, _settingsJs.soundSettings).mute || !audioId || typeof Audio === "undefined") return false;
+    try {
+        const audio = new Audio(narrationSrc(audioId));
+        audio.volume = (0, _settingsJs.soundSettings).volume;
+        audio.addEventListener("ended", ()=>{
+            if (currentAudio === audio) currentAudio = null;
+            if (onEnded) onEnded();
+        }, {
+            once: true
+        });
+        audio.addEventListener("error", ()=>{
+            if (currentAudio === audio) currentAudio = null;
+            if (onError) onError();
+        }, {
+            once: true
+        });
+        currentAudio = audio;
+        audio.play().catch(()=>{
+            if (currentAudio === audio) currentAudio = null;
+            if (onError) onError();
+        });
+        return true;
+    } catch  {
+        currentAudio = null;
+        return false;
+    }
+}
+
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"1uqza":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -2678,6 +3033,7 @@ const guardDropPool = [
 // willing to stop and swing, a detour for those who keep running.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
+var _storyContentJs = require("../story-content.js");
 class LevelData {
     constructor(){
         this.levels = [];
@@ -2691,10 +3047,13 @@ class LevelData {
 }
 class Level {
     constructor(number, difficulty, layout, name, options = {}){
+        const storyBeat = (0, _storyContentJs.getLevelStoryBeat)(number);
         this.number = number;
         this.difficulty = difficulty;
         this.layout = layout;
         this.name = name;
+        this.story = options.story || storyBeat && storyBeat.story || "";
+        this.audioId = options.audioId || storyBeat && storyBeat.audioId || "";
         this.theme = options.theme || "forest";
         // With fog of war on, only explored parts of the map are visible
         this.fogOfWar = Boolean(options.fogOfWar);
@@ -2868,6 +3227,109 @@ levelData.addLevel(new Level(10, "expert", parse([
     fogOfWar: true
 }));
 exports.default = levelData;
+
+},{"../story-content.js":"2sig9","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2sig9":[function(require,module,exports) {
+// Shared narrative content for Wandertrap.
+// Keeping the words in one place keeps screens, level cards and narration aligned.
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "introStoryBeats", ()=>introStoryBeats);
+parcelHelpers.export(exports, "levelStoryBeats", ()=>levelStoryBeats);
+parcelHelpers.export(exports, "endingStoryBeat", ()=>endingStoryBeat);
+parcelHelpers.export(exports, "getLevelStoryBeat", ()=>getLevelStoryBeat);
+const introStoryBeats = [
+    {
+        id: "intro-bedroom",
+        imageKey: "introBedroom",
+        audioId: "intro-bedroom",
+        text: "Every night, Theo climbed into bed in his blue pyjamas with one promise to himself: tonight, no monsters, no mazes, just sleep."
+    },
+    {
+        id: "intro-doorway",
+        imageKey: "introDoorway",
+        audioId: "intro-doorway",
+        text: "But as moonlight filled his room, a golden dream-shard blinked beneath his pillow and opened a doorway into the Wandertrap."
+    },
+    {
+        id: "intro-orcs",
+        imageKey: "introOrcs",
+        audioId: "intro-orcs",
+        text: "Inside the dream-labyrinth, Sleep Thief orcs had stolen the shards that showed the way back to morning, hiding them behind gates, traps, and stone walls."
+    },
+    {
+        id: "intro-throne",
+        imageKey: "introThrone",
+        audioId: "intro-throne",
+        text: "Their Wardens guarded the deeper halls, and far below them the Orc King gathered the last shard on a throne made from broken nightmares."
+    },
+    {
+        id: "intro-step-forward",
+        imageKey: "introStepForward",
+        audioId: "intro-step-forward",
+        text: "Theo tightened his pyjama sleeves, lifted his sword, and stepped forward: reclaim the shards, defeat the Orc King, and wake before dawn."
+    }
+];
+const levelStoryBeats = [
+    {
+        level: 1,
+        audioId: "level-01-glade",
+        story: "Moonlit grass whispers around Theo as the first stolen dream-shard glows beyond the Glade."
+    },
+    {
+        level: 2,
+        audioId: "level-02-gatehouse",
+        story: "At the Gatehouse, a Sleep Thief guard carries the key to the path home."
+    },
+    {
+        level: 3,
+        audioId: "level-03-orchard",
+        story: "In the Orchard, crooked trees twist into gates and orcs drag more shards through the leaves."
+    },
+    {
+        level: 4,
+        audioId: "level-04-quarry",
+        story: "The Quarry rumbles with buried traps, but every broken stone brings Theo closer to dawn."
+    },
+    {
+        level: 5,
+        audioId: "level-05-warden",
+        story: "The first Warden waits in the sand, sworn to keep the Orc King's nightmare alive."
+    },
+    {
+        level: 6,
+        audioId: "level-06-twin-halls",
+        story: "Twin Halls split the dream in two; Theo must find the right keys before sleep closes in."
+    },
+    {
+        level: 7,
+        audioId: "level-07-serpent",
+        story: "The Serpent coils through darkness, and Theo can only trust the small light around him."
+    },
+    {
+        level: 8,
+        audioId: "level-08-crossroads",
+        story: "At the Crossroads, a second Warden patrols the center where stolen shards burn like stars."
+    },
+    {
+        level: 9,
+        audioId: "level-09-gauntlet",
+        story: "The Gauntlet locks each dream behind another door, daring Theo to lose heart before morning."
+    },
+    {
+        level: 10,
+        audioId: "level-10-throne",
+        story: "On the Throne, the Orc King clutches the final shard between Theo and his own bed."
+    }
+];
+const endingStoryBeat = {
+    id: "ending-dawn",
+    imageKey: "endingDawn",
+    audioId: "ending-dawn",
+    text: "With the last shard restored, the Wandertrap fades into sunrise and Theo wakes safe beneath his blanket, still brave in his blue pyjamas."
+};
+function getLevelStoryBeat(levelNumber) {
+    return levelStoryBeats.find((beat)=>beat.level === levelNumber) || null;
+}
 
 },{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"TkAKd":[function(require,module,exports) {
 // helper functions for the canvas
@@ -3083,7 +3545,7 @@ class Explosive extends (0, _entityJsDefault.default) {
 }
 exports.default = Explosive;
 
-},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","../utils/settings.js":"hBndc"}],"bFjVQ":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"bFjVQ":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -3647,218 +4109,7 @@ class Door extends (0, _entityJsDefault.default) {
 }
 exports.default = Door;
 
-},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"6QCfZ":[function(require,module,exports) {
-var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
-parcelHelpers.defineInteropFlag(exports);
-parcelHelpers.export(exports, "sfx", ()=>sfx);
-var _settingsJs = require("./settings.js");
-// Tiny synthesized sound effects via the Web Audio API — no audio assets
-// needed. The AudioContext is created lazily on the first sound, which always
-// happens after a user gesture (a key press or button click), so autoplay
-// policies never block it. Every call is wrapped so a missing/blocked audio
-// backend can never break the game.
-let ctx = null;
-function getContext() {
-    if ((0, _settingsJs.soundSettings).mute) return null;
-    try {
-        if (!ctx) {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return null;
-            ctx = new AudioCtx();
-        }
-        if (ctx.state === "suspended") ctx.resume().catch(()=>{});
-        return ctx;
-    } catch  {
-        return null;
-    }
-}
-// Play a simple tone: oscillator + exponential decay envelope
-function tone({ type = "square", from = 440, to = from, duration = 0.1, volume = 0.3, delay = 0 }) {
-    const audio = getContext();
-    if (!audio) return;
-    try {
-        const t0 = audio.currentTime + delay;
-        const osc = audio.createOscillator();
-        const gain = audio.createGain();
-        osc.type = type;
-        osc.frequency.setValueAtTime(from, t0);
-        osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + duration);
-        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
-        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
-        osc.connect(gain).connect(audio.destination);
-        osc.start(t0);
-        osc.stop(t0 + duration);
-    } catch  {
-    // Audio is best-effort; never let it break gameplay
-    }
-}
-// A burst of filtered noise, for impacts and explosions
-function noise({ duration = 0.3, volume = 0.4, delay = 0 }) {
-    const audio = getContext();
-    if (!audio) return;
-    try {
-        const t0 = audio.currentTime + delay;
-        const buffer = audio.createBuffer(1, audio.sampleRate * duration, audio.sampleRate);
-        const data = buffer.getChannelData(0);
-        for(let i = 0; i < data.length; i++)data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-        const src = audio.createBufferSource();
-        src.buffer = buffer;
-        const gain = audio.createGain();
-        gain.gain.setValueAtTime(volume * (0, _settingsJs.soundSettings).volume, t0);
-        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
-        src.connect(gain).connect(audio.destination);
-        src.start(t0);
-    } catch  {
-    // best-effort
-    }
-}
-const sfx = {
-    swing: ()=>tone({
-            type: "sawtooth",
-            from: 300,
-            to: 80,
-            duration: 0.08,
-            volume: 0.15
-        }),
-    hit: ()=>tone({
-            type: "square",
-            from: 150,
-            to: 60,
-            duration: 0.12,
-            volume: 0.25
-        }),
-    hurt: ()=>tone({
-            type: "triangle",
-            from: 220,
-            to: 110,
-            duration: 0.25,
-            volume: 0.3
-        }),
-    pickup: ()=>{
-        tone({
-            type: "sine",
-            from: 660,
-            to: 880,
-            duration: 0.08,
-            volume: 0.25
-        });
-        tone({
-            type: "sine",
-            from: 880,
-            to: 1320,
-            duration: 0.1,
-            volume: 0.2,
-            delay: 0.08
-        });
-    },
-    fuse: ()=>tone({
-            type: "square",
-            from: 1200,
-            to: 1200,
-            duration: 0.05,
-            volume: 0.08
-        }),
-    explosion: ()=>{
-        noise({
-            duration: 0.5,
-            volume: 0.5
-        });
-        tone({
-            type: "sine",
-            from: 100,
-            to: 30,
-            duration: 0.5,
-            volume: 0.4
-        });
-    },
-    guardDown: ()=>tone({
-            type: "sawtooth",
-            from: 200,
-            to: 40,
-            duration: 0.35,
-            volume: 0.3
-        }),
-    unlock: ()=>{
-        tone({
-            type: "square",
-            from: 500,
-            to: 500,
-            duration: 0.06,
-            volume: 0.2
-        });
-        tone({
-            type: "square",
-            from: 750,
-            to: 750,
-            duration: 0.1,
-            volume: 0.2,
-            delay: 0.08
-        });
-    },
-    disarm: ()=>tone({
-            type: "sine",
-            from: 900,
-            to: 300,
-            duration: 0.25,
-            volume: 0.2
-        }),
-    gulp: ()=>{
-        tone({
-            type: "sine",
-            from: 300,
-            to: 150,
-            duration: 0.1,
-            volume: 0.25
-        });
-        tone({
-            type: "sine",
-            from: 350,
-            to: 180,
-            duration: 0.12,
-            volume: 0.25,
-            delay: 0.12
-        });
-    },
-    chop: ()=>tone({
-            type: "square",
-            from: 120,
-            to: 50,
-            duration: 0.15,
-            volume: 0.3
-        }),
-    levelComplete: ()=>{
-        [
-            523,
-            659,
-            784,
-            1047
-        ].forEach((f, i)=>tone({
-                type: "triangle",
-                from: f,
-                to: f,
-                duration: 0.15,
-                volume: 0.25,
-                delay: i * 0.12
-            }));
-    },
-    gameOver: ()=>{
-        [
-            392,
-            330,
-            262,
-            196
-        ].forEach((f, i)=>tone({
-                type: "triangle",
-                from: f,
-                to: f,
-                duration: 0.25,
-                volume: 0.25,
-                delay: i * 0.2
-            }));
-    }
-};
-
-},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d5R3E":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d5R3E":[function(require,module,exports) {
 // Per-level visual theme registry.
 // Theme entries point at keys in the loaded level-assets object.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -3871,17 +4122,14 @@ const DEFAULT_THEME = "forest";
 const THEMES = {
     forest: {
         name: "Forest",
-        floor: "grassTile",
-        wall: "wall",
+        floor: "forestFloor",
+        wall: "forestWall",
         trees: [
-            "palm1",
-            "palm2",
-            "tree1",
-            "tree2",
-            "tree3"
+            "forestTree1",
+            "forestTree2"
         ],
-        boulder: "boulder",
-        exit: "yellowRuin",
+        boulder: "forestBoulder",
+        exit: "forestExit",
         floorFallback: "#2f7d3b"
     },
     desert: {
@@ -3966,6 +4214,7 @@ parcelHelpers.export(exports, "loadGuardAssets", ()=>loadGuardAssets);
 parcelHelpers.export(exports, "loadLevelAssets", ()=>loadLevelAssets);
 parcelHelpers.export(exports, "loadItemAssets", ()=>loadItemAssets);
 parcelHelpers.export(exports, "loadPowerUpsAssets", ()=>loadPowerUpsAssets);
+parcelHelpers.export(exports, "loadStoryAssets", ()=>loadStoryAssets);
 const PLAYER_ASSET_URLS = {
     playerMovement: new URL(require("93fa132a23469ad3")),
     playerActions: new URL(require("24d061bc9070758b"))
@@ -3997,7 +4246,16 @@ const GUARD_ASSET_URLS = {
     orc3_Run: new URL(require("f060f8a5fdaac71f")),
     orc3_Run_Attack: new URL(require("1926d3b5d1463658")),
     orc3_Walk: new URL(require("798831562a8c99b4")),
-    orc3_Walk_Attack: new URL(require("d7a60630e255c457"))
+    orc3_Walk_Attack: new URL(require("d7a60630e255c457")),
+    // ORC 4
+    orc4_Attack: new URL(require("90e65dbd57ec3767")),
+    orc4_Death: new URL(require("b03deaaf9e9826a2")),
+    orc4_Hurt: new URL(require("a1d2262c6b94caa1")),
+    orc4_Idle: new URL(require("10c432a4f44dfea1")),
+    orc4_Run: new URL(require("659e0d16ab1d5659")),
+    orc4_Run_Attack: new URL(require("ec60246b8166a591")),
+    orc4_Walk: new URL(require("e8adfee72ce6ea0e")),
+    orc4_Walk_Attack: new URL(require("94ad01c9957574a8"))
 };
 const LEVEL_ASSET_URLS = {
     grassTile: new URL(require("1d5dcd0f193cb1ce")),
@@ -4012,6 +4270,12 @@ const LEVEL_ASSET_URLS = {
     sandRuin: new URL(require("80e7c00fdd98ae89")),
     snowRuin: new URL(require("a7b3d39a650d1b88")),
     yellowRuin: new URL(require("4b942e3d0fe21af6")),
+    forestFloor: new URL(require("a2dc87d21fe801f")),
+    forestWall: new URL(require("fb766fed36809546")),
+    forestTree1: new URL(require("bf43b78db4cdb63f")),
+    forestTree2: new URL(require("d5a9fbbce5525c52")),
+    forestBoulder: new URL(require("7ed8f93c79bf2794")),
+    forestExit: new URL(require("27b96fa82ff320fc")),
     desertFloor: new URL(require("ef04bc5083c079cc")),
     desertWall: new URL(require("6878513b9faf2986")),
     desertTree1: new URL(require("bc79d6f290e43a80")),
@@ -4049,13 +4313,22 @@ const POWERUP_ASSET_URLS = {
     blueCrystal: new URL(require("426b380674b42f96")),
     yellowCrystal: new URL(require("9ae2d2d58e4ae0ee"))
 };
+const STORY_ASSET_URLS = {
+    introBedroom: new URL(require("1f377051fc3892e5")),
+    introDoorway: new URL(require("53b51ee34dc2d754")),
+    introOrcs: new URL(require("f1ccbf89b198689f")),
+    introThrone: new URL(require("50fdaf1136bf476b")),
+    introStepForward: new URL(require("fa3619661867ba9b")),
+    endingDawn: new URL(require("c8b406679ab87f82"))
+};
 function getTotalAssetCount() {
     return [
         PLAYER_ASSET_URLS,
         GUARD_ASSET_URLS,
         LEVEL_ASSET_URLS,
         ITEM_ASSET_URLS,
-        POWERUP_ASSET_URLS
+        POWERUP_ASSET_URLS,
+        STORY_ASSET_URLS
     ].reduce((total, urls)=>total + Object.keys(urls).length, 0);
 }
 function loadImage(src, onProgress) {
@@ -4103,8 +4376,12 @@ async function loadPowerUpsAssets(onProgress) {
     console.log("Loading powerups assets...");
     return loadImages(POWERUP_ASSET_URLS, onProgress);
 }
+async function loadStoryAssets(onProgress) {
+    console.log("Loading story assets...");
+    return loadImages(STORY_ASSET_URLS, onProgress);
+}
 
-},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","3d27847b46809984":"kAqHG","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg"}],"b9nou":[function(require,module,exports) {
+},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","da839ad1c17fe6f0":"fncWE","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","90e65dbd57ec3767":"NHO4l","b03deaaf9e9826a2":"9GntM","a1d2262c6b94caa1":"iR9wY","10c432a4f44dfea1":"3Sp0K","659e0d16ab1d5659":"5xasI","ec60246b8166a591":"ffckV","e8adfee72ce6ea0e":"9ZZyQ","94ad01c9957574a8":"2t70W","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","3d27847b46809984":"kAqHG","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","1f377051fc3892e5":"eTuGn","53b51ee34dc2d754":"hURqq","f1ccbf89b198689f":"13KtF","50fdaf1136bf476b":"afz4T","fa3619661867ba9b":"b5PuT","c8b406679ab87f82":"2r2jP","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3","a2dc87d21fe801f":"etmZ3","fb766fed36809546":"4asaW","bf43b78db4cdb63f":"7HsG7","d5a9fbbce5525c52":"iXTG0","7ed8f93c79bf2794":"7iEqo","27b96fa82ff320fc":"ajtWG"}],"b9nou":[function(require,module,exports) {
 module.exports = require("59afba6ea444a216").getBundleURL("aAnGP") + "Player.89df9642.png" + "?" + Date.now();
 
 },{"59afba6ea444a216":"lgJ39"}],"lgJ39":[function(require,module,exports) {
@@ -4217,7 +4494,31 @@ module.exports = require("35425eb199dd73d6").getBundleURL("aAnGP") + "orc3_walk_
 },{"35425eb199dd73d6":"lgJ39"}],"bMo3R":[function(require,module,exports) {
 module.exports = require("4789fa1a7eb3f7ec").getBundleURL("aAnGP") + "orc3_walk_attack_full.46776ad5.png" + "?" + Date.now();
 
-},{"4789fa1a7eb3f7ec":"lgJ39"}],"26Zo6":[function(require,module,exports) {
+},{"4789fa1a7eb3f7ec":"lgJ39"}],"NHO4l":[function(require,module,exports) {
+module.exports = require("b6365e465366a86b").getBundleURL("aAnGP") + "orc4_attack_full.b8b34079.png" + "?" + Date.now();
+
+},{"b6365e465366a86b":"lgJ39"}],"9GntM":[function(require,module,exports) {
+module.exports = require("7ad01e84a9092fa").getBundleURL("aAnGP") + "orc4_death_full.2e98996a.png" + "?" + Date.now();
+
+},{"7ad01e84a9092fa":"lgJ39"}],"iR9wY":[function(require,module,exports) {
+module.exports = require("35837f3dece0ce7b").getBundleURL("aAnGP") + "orc4_hurt_full.c5a61480.png" + "?" + Date.now();
+
+},{"35837f3dece0ce7b":"lgJ39"}],"3Sp0K":[function(require,module,exports) {
+module.exports = require("84de8b99200f26fc").getBundleURL("aAnGP") + "orc4_idle_full.238866e0.png" + "?" + Date.now();
+
+},{"84de8b99200f26fc":"lgJ39"}],"5xasI":[function(require,module,exports) {
+module.exports = require("6b5a7e23889e6f9e").getBundleURL("aAnGP") + "orc4_run_full.547a3efe.png" + "?" + Date.now();
+
+},{"6b5a7e23889e6f9e":"lgJ39"}],"ffckV":[function(require,module,exports) {
+module.exports = require("8b3edfb47ad9e15d").getBundleURL("aAnGP") + "orc4_run_attack_full.1ad9cf1f.png" + "?" + Date.now();
+
+},{"8b3edfb47ad9e15d":"lgJ39"}],"9ZZyQ":[function(require,module,exports) {
+module.exports = require("90367d596c3bc352").getBundleURL("aAnGP") + "orc4_walk_full.3a1dddfb.png" + "?" + Date.now();
+
+},{"90367d596c3bc352":"lgJ39"}],"2t70W":[function(require,module,exports) {
+module.exports = require("36d1b025708e9af6").getBundleURL("aAnGP") + "orc4_walk_attack_full.4b64a2e7.png" + "?" + Date.now();
+
+},{"36d1b025708e9af6":"lgJ39"}],"26Zo6":[function(require,module,exports) {
 module.exports = require("2675bf9f17f4deff").getBundleURL("aAnGP") + "grass_tile.63710fbe.png" + "?" + Date.now();
 
 },{"2675bf9f17f4deff":"lgJ39"}],"iF5hM":[function(require,module,exports) {
@@ -4253,46 +4554,7 @@ module.exports = require("d7584db4a4d9b947").getBundleURL("aAnGP") + "Snow_ruins
 },{"d7584db4a4d9b947":"lgJ39"}],"d9SAV":[function(require,module,exports) {
 module.exports = require("f6fe50e58e8fedab").getBundleURL("aAnGP") + "exit_ruin.0d420dd3.png" + "?" + Date.now();
 
-},{"f6fe50e58e8fedab":"lgJ39"}],"04CyO":[function(require,module,exports) {
-module.exports = require("6db897c9d2656c50").getBundleURL("aAnGP") + "key.843913e9.png" + "?" + Date.now();
-
-},{"6db897c9d2656c50":"lgJ39"}],"iTkbG":[function(require,module,exports) {
-module.exports = require("f59b545bc58552b1").getBundleURL("aAnGP") + "potion.75bf7793.png" + "?" + Date.now();
-
-},{"f59b545bc58552b1":"lgJ39"}],"kr7ve":[function(require,module,exports) {
-module.exports = require("6e6b6af1a7a9e5e3").getBundleURL("aAnGP") + "explosive.6e1a6b86.png" + "?" + Date.now();
-
-},{"6e6b6af1a7a9e5e3":"lgJ39"}],"imXnd":[function(require,module,exports) {
-module.exports = require("11d54df61439d3a4").getBundleURL("aAnGP") + "sword_steel.a6a16a95.png" + "?" + Date.now();
-
-},{"11d54df61439d3a4":"lgJ39"}],"jPYxu":[function(require,module,exports) {
-module.exports = require("8a526e99c9864b94").getBundleURL("aAnGP") + "axe_war.4354af3b.png" + "?" + Date.now();
-
-},{"8a526e99c9864b94":"lgJ39"}],"5X7zw":[function(require,module,exports) {
-module.exports = require("fffd45939eeb7415").getBundleURL("aAnGP") + "rune_haste.804dfb4c.png" + "?" + Date.now();
-
-},{"fffd45939eeb7415":"lgJ39"}],"gFt5D":[function(require,module,exports) {
-module.exports = require("569da5a8d93cb4c2").getBundleURL("aAnGP") + "rune_might.53f59920.png" + "?" + Date.now();
-
-},{"569da5a8d93cb4c2":"lgJ39"}],"lkXLI":[function(require,module,exports) {
-module.exports = require("e2acc41bb21edb48").getBundleURL("aAnGP") + "rune_warding.532f8ad3.png" + "?" + Date.now();
-
-},{"e2acc41bb21edb48":"lgJ39"}],"1ToI4":[function(require,module,exports) {
-module.exports = require("d034bf1a557e1fec").getBundleURL("aAnGP") + "door.07133bdd.png" + "?" + Date.now();
-
-},{"d034bf1a557e1fec":"lgJ39"}],"kAqHG":[function(require,module,exports) {
-module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
-
-},{"f6b1d88be3588622":"lgJ39"}],"9J8Br":[function(require,module,exports) {
-module.exports = require("2797bb0f8cdaa3cb").getBundleURL("aAnGP") + "health_crystal.0d30a58e.png" + "?" + Date.now();
-
-},{"2797bb0f8cdaa3cb":"lgJ39"}],"iwGdJ":[function(require,module,exports) {
-module.exports = require("ddb42533b60a1ac4").getBundleURL("aAnGP") + "mana_crystal.65e68033.png" + "?" + Date.now();
-
-},{"ddb42533b60a1ac4":"lgJ39"}],"9uNQt":[function(require,module,exports) {
-module.exports = require("b88e1a35592b6077").getBundleURL("aAnGP") + "Yellow_crystal2.0ed15310.png" + "?" + Date.now();
-
-},{"b88e1a35592b6077":"lgJ39"}],"7mv1Z":[function(require,module,exports) {
+},{"f6fe50e58e8fedab":"lgJ39"}],"7mv1Z":[function(require,module,exports) {
 module.exports = require("54635e7b2ca4709c").getBundleURL("aAnGP") + "floor.0bbfb544.png" + "?" + Date.now();
 
 },{"54635e7b2ca4709c":"lgJ39"}],"8K5FP":[function(require,module,exports) {
@@ -4346,7 +4608,82 @@ module.exports = require("9ae66daa07eb04f").getBundleURL("aAnGP") + "boulder.773
 },{"9ae66daa07eb04f":"lgJ39"}],"5AKUg":[function(require,module,exports) {
 module.exports = require("398d64d2fd3c60ad").getBundleURL("aAnGP") + "exit.e1114455.png" + "?" + Date.now();
 
-},{"398d64d2fd3c60ad":"lgJ39"}],"kNfRL":[function(require,module,exports) {
+},{"398d64d2fd3c60ad":"lgJ39"}],"04CyO":[function(require,module,exports) {
+module.exports = require("6db897c9d2656c50").getBundleURL("aAnGP") + "key.843913e9.png" + "?" + Date.now();
+
+},{"6db897c9d2656c50":"lgJ39"}],"iTkbG":[function(require,module,exports) {
+module.exports = require("f59b545bc58552b1").getBundleURL("aAnGP") + "potion.75bf7793.png" + "?" + Date.now();
+
+},{"f59b545bc58552b1":"lgJ39"}],"kr7ve":[function(require,module,exports) {
+module.exports = require("6e6b6af1a7a9e5e3").getBundleURL("aAnGP") + "explosive.6e1a6b86.png" + "?" + Date.now();
+
+},{"6e6b6af1a7a9e5e3":"lgJ39"}],"imXnd":[function(require,module,exports) {
+module.exports = require("11d54df61439d3a4").getBundleURL("aAnGP") + "sword_steel.a6a16a95.png" + "?" + Date.now();
+
+},{"11d54df61439d3a4":"lgJ39"}],"jPYxu":[function(require,module,exports) {
+module.exports = require("8a526e99c9864b94").getBundleURL("aAnGP") + "axe_war.4354af3b.png" + "?" + Date.now();
+
+},{"8a526e99c9864b94":"lgJ39"}],"5X7zw":[function(require,module,exports) {
+module.exports = require("fffd45939eeb7415").getBundleURL("aAnGP") + "rune_haste.804dfb4c.png" + "?" + Date.now();
+
+},{"fffd45939eeb7415":"lgJ39"}],"gFt5D":[function(require,module,exports) {
+module.exports = require("569da5a8d93cb4c2").getBundleURL("aAnGP") + "rune_might.53f59920.png" + "?" + Date.now();
+
+},{"569da5a8d93cb4c2":"lgJ39"}],"lkXLI":[function(require,module,exports) {
+module.exports = require("e2acc41bb21edb48").getBundleURL("aAnGP") + "rune_warding.532f8ad3.png" + "?" + Date.now();
+
+},{"e2acc41bb21edb48":"lgJ39"}],"1ToI4":[function(require,module,exports) {
+module.exports = require("d034bf1a557e1fec").getBundleURL("aAnGP") + "door.07133bdd.png" + "?" + Date.now();
+
+},{"d034bf1a557e1fec":"lgJ39"}],"kAqHG":[function(require,module,exports) {
+module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
+
+},{"f6b1d88be3588622":"lgJ39"}],"9J8Br":[function(require,module,exports) {
+module.exports = require("2797bb0f8cdaa3cb").getBundleURL("aAnGP") + "health_crystal.0d30a58e.png" + "?" + Date.now();
+
+},{"2797bb0f8cdaa3cb":"lgJ39"}],"iwGdJ":[function(require,module,exports) {
+module.exports = require("ddb42533b60a1ac4").getBundleURL("aAnGP") + "mana_crystal.65e68033.png" + "?" + Date.now();
+
+},{"ddb42533b60a1ac4":"lgJ39"}],"9uNQt":[function(require,module,exports) {
+module.exports = require("b88e1a35592b6077").getBundleURL("aAnGP") + "Yellow_crystal2.0ed15310.png" + "?" + Date.now();
+
+},{"b88e1a35592b6077":"lgJ39"}],"eTuGn":[function(require,module,exports) {
+module.exports = require("b762609b6a990988").getBundleURL("aAnGP") + "intro_bedroom.46827e8e.png" + "?" + Date.now();
+
+},{"b762609b6a990988":"lgJ39"}],"hURqq":[function(require,module,exports) {
+module.exports = require("af441841773093b2").getBundleURL("aAnGP") + "intro_doorway.70a3ce28.png" + "?" + Date.now();
+
+},{"af441841773093b2":"lgJ39"}],"13KtF":[function(require,module,exports) {
+module.exports = require("a3a55e0326b096cd").getBundleURL("aAnGP") + "intro_orcs.882638e9.png" + "?" + Date.now();
+
+},{"a3a55e0326b096cd":"lgJ39"}],"afz4T":[function(require,module,exports) {
+module.exports = require("4bb5f2b5e635d8bf").getBundleURL("aAnGP") + "intro_throne.935105a0.png" + "?" + Date.now();
+
+},{"4bb5f2b5e635d8bf":"lgJ39"}],"b5PuT":[function(require,module,exports) {
+module.exports = require("8a2f7f1dd78739f2").getBundleURL("aAnGP") + "intro_step_forward.3ed386ca.png" + "?" + Date.now();
+
+},{"8a2f7f1dd78739f2":"lgJ39"}],"2r2jP":[function(require,module,exports) {
+module.exports = require("565a29e2cc853f4c").getBundleURL("aAnGP") + "ending_dawn.301611b5.png" + "?" + Date.now();
+
+},{"565a29e2cc853f4c":"lgJ39"}],"etmZ3":[function(require,module,exports) {
+module.exports = require("639b269ef5b9f2a6").getBundleURL("aAnGP") + "floor.a437ade2.png" + "?" + Date.now();
+
+},{"639b269ef5b9f2a6":"lgJ39"}],"4asaW":[function(require,module,exports) {
+module.exports = require("6ea9afae9b79280a").getBundleURL("aAnGP") + "wall.8c8b4932.png" + "?" + Date.now();
+
+},{"6ea9afae9b79280a":"lgJ39"}],"7HsG7":[function(require,module,exports) {
+module.exports = require("2ba762bb49d3d69c").getBundleURL("aAnGP") + "tree_1.976973aa.png" + "?" + Date.now();
+
+},{"2ba762bb49d3d69c":"lgJ39"}],"iXTG0":[function(require,module,exports) {
+module.exports = require("d7721b4f77aa6f18").getBundleURL("aAnGP") + "tree_2.5c0e112d.png" + "?" + Date.now();
+
+},{"d7721b4f77aa6f18":"lgJ39"}],"7iEqo":[function(require,module,exports) {
+module.exports = require("f8a309e496047679").getBundleURL("aAnGP") + "boulder.016017bd.png" + "?" + Date.now();
+
+},{"f8a309e496047679":"lgJ39"}],"ajtWG":[function(require,module,exports) {
+module.exports = require("4fca6330cc7ab136").getBundleURL("aAnGP") + "exit.43e9fb8f.png" + "?" + Date.now();
+
+},{"4fca6330cc7ab136":"lgJ39"}],"kNfRL":[function(require,module,exports) {
 // Splash screen
 // - Display game logo or animation
 // - Briefly show before transitioning to the welcome screen
@@ -4426,7 +4763,7 @@ function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit
     title.style.display = "inline-block";
     welcomeScreen.appendChild(title);
     const subtitle = document.createElement("h2");
-    subtitle.textContent = "Theo got lost...";
+    subtitle.textContent = "Theo fell asleep... and the orcs stole the way home.";
     subtitle.style.color = (0, _themeJs.theme).colors.primary;
     subtitle.style.fontSize = (0, _themeJs.theme).fontSize.subtitle;
     subtitle.style.fontFamily = (0, _themeJs.theme).fonts.subtitle;
@@ -4561,7 +4898,7 @@ function showGameOverScreen(finalScore, onTryAgain, onMainMenu) {
     title.textContent = "Game Over";
     gameOverScreen.appendChild(title);
     const message = document.createElement("p");
-    message.textContent = "Theo ran out of lives. Better luck next time!";
+    message.textContent = "The dream closed around Theo before he could reclaim every shard.";
     gameOverScreen.appendChild(message);
     const scoreDisplay = document.createElement("p");
     scoreDisplay.textContent = `Your Score: ${finalScore}`;
@@ -4686,16 +5023,18 @@ parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "showGameWonScreen", ()=>showGameWonScreen);
 var _themeJs = require("../utils/theme.js");
 var _scoreEntryJs = require("./score-entry.js");
-function showGameWonScreen(finalScore, onPlayAgain, onMainMenu) {
+var _storyContentJs = require("../story-content.js");
+var _narrationJs = require("../utils/narration.js");
+function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAssets = {}) {
     const container = document.getElementById("game-container");
     container.innerHTML = "";
     const gameWonScreen = document.createElement("div");
     gameWonScreen.id = "game-won-screen";
     const title = document.createElement("h1");
-    title.textContent = "You Escaped the Wandertrap!";
+    title.textContent = "Theo Wakes at Dawn";
     gameWonScreen.appendChild(title);
     const message = document.createElement("p");
-    message.textContent = "Theo found his way out. Well played!";
+    message.textContent = (0, _storyContentJs.endingStoryBeat).text;
     gameWonScreen.appendChild(message);
     const scoreDisplay = document.createElement("p");
     scoreDisplay.textContent = `Final Score: ${finalScore}`;
@@ -4703,25 +5042,47 @@ function showGameWonScreen(finalScore, onPlayAgain, onMainMenu) {
     (0, _scoreEntryJs.appendScoreEntry)(gameWonScreen, finalScore);
     const playAgainButton = document.createElement("button");
     playAgainButton.textContent = "Play Again";
-    playAgainButton.onclick = onPlayAgain;
+    playAgainButton.onclick = closeWith(onPlayAgain);
     gameWonScreen.appendChild(playAgainButton);
     const mainMenuButton = document.createElement("button");
     mainMenuButton.textContent = "Main Menu";
-    mainMenuButton.onclick = onMainMenu;
+    mainMenuButton.onclick = closeWith(onMainMenu);
     gameWonScreen.appendChild(mainMenuButton);
     container.appendChild(gameWonScreen);
     (0, _themeJs.applyContainerStyles)(container);
+    container.style.padding = "0";
+    gameWonScreen.style.minHeight = "100vh";
+    gameWonScreen.style.display = "flex";
+    gameWonScreen.style.flexDirection = "column";
+    gameWonScreen.style.alignItems = "center";
+    gameWonScreen.style.justifyContent = "center";
+    gameWonScreen.style.backgroundSize = "cover";
+    gameWonScreen.style.backgroundPosition = "center";
+    gameWonScreen.style.backgroundImage = storyAssets.endingDawn ? `linear-gradient(rgba(8, 4, 2, 0.25), rgba(8, 4, 2, 0.72)), url("${storyAssets.endingDawn.src}")` : "radial-gradient(circle at center, #6d4c1d 0%, #1a0d00 65%)";
     title.style.fontSize = (0, _themeJs.theme).fontSize.title;
     title.style.marginBottom = "20px";
+    title.style.textShadow = "0 3px 14px rgba(0, 0, 0, 0.85)";
     message.style.fontSize = (0, _themeJs.theme).fontSize.subtitle;
+    message.style.maxWidth = "880px";
+    message.style.padding = "20px 28px";
     message.style.marginBottom = "20px";
+    message.style.background = "rgba(12, 9, 18, 0.78)";
+    message.style.border = "2px solid rgba(212, 175, 55, 0.75)";
+    message.style.borderRadius = "14px";
     scoreDisplay.style.fontSize = (0, _themeJs.theme).fontSize.subtitle;
     scoreDisplay.style.marginBottom = "20px";
     (0, _themeJs.styleButton)(playAgainButton, (0, _themeJs.theme).colors.accent);
     (0, _themeJs.styleButton)(mainMenuButton, (0, _themeJs.theme).colors.secondary);
+    (0, _narrationJs.playNarration)((0, _storyContentJs.endingStoryBeat).audioId);
+    function closeWith(callback) {
+        return ()=>{
+            (0, _narrationJs.stopNarration)();
+            callback();
+        };
+    }
 }
 
-},{"../utils/theme.js":"6OzmZ","./score-entry.js":"con8N","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"4usRq":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","./score-entry.js":"con8N","../story-content.js":"2sig9","../utils/narration.js":"402l2","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"4usRq":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // High Score screen
@@ -4866,7 +5227,7 @@ var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "showLevelCompletedScreen", ()=>showLevelCompletedScreen);
 var _themeJs = require("../utils/theme.js");
-function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu) {
+function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu, levelCompletion = {}) {
     const container = document.getElementById("game-container");
     // The game is already paused (animations frozen on the last rendered
     // frame); keep the canvas in place and lay a modal over it instead of
@@ -4894,10 +5255,32 @@ function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu) {
     modal.style.borderRadius = (0, _themeJs.theme).button.borderRadius;
     modal.style.boxShadow = "0 0 30px rgba(212, 175, 55, 0.5)";
     const title = document.createElement("h1");
-    title.textContent = "Level Completed!";
+    title.textContent = "Dream-Shard Reclaimed!";
     title.style.fontSize = (0, _themeJs.theme).fontSize.title;
     title.style.marginBottom = "20px";
     modal.appendChild(title);
+    const statusLabel = document.createElement("p");
+    statusLabel.textContent = "Level Completed!";
+    statusLabel.style.fontSize = "18px";
+    statusLabel.style.textTransform = "uppercase";
+    statusLabel.style.letterSpacing = "2px";
+    statusLabel.style.margin = "0 0 18px";
+    statusLabel.style.opacity = "0.8";
+    modal.appendChild(statusLabel);
+    const completedMessage = document.createElement("p");
+    completedMessage.textContent = levelCompletion.completedLevel ? `${levelCompletion.completedLevel.name} fades behind Theo.` : "A piece of the way home returns to Theo.";
+    completedMessage.style.fontSize = "22px";
+    completedMessage.style.marginBottom = "14px";
+    modal.appendChild(completedMessage);
+    if (levelCompletion.nextLevel) {
+        const nextMessage = document.createElement("p");
+        nextMessage.textContent = `Next: ${levelCompletion.nextLevel.name} \u{2014} ${levelCompletion.nextLevel.story}`;
+        nextMessage.style.fontSize = "18px";
+        nextMessage.style.maxWidth = "640px";
+        nextMessage.style.lineHeight = "1.4";
+        nextMessage.style.margin = "0 auto 22px";
+        modal.appendChild(nextMessage);
+    }
     const scoreDisplay = document.createElement("p");
     scoreDisplay.textContent = `Current Score: ${currentScore}`;
     scoreDisplay.style.fontSize = (0, _themeJs.theme).fontSize.subtitle;
@@ -4927,98 +5310,126 @@ parcelHelpers.defineInteropFlag(exports);
 // Story screen
 parcelHelpers.export(exports, "showStoryScreen", ()=>showStoryScreen);
 var _themeJs = require("../utils/theme.js");
-function showStoryScreen(onBack) {
+var _storyContentJs = require("../story-content.js");
+var _narrationJs = require("../utils/narration.js");
+function showStoryScreen(onBack, storyAssets = {}) {
     const container = document.getElementById("game-container");
     container.innerHTML = ""; // Clear previous content
     const storyScreen = document.createElement("div");
     storyScreen.id = "story-screen";
-    // Remove book and pages
     const textContainer = document.createElement("div");
-    textContainer.id = "text-container";
-    textContainer.style.textAlign = "center";
+    textContainer.id = "story-text-container";
+    const eyebrow = document.createElement("p");
+    eyebrow.textContent = "Theo and the Dream-Shards";
+    eyebrow.style.margin = "0 0 12px";
+    eyebrow.style.letterSpacing = "3px";
+    eyebrow.style.textTransform = "uppercase";
+    eyebrow.style.fontSize = "16px";
+    const paragraph = document.createElement("p");
+    paragraph.id = "story-paragraph";
+    paragraph.style.margin = "0";
+    const counter = document.createElement("p");
+    counter.id = "story-counter";
+    counter.style.margin = "18px 0 0";
+    counter.style.fontSize = "16px";
+    counter.style.opacity = "0.8";
+    textContainer.appendChild(eyebrow);
+    textContainer.appendChild(paragraph);
+    textContainer.appendChild(counter);
     storyScreen.appendChild(textContainer);
-    const paragraphs = [
-        "Meet Theo\u2014a brilliant but clumsy game designer with a passion for crafting the most intricate fantasy campaigns.",
-        "One fateful evening, while putting the finishing touches on his masterpiece labyrinth, Theo accidentally spills a can of energy drink onto his keyboard.",
-        'Sparks fly, screens flash, and before he can say "critical hit," he\'s zapped into the very world he created!',
-        "Blinking in disbelief, Theo finds himself standing at the entrance of his own labyrinth, a sprawling maze filled with mind-bending puzzles, hidden traps, and mythical creatures.",
-        "But he's not alone in there.",
-        "His former friend-turned-rival, Max, a fellow gamer notorious for stealing ideas, has hacked into Theo's game to claim the labyrinth as his own.",
-        "The power surge pulled Max into the game too, but with a devious advantage\u2014he now controls the Minotaur, the maze's most formidable guardian.",
-        'Max taunts Theo through ethereal echoes: "Good luck finding your way out, Theo! This maze is mine now, and the Minotaur is eager to meet you!"',
-        "Determined to reclaim his creation and return to the real world, Theo must navigate through multiple levels of his labyrinth, solving his own riddles and overcoming challenges he designed to be unbeatable.",
-        "Along the way, he'll encounter quirky NPCs, unexpected allies, and maybe even a friendly dragon with a knack for sarcasm.",
-        "Can Theo outsmart Max, defeat the Minotaur, and escape the labyrinth?",
-        "The twists and turns of his own imagination stand between him and freedom.",
-        "Grab your wits, summon your courage, and step into the maze\u2014an epic adventure awaits!"
-    ];
-    paragraphs.forEach((text, index)=>{
-        const paragraph = document.createElement("p");
-        paragraph.innerHTML = text;
-        paragraph.style.opacity = 0;
-        paragraph.style.display = "none";
-        paragraph.style.transition = "opacity 1s";
-        paragraph.style.fontSize = "28px";
-        textContainer.appendChild(paragraph);
-    });
     const buttonContainer = document.createElement("div");
     buttonContainer.style.textAlign = "center";
-    buttonContainer.style.marginTop = "20px";
+    buttonContainer.style.position = "absolute";
+    buttonContainer.style.left = "0";
+    buttonContainer.style.right = "0";
+    buttonContainer.style.bottom = "28px";
     const nextButton = document.createElement("button");
     nextButton.textContent = "Next";
-    nextButton.onclick = showNextParagraph;
+    nextButton.onclick = showNextScene;
     buttonContainer.appendChild(nextButton);
     const skipButton = document.createElement("button");
     skipButton.textContent = "Skip";
-    skipButton.onclick = onBack;
+    skipButton.onclick = closeStory;
     buttonContainer.appendChild(skipButton);
     storyScreen.appendChild(buttonContainer);
     container.appendChild(storyScreen);
     // Apply styles
     (0, _themeJs.applyContainerStyles)(container);
+    container.style.padding = "0";
     styleStoryScreen(storyScreen, textContainer);
     (0, _themeJs.styleButton)(nextButton, (0, _themeJs.theme).colors.primary);
     (0, _themeJs.styleButton)(skipButton, (0, _themeJs.theme).colors.primary);
-    let currentParagraph = 0;
-    function showNextParagraph() {
-        if (currentParagraph < paragraphs.length) {
-            if (currentParagraph > 0) {
-                textContainer.children[currentParagraph - 1].style.opacity = 0;
-                textContainer.children[currentParagraph - 1].style.display = "none";
-            }
-            textContainer.children[currentParagraph].style.display = "block";
-            textContainer.children[currentParagraph].style.opacity = 1;
-            currentParagraph++;
-        }
+    let currentScene = -1;
+    let autoAdvanceTimer = null;
+    let closed = false;
+    function closeStory() {
+        closed = true;
+        clearTimeout(autoAdvanceTimer);
+        (0, _narrationJs.stopNarration)();
+        onBack();
     }
-    // Automatically show paragraphs with a delay
-    function autoShowParagraphs() {
-        if (currentParagraph < paragraphs.length) {
-            if (currentParagraph > 0) {
-                textContainer.children[currentParagraph - 1].style.opacity = 0;
-                textContainer.children[currentParagraph - 1].style.display = "none";
-            }
-            textContainer.children[currentParagraph].style.display = "block";
-            textContainer.children[currentParagraph].style.opacity = 1;
-            currentParagraph++;
-            setTimeout(autoShowParagraphs, 5000); // Adjust delay as needed
-        }
+    function scheduleFallbackAdvance() {
+        clearTimeout(autoAdvanceTimer);
+        autoAdvanceTimer = setTimeout(()=>{
+            if (!closed && currentScene < (0, _storyContentJs.introStoryBeats).length - 1) showNextScene();
+        }, 6500);
     }
-    autoShowParagraphs();
+    function showScene(index) {
+        const scene = (0, _storyContentJs.introStoryBeats)[index];
+        currentScene = index;
+        clearTimeout(autoAdvanceTimer);
+        const image = storyAssets[scene.imageKey];
+        storyScreen.style.opacity = "0";
+        setTimeout(()=>{
+            storyScreen.style.backgroundImage = image ? `linear-gradient(rgba(11, 8, 22, 0.25), rgba(11, 8, 22, 0.45)), url("${image.src}")` : "radial-gradient(circle at center, #2e1f56 0%, #110914 60%, #050306 100%)";
+            paragraph.textContent = scene.text;
+            counter.textContent = `${index + 1} / ${(0, _storyContentJs.introStoryBeats).length}`;
+            nextButton.textContent = index === (0, _storyContentJs.introStoryBeats).length - 1 ? "Back" : "Next";
+            storyScreen.style.opacity = "1";
+        }, 120);
+        const sceneIndex = index;
+        const isNarrating = (0, _narrationJs.playNarration)(scene.audioId, {
+            onEnded: ()=>{
+                if (!closed && currentScene === sceneIndex && currentScene < (0, _storyContentJs.introStoryBeats).length - 1) autoAdvanceTimer = setTimeout(showNextScene, 700);
+            },
+            onError: ()=>{
+                if (!closed && currentScene === sceneIndex) scheduleFallbackAdvance();
+            }
+        });
+        if (!isNarrating) scheduleFallbackAdvance();
+    }
+    function showNextScene() {
+        if (currentScene >= (0, _storyContentJs.introStoryBeats).length - 1) {
+            closeStory();
+            return;
+        }
+        showScene(currentScene + 1);
+    }
+    showNextScene();
 }
 function styleStoryScreen(storyScreen, textContainer) {
     storyScreen.style.position = "relative";
     storyScreen.style.height = "100vh";
-    textContainer.style.margin = "50px auto";
-    textContainer.style.height = "200px";
-    textContainer.style.width = "70%";
-    textContainer.style.backgroundColor = (0, _themeJs.theme).colors.primary;
+    storyScreen.style.overflow = "hidden";
+    storyScreen.style.backgroundSize = "cover";
+    storyScreen.style.backgroundPosition = "center";
+    storyScreen.style.transition = "opacity 0.5s ease";
+    textContainer.style.position = "absolute";
+    textContainer.style.left = "50%";
+    textContainer.style.bottom = "140px";
+    textContainer.style.transform = "translateX(-50%)";
+    textContainer.style.width = "min(880px, 78vw)";
+    textContainer.style.background = "linear-gradient(180deg, rgba(12, 9, 18, 0.86), rgba(37, 20, 11, 0.9))";
     textContainer.style.color = (0, _themeJs.theme).colors.text;
-    textContainer.style.padding = "20px";
-    textContainer.style.boxShadow = "0 0 10px rgba(0, 0, 0, 0.5)";
-    textContainer.style.borderRadius = "10px";
+    textContainer.style.padding = "28px 36px";
+    textContainer.style.boxShadow = "0 0 35px rgba(0, 0, 0, 0.7)";
+    textContainer.style.border = "2px solid rgba(212, 175, 55, 0.75)";
+    textContainer.style.borderRadius = "14px";
+    textContainer.style.textAlign = "center";
+    textContainer.style.fontSize = "30px";
+    textContainer.style.lineHeight = "1.35";
 }
 
-},{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}]},["aAwE2","6JHOc"], "6JHOc", "parcelRequire6d7b")
+},{"../utils/theme.js":"6OzmZ","../story-content.js":"2sig9","../utils/narration.js":"402l2","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}]},["aAwE2","6JHOc"], "6JHOc", "parcelRequire6d7b")
 
 //# sourceMappingURL=index.44a83959.js.map

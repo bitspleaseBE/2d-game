@@ -23,7 +23,7 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
     welcomeScreen.appendChild(title);
 
     const subtitle = document.createElement('h2');
-    subtitle.textContent = 'Theo got lost...';
+    subtitle.textContent = 'Theo fell asleep... and the orcs stole the way home.';
     subtitle.style.color = theme.colors.primary;
     subtitle.style.fontSize = theme.fontSize.subtitle;
     subtitle.style.fontFamily = theme.fonts.subtitle;

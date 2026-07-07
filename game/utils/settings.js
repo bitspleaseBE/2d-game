@@ -25,6 +25,7 @@ export const gameSettings = {
     maxLevels: 10, // Maximum number of levels in the game (must match levels defined in levels/level-data.js)
     scoreIncrement: 100, // Points added to the score for each successful action
     disarmScore: 50, // Points for disarming an armed explosive trap
+    levelIntroDurationMs: 5200, // How long each level story card stays on screen
 };
 
 // Powerup settings (durations are in milliseconds)

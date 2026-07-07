@@ -7,7 +7,7 @@ Use the existing forest assets as the style reference:
 - `assets/images/generated/palm_a.png`
 - `assets/images/generated/exit_ruin.png`
 
-The forest theme is the baseline and currently reuses existing game art. If regenerating it later, keep the same filenames and silhouettes so early levels remain familiar.
+The forest theme is the baseline and has its own files under `assets/images/themes/forest/`. If regenerating it later, keep the same filenames and silhouettes so early levels remain familiar.
 
 ## Style
 

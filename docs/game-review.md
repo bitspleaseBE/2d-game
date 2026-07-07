@@ -58,7 +58,7 @@ The skeleton is genuinely good: clean entity/screen/level structure, seeded RNG 
 - Guards never drop anything, despite the class docstring promising powerups/explosives/keys drops.
 
 ### 8. Score and progression carry no meaning
-Everything is a flat 100 points (powerup, kill, level clear). There is no time bonus, no completion bonus per difficulty, no reason to fight rather than run past guards. The **high-score table is hardcoded fake data** (`high-score.js`) — a real run's score is never saved, and there's no name entry. The story screen promises Max, the Minotaur, NPCs, and a sarcastic dragon; none exist. The final level has no boss — the game just ends.
+Everything is a flat 100 points (powerup, kill, level clear). There is no time bonus, no completion bonus per difficulty, no reason to fight rather than run past guards. The **high-score table is hardcoded fake data** (`high-score.js`) — a real run's score is never saved, and there's no name entry. The old story screen promised Max, the Minotaur, NPCs, and a sarcastic dragon; the current dream-shard story now centers the orcs and the Orc King instead.
 
 ---
 
@@ -101,7 +101,7 @@ Everything is a flat 100 points (powerup, kill, level clear). There is no time b
 4. Design real layouts for levels 3–5 with escalating guard counts and layouts that use the whole 20×10 grid; use the loaded snow/sand tilesets to differentiate them.
 5. Implement explosives: reveal on proximity, fuse timer, blast damage to player *and* guards (gives collected explosives a use: place with a key to break walls or kill guard clusters).
 6. Implement the remaining powerups (speed/strength/invincibility with timed effects), and make guards drop them.
-7. Add the Minotaur as a level-5 boss — the story already sells it.
+7. Give the Orc King a distinct final-boss sprite and behavior — the story now sells him as the last guardian of Theo's way home.
 
 **P2 — systems:**
 8. Real high scores (localStorage + name entry on game over/won).

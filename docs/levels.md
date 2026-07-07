@@ -4,55 +4,105 @@ This document provides an overview of the ten levels in "Wandertrap," including 
 
 Layout legend: `#` wall · `P` player spawn · `X` exit · `G` guard · `B` boss · `E` hidden explosive trap · `C` powerup crystal · `K` key · `D` locked door · `O` boulder · `T` tree
 
-## Level 1: Easy — Forest clearing
+## Level 1: Easy — The Glade
 
 ### Story
 
-Theo finds himself in the first level of the labyrinth, an easy introduction ringed by a palm forest. A tree blocks the corridor right of the spawn — his first chance to swing the sword. A couple of guards patrol the small maze, a powerup or two glitter in the corners, and one hidden trap waits near the bottom corridor.
+Moonlit grass whispers around Theo as the first stolen dream-shard glows beyond the Glade.
 
 ### Entities
 
 Player, walls, trees, a boulder, 2 guards, 2 powerups, 1 explosive trap, exit.
 
-## Level 2: Easy — Forest maze
+## Level 2: Easy — The Gatehouse
 
 ### Story
 
-A full-screen maze with no distractions: Theo must master navigation through narrow passages while three guards patrol the corridors.
+At the Gatehouse, a Sleep Thief guard carries the key to the path home.
 
 ### Entities
 
-Player, walls, 3 guards, exit.
+Player, walls, 3 guards, 1 locked door, exit.
 
-## Level 3: Medium — Desert ruins
+## Level 3: Medium — The Orchard
 
 ### Story
 
-The labyrinth shifts to sun-bleached desert ruins. The corridors are wider and loop back on themselves, guards patrol in greater numbers, and for the first time Theo's own hidden explosive traps arm themselves when he wanders too close — after a short fuse they detonate, hurting anything in the blast, guards included. A clever wizard turns his traps into weapons.
+In the Orchard, crooked trees twist into gates and orcs drag more shards through the leaves.
 
 ### Entities
 
-Player, walls, a tree, a boulder, 3 guards, 3 powerups, 2 explosive traps, exit (sand ruin).
+Player, walls, trees, 4 guards, powerups, 1 explosive trap, exit.
 
-## Level 4: Hard — Frozen halls
+## Level 4: Medium — The Quarry
 
 ### Story
 
-Snow blankets the fourth level. The corridors tighten, four guards patrol the halls, and three traps lie buried in the ice. For the first time the exit pocket is sealed behind a locked door — the key lies in the guarded south-west corner, so escaping means crossing the whole maze twice.
+The Quarry rumbles with buried traps, but every broken stone brings Theo closer to dawn.
 
 ### Entities
 
-Player, walls, 2 boulders, 4 guards, 3 powerups, 3 explosive traps, 1 key, 1 locked door, exit (snow ruin).
+Player, walls, boulders, 5 guards, powerups, 1 explosive trap, exit.
 
-## Level 5: Expert — The dark heart
+## Level 5: Medium — The Warden
 
 ### Story
 
-The final level. In the labyrinth's darkest depths, the boss corridor is sealed behind a locked door whose key lies in the southern passage. Beyond the door waits the labyrinth's most formidable guardian — a hulking boss with triple health, heavier blows, and a longer reach for spotting intruders. Theo must fight his way past four guards, dodge three traps, claim the key, and bring the guardian down (or lure it onto a trap...) to escape the Wandertrap.
+The first Warden waits in the sand, sworn to keep the Orc King's nightmare alive.
 
 ### Entities
 
-Player, walls, 4 guards, 1 boss, 4 powerups, 3 explosive traps, 1 key, 1 locked door, exit.
+Player, walls, 2 guards, 1 boss, powerups, exit.
+
+## Level 6: Hard — Twin Halls
+
+### Story
+
+Twin Halls split the dream in two; Theo must find the right keys before sleep closes in.
+
+### Entities
+
+Player, walls, 6 guards, powerups, 2 locked doors, 1 explosive trap, exit.
+
+## Level 7: Hard — The Serpent
+
+### Story
+
+The Serpent coils through darkness, and Theo can only trust the small light around him.
+
+### Entities
+
+Player, walls, trees, a boulder, 5 guards, powerups, 1 explosive trap, fog of war, exit.
+
+## Level 8: Hard — The Crossroads
+
+### Story
+
+At the Crossroads, a second Warden patrols the center where stolen shards burn like stars.
+
+### Entities
+
+Player, walls, 6 guards, 1 boss, powerups, 1 explosive trap, exit.
+
+## Level 9: Expert — The Gauntlet
+
+### Story
+
+The Gauntlet locks each dream behind another door, daring Theo to lose heart before morning.
+
+### Entities
+
+Player, walls, 8 guards, powerups, 3 locked doors, 1 explosive trap, fog of war, exit.
+
+## Level 10: Expert — The Throne
+
+### Story
+
+On the Throne, the Orc King clutches the final shard between Theo and his own bed.
+
+### Entities
+
+Player, walls, trees, 5 guards, 1 boss, powerups, 1 locked door, 1 explosive trap, fog of war, exit.
 
 ## Design notes
 

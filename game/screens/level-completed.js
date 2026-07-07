@@ -1,6 +1,6 @@
 import { theme, styleButton } from '../utils/theme.js';
 
-export function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu) {
+export function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu, levelCompletion = {}) {
     const container = document.getElementById('game-container');
 
     // The game is already paused (animations frozen on the last rendered
@@ -32,10 +32,37 @@ export function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu) 
     modal.style.boxShadow = '0 0 30px rgba(212, 175, 55, 0.5)';
 
     const title = document.createElement('h1');
-    title.textContent = 'Level Completed!';
+    title.textContent = 'Dream-Shard Reclaimed!';
     title.style.fontSize = theme.fontSize.title;
     title.style.marginBottom = '20px';
     modal.appendChild(title);
+
+    const statusLabel = document.createElement('p');
+    statusLabel.textContent = 'Level Completed!';
+    statusLabel.style.fontSize = '18px';
+    statusLabel.style.textTransform = 'uppercase';
+    statusLabel.style.letterSpacing = '2px';
+    statusLabel.style.margin = '0 0 18px';
+    statusLabel.style.opacity = '0.8';
+    modal.appendChild(statusLabel);
+
+    const completedMessage = document.createElement('p');
+    completedMessage.textContent = levelCompletion.completedLevel
+        ? `${levelCompletion.completedLevel.name} fades behind Theo.`
+        : 'A piece of the way home returns to Theo.';
+    completedMessage.style.fontSize = '22px';
+    completedMessage.style.marginBottom = '14px';
+    modal.appendChild(completedMessage);
+
+    if (levelCompletion.nextLevel) {
+        const nextMessage = document.createElement('p');
+        nextMessage.textContent = `Next: ${levelCompletion.nextLevel.name} — ${levelCompletion.nextLevel.story}`;
+        nextMessage.style.fontSize = '18px';
+        nextMessage.style.maxWidth = '640px';
+        nextMessage.style.lineHeight = '1.4';
+        nextMessage.style.margin = '0 auto 22px';
+        modal.appendChild(nextMessage);
+    }
 
     const scoreDisplay = document.createElement('p');
     scoreDisplay.textContent = `Current Score: ${currentScore}`;

@@ -19,7 +19,7 @@ export function showGameOverScreen(finalScore, onTryAgain, onMainMenu) {
     gameOverScreen.appendChild(title);
 
     const message = document.createElement('p');
-    message.textContent = 'Theo ran out of lives. Better luck next time!';
+    message.textContent = 'The dream closed around Theo before he could reclaim every shard.';
     gameOverScreen.appendChild(message);
 
     const scoreDisplay = document.createElement('p');

@@ -1,24 +1,25 @@
 # Wandertrap
 
-Welcome to "Wandertrap," a 2D top-down maze game where you navigate through a labyrinth filled with traps, powerups, and mythical creatures.
+Welcome to "Wandertrap," a 2D top-down maze game where you navigate a dream labyrinth filled with traps, powerups, and Sleep Thief orcs.
 
-*Help Theo the Wizard navigate through the Wandertrap and find the exit in each level*
+*Help Theo in his blue pyjamas reclaim the dream-shards and wake before dawn*
 
 <img src="assets/images/banner.jpeg" alt="Wandertrap Game Screenshot" width="50%" style="display: block; margin: 0 auto;">
 
 ## Overview
 
-Wandertrap is an exciting 2D top-down maze game that challenges players to navigate through intricate labyrinths filled with puzzles, traps, and mythical creatures. As you progress through the levels, you'll encounter various obstacles, collect power-ups, and face off against cunning guards. Your goal is to find the exit in each level while maximizing your score and preserving your lives.
+Wandertrap is an exciting 2D top-down maze game that challenges players to navigate through intricate dream labyrinths filled with puzzles, traps, and Sleep Thief orcs. As you progress through the levels, Theo reclaims stolen dream-shards, collects power-ups, and faces Wardens on the way to the Orc King's throne. Your goal is to find the exit in each level while maximizing your score and preserving your lives.
 
 ### Key Features
 
 - Engaging top-down maze gameplay with smooth, frame-based movement (diagonals included)
-- Five distinct, themed levels (forest, desert, snow, dark) with increasing difficulty — all verified solvable by automated tests
+- Ten distinct, themed levels (forest, desert, snow, dungeon) with increasing difficulty — all verified solvable by automated tests
 - Sword combat with an attack cooldown, guard hurt/death animations, and a final boss guarding the last exit
 - Hidden explosive traps that arm on approach and damage player and guards alike
 - Four powerups — health, speed, strength, invincibility (timed effects shown in the HUD) — plus healing potions you carry between levels
 - Keys and locked doors gate the later exits; hidden traps can be disarmed with a well-timed pick
-- Guards with line-of-sight detection that chase, attack, and sometimes drop powerups
+- Sleep Thief orcs with line-of-sight detection that chase, attack, and sometimes drop useful items
+- Short story beats between levels, illustrated intro scenes, and optional generated narration
 - Pixel art graphics for a retro gaming feel, plus synthesized sound effects
 - Score tracking with a persistent local high score table
 
@@ -88,3 +89,13 @@ To get started with `Wandertrap`, follow these steps:
    This will create a `dist` folder with the optimized and bundled files ready for deployment.
 
 Note: The game uses Parcel as its bundler, which is included in the dev dependencies and will be installed automatically when you run `npm install`.
+
+## Story Narration
+
+Story narration is generated once with ElevenLabs and saved as MP3 files in `assets/audio/narration/`:
+
+```bash
+ELEVENLABS_API_KEY=your_key npm run narrate:story
+```
+
+Set `ELEVENLABS_VOICE_ID` to use a different voice. If narration files are missing, the game still shows the story text and advances normally.

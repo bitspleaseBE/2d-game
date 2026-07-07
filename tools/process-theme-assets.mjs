@@ -26,6 +26,13 @@ function themeAsset(theme, asset, outputName = asset) {
 }
 
 const SOURCE_ASSETS = [
+  themeAsset("forest", "floor"),
+  themeAsset("forest", "wall"),
+  themeAsset("forest", "tree_1"),
+  themeAsset("forest", "tree_2"),
+  themeAsset("forest", "boulder"),
+  themeAsset("forest", "exit"),
+
   themeAsset("desert", "floor"),
   themeAsset("desert", "wall"),
   themeAsset("desert", "tree_1"),
