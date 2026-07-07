@@ -1,10 +1,11 @@
-# Bow Attack Sprite Sheet Prompt (hero and orc archer)
+# Bow Attack Sprite Sheet Prompt (hero and orc archers)
 
-Used to generate `assets/images/player/Player_Bow.png` and the
-`assets/images/enemies/orc4/` sheets. Always pass an existing orc sheet
-(e.g. `assets/images/enemies/orc1/orc1_attack_full.png`) as an input image
-and ask for an **edit**, so frame positions, foot anchors and shadows stay
-identical to the sheets the game already renders.
+Used to generate `assets/images/player/Player_Bow.png` and the per-orc
+`assets/images/enemies/orcN/orcN_bow_attack_full.png` sheets. Always pass
+the matching existing attack sheet (e.g.
+`assets/images/enemies/orc2/orc2_attack_full.png` for the orc2 archer) as an
+input image and ask for an **edit**, so frame positions, foot anchors and
+shadows stay identical to the sheets the game already renders.
 
 ## Sheet Contract
 
@@ -24,8 +25,9 @@ identical to the sheets the game already renders.
 - Hero sheet: match `assets/images/player/Player.png` — small boy, shaggy
   brown hair, teal pyjama shirt, blue pyjama pants, barefoot, chibi
   proportions; wooden shortbow
-- Orc archer sheet (orc4): match the orc1 reference; replace the sickle
-  with a wooden shortbow, remove the white slash arcs
+- Orc archer sheets: match the same orc's reference attack sheet (skin
+  tone, clothing, colors); replace the melee weapon with a wooden shortbow,
+  remove the white slash arcs
 
 ## Style Rules
 

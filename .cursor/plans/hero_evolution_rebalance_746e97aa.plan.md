@@ -15,10 +15,10 @@ todos:
     content: Projectile entity + player bow (arrow ammo, HUD counter) using the committed Player_Bow.png and arrow.png
     status: pending
   - id: orc-archer
-    content: Orc archer guard variant on 'A' cells with keep-distance AI; place archers in levels 5+
+    content: Orc archer guard variant on 'A' cells (random orc1-3 with bow sheets) with keep-distance AI; place archers in levels 5+
     status: pending
-  - id: orc4-sheets
-    content: Generate remaining orc4 sheets (idle/walk/run/hurt/death) with tools/process-sprite-sheet.js and wire assets.js
+  - id: wire-bow-assets
+    content: Wire the committed bow sheets (orc1-3 bow attack, Player_Bow, arrow) into assets.js and the sprite manifests
     status: pending
   - id: weapon-screen
     content: Weapon-unlocked pause screen with the hero attacking right on repeat over a grass background
@@ -143,17 +143,23 @@ New file: `game/entities/projectile.js`. Files touched:
   manifest `activeStartMs/activeEndMs` window like the sword swing), consumes
   1 arrow, starts with 10 arrows on unlock, HUD shows an arrow counter next to
   keys/potions. No arrows left → notification + no shot.
-- **Orc archer, layout letter `A`**: a `Guard` variant (`ranged: true`, type
-  `orc4`) that keeps its distance — retreats when the player is closer than ~2
-  cells, fires on line-of-sight within ~6 cells with a ~1.5 s cooldown, weaker
-  in melee (60 health, 5 contact damage). Add `A` to the legend and seed
-  archers into levels 5+ (e.g. one guarding each Warden, pairs in The
-  Gauntlet), replacing some existing `G`s rather than raising the body count.
+- **Orc archer, layout letter `A`**: a `Guard` variant (`ranged: true`) of a
+  random orc type 1–3, exactly like `G` picks a random melee orc. An archer
+  keeps its distance — retreats when the player is closer than ~2 cells, fires
+  on line-of-sight within ~6 cells with a ~1.5 s cooldown, weaker in melee (60
+  health, 5 contact damage). Archers use their orc's `*_bow_attack_full.png`
+  sheet for attacks and reuse the orc's existing idle/walk/hurt/death sheets
+  for everything else, so no further enemy sheets are needed. Add `A` to the
+  legend and seed archers into levels 5+ (e.g. one guarding each Warden, pairs
+  in The Gauntlet), replacing some existing `G`s rather than raising the body
+  count.
 
-**Sprites (already in this commit, generated per the orc sheet contract with
-frame positions matching orc1–orc3):**
+**Sprites (already committed, generated per the orc sheet contract by editing
+each orc's own attack sheet so frame positions match):**
 
-- `assets/images/enemies/orc4/orc4_attack_full.png` — orc archer bow attack,
+- `assets/images/enemies/orc1/orc1_bow_attack_full.png`,
+  `assets/images/enemies/orc2/orc2_bow_attack_full.png`,
+  `assets/images/enemies/orc3/orc3_bow_attack_full.png` — bow attack per orc,
   512x256, 8x4 grid of 64x64, validated by
   [tools/validate-sprite-sheet.js](tools/validate-sprite-sheet.js)
 - `assets/images/player/Player_Bow.png` — hero bow attack, same grid
@@ -162,10 +168,10 @@ frame positions matching orc1–orc3):**
   raw generations are normalized with the new
   [tools/process-sprite-sheet.js](tools/process-sprite-sheet.js)
 
-Still to generate (`orc4-sheets`): orc4 idle/walk/run/hurt/death sheets with
-the same pipeline (edit the orc1 counterparts so positions match). Until they
-exist, `orc4` can alias orc1's non-attack sheets in `assets.js` without any
-code change to `Guard.selectSprites`. The hero's bow state slots into
+Wiring (`wire-bow-assets`): add the four new images to
+[game/assets.js](game/assets.js) (`orcN_Bow_Attack`, `playerBow`, `arrow`);
+in [game/entities/guard.js](game/entities/guard.js) `selectSprites` picks the
+bow sheet as the attack sprite when `ranged`. The hero's bow state slots into
 `playerSpriteManifest.weapons` with `frameWidth/frameHeight: 64`, `frames: 8`,
 rows `{ down: 0, up: 1, left: 2, right: 3 }` (the sheet has a real left row,
 so no `flipLeft`), `oneShot`, and a release window around frame 6.
