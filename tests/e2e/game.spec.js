@@ -375,10 +375,20 @@ test('only the axe can cut trees and break boulders', async ({ page }) => {
     game.teleportPlayer(x, y - 64);
     game.player.movement = 'down';
 
-    // The steel sword strikes the boulder but cannot damage it
+    // The starting dagger strikes the boulder but cannot damage it
+    game.notifications = [];
+    game.playerAttack();
+    const daggerResult = {
+      intact: game.obstacles.includes(obstacle),
+      notifications: game.notifications.map((n) => n.text),
+    };
+
+    // The steel sword cannot either — the hint now points at the owned axe
+    game.player.unlockWeapon('woodenAxe');
     game.player.unlockWeapon('steelSword');
     game.player.selectWeapon('steelSword');
     game.notifications = [];
+    game.attackCooldownMs = 0;
     game.playerAttack();
     const swordResult = {
       intact: game.obstacles.includes(obstacle),
@@ -386,14 +396,17 @@ test('only the axe can cut trees and break boulders', async ({ page }) => {
     };
 
     // The axe clears it in one swing
-    game.player.unlockWeapon('woodenAxe');
     game.player.selectWeapon('woodenAxe');
     game.attackCooldownMs = 0;
     game.playerAttack();
 
-    return { swordResult, afterAxe: game.obstacles.includes(obstacle) };
+    return { daggerResult, swordResult, afterAxe: game.obstacles.includes(obstacle) };
   });
 
+  expect(result.daggerResult.intact).toBe(true);
+  expect(result.daggerResult.notifications.some((t) =>
+    t.includes('Only an axe could clear this')
+  )).toBe(true);
   expect(result.swordResult.intact).toBe(true);
   expect(result.swordResult.notifications.some((t) =>
     t.includes('Only the axe can cut trees and break boulders')
