@@ -956,12 +956,15 @@ class Game {
                     this.cycleWeapon();
                     break;
                 case "1":
-                    this.selectWeapon("woodenAxe");
+                    this.selectWeapon("dagger");
                     break;
                 case "2":
-                    this.selectWeapon("steelSword");
+                    this.selectWeapon("woodenAxe");
                     break;
                 case "3":
+                    this.selectWeapon("steelSword");
+                    break;
+                case "4":
                     this.selectWeapon("dreamBow");
                     break;
                 case (0, _settingsJs.controlSettings).attack:
@@ -1132,16 +1135,19 @@ class Game {
                 } else (0, _soundJs.sfx).hit();
             }
         });
-        // Chop down obstacles (trees, boulders) that are struck
-        const obstaclesBefore = this.obstacles.length;
-        this.obstacles = this.obstacles.filter((obstacle)=>{
-            if ((0, _gameJs.isColliding)(attackBox, obstacle.getHitBox())) {
-                obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
-                return !obstacle.isDestroyed();
-            }
-            return true;
-        });
-        if (this.obstacles.length < obstaclesBefore) (0, _soundJs.sfx).chop();
+        // Only the axe can chop down obstacles (trees, boulders); a blade that
+        // strikes one just bounces off with a reminder of what is needed
+        if (weapon.canChopObstacles) {
+            const obstaclesBefore = this.obstacles.length;
+            this.obstacles = this.obstacles.filter((obstacle)=>{
+                if ((0, _gameJs.isColliding)(attackBox, obstacle.getHitBox())) {
+                    obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
+                    return !obstacle.isDestroyed();
+                }
+                return true;
+            });
+            if (this.obstacles.length < obstaclesBefore) (0, _soundJs.sfx).chop();
+        } else if (this.obstacles.some((obstacle)=>(0, _gameJs.isColliding)(attackBox, obstacle.getHitBox()))) this.notifyOnce(this.player.hasWeapon("woodenAxe") ? "Only the axe can cut trees and break boulders \u2014 press 2 to ready it." : "Only an axe could clear this \u2014 find one!");
     }
     playerBowAttack(weapon) {
         if (!this.player.hasWeapon("dreamBow")) {
@@ -1162,6 +1168,11 @@ class Game {
     }
     playerAxe() {
         if (this.attackCooldownMs > 0) return;
+        // The axe shortcut only works once the axe has been found
+        if (!this.player.hasWeapon("woodenAxe")) {
+            this.notifyOnce("You have no axe yet \u2014 look for one on a glowing pedestal.");
+            return;
+        }
         const weapon = (0, _itemsJs.weaponCatalog).woodenAxe;
         this.attackCooldownMs = weapon.cooldownMs || (0, _settingsJs.combatSettings).attackCooldownMs;
         this.player.axe();
@@ -1497,6 +1508,7 @@ class Game {
         this.drops.forEach((drop)=>drop.update(deltaMs));
         this.checkDoorUnlock();
         this.checkLockedDoorHint();
+        this.checkObstacleHint();
         this.checkLevelCompletion();
     }
     // Rectangle around a door: touching it means "at the door", one cell of
@@ -1534,6 +1546,15 @@ class Game {
         if (!nearDoor) return;
         const keyOnGround = this.drops.some((drop)=>drop.getType() === "key");
         this.notifyOnce(keyOnGround ? "The door is locked \u2014 pick up the key first!" : "The door is locked \u2014 defeat a guard to find the key.");
+    }
+    // Bumping into a tree or boulder before the axe is found explains why the
+    // path will not budge (only the axe can cut trees and break boulders)
+    checkObstacleHint() {
+        if (this.player.hasWeapon("woodenAxe")) return;
+        const playerBox = this.player.getHitBox();
+        const blocking = this.obstacles.find((obstacle)=>(0, _gameJs.isColliding)(playerBox, Game.inflateBox(obstacle.getHitBox(), 12)));
+        if (!blocking) return;
+        this.notifyOnce(blocking.getType() === "tree" ? "A tree blocks the path \u2014 only an axe can cut it down." : "A boulder blocks the way \u2014 only an axe can break it.");
     }
     checkPlayerDeath(deltaMs = 1000 / 60) {
         if (this.player.getHealth() > 0) return;
@@ -1937,11 +1958,7 @@ class Game {
         ctx.font = "bold 14px monospace";
         ctx.fillStyle = "#80d8ff";
         ctx.fillText("Weapons", panelX + 370, equipY - 12);
-        [
-            "woodenAxe",
-            "steelSword",
-            "dreamBow"
-        ].forEach((weaponId, i)=>{
+        (0, _itemsJs.weaponOrder).forEach((weaponId, i)=>{
             const itemId = (0, _itemsJs.weaponCatalog)[weaponId].itemId;
             this.drawInventorySlot(panelX + 370 + i * (slotSize + 10), equipY, slotSize, this.player.hasWeapon(weaponId) ? itemId : null, 0);
         });
@@ -2062,7 +2079,7 @@ class Game {
         ctx.fillText(`${this.player.inventory.potion || 0}`, 356 + iconSize + 2, 28);
         const weapon = this.player.getSelectedWeapon();
         ctx.drawImage(icons[weapon.icon], 412, 15, iconSize, iconSize);
-        ctx.fillText(weapon.name.replace("Wooden ", "").replace("Steel ", ""), 442, 28);
+        ctx.fillText(weapon.name.replace(/^(?:Rusty|Wooden|Steel|Dream) /, ""), 442, 28);
         ctx.drawImage(icons.arrowBundle, 548, 15, iconSize, iconSize);
         ctx.fillText(`${this.player.arrowCount}`, 578, 28);
         // Reminder that the inventory exists
@@ -2646,14 +2663,15 @@ class Player extends (0, _entityJsDefault.default) {
         // survives level changes (see Game.initializePlayer) but not a new run
         this.inventory = {};
         // Weapons are learned verbs; runes still equip from inventory.
+        // Theo starts with only the dagger; axe, sword and bow come from pedestals.
         this.ownedWeapons = [
-            "woodenAxe"
+            "dagger"
         ];
         this.equipment = {
             weapon: null,
             rune: null
         };
-        this.weaponId = "woodenAxe";
+        this.weaponId = "dagger";
         this.arrowCount = 0;
         this.arrowCapacity = 10;
         this.quiverUpgraded = false;
@@ -2822,7 +2840,7 @@ class Player extends (0, _entityJsDefault.default) {
         this.#syncAnimationState();
     }
     attackWithWeapon(weaponId = this.weaponId) {
-        const weapon = (0, _itemsJs.weaponCatalog)[weaponId] || (0, _itemsJs.weaponCatalog).woodenAxe;
+        const weapon = (0, _itemsJs.weaponCatalog)[weaponId] || (0, _itemsJs.weaponCatalog).dagger;
         this.weaponId = weapon.itemId;
         this.animator.play(weapon.actionState, {
             restart: true,
@@ -2940,7 +2958,7 @@ class Player extends (0, _entityJsDefault.default) {
         return this.getSelectedWeapon();
     }
     getSelectedWeapon() {
-        return (0, _itemsJs.weaponCatalog)[this.weaponId] || (0, _itemsJs.weaponCatalog).woodenAxe;
+        return (0, _itemsJs.weaponCatalog)[this.weaponId] || (0, _itemsJs.weaponCatalog).dagger;
     }
     addArrows(amount) {
         this.arrowCount = Math.min(this.arrowCapacity, this.arrowCount + amount);
@@ -3288,6 +3306,12 @@ const playerSpriteManifest = {
         }
     },
     weapons: {
+        // Both blades (dagger and steel sword) share the default "attack" swing
+        // from the movement sheet, so no extra sprite rows are needed for them.
+        dagger: {
+            actionState: "attack",
+            states: {}
+        },
         woodenAxe: {
             actionState: "axe",
             states: {
@@ -3465,6 +3489,15 @@ const itemCatalog = {
         arrowAmount: 5,
         description: "Five dream-arrows for the bow."
     },
+    dagger: {
+        name: "Rusty Dagger",
+        article: "a",
+        kind: "weapon",
+        icon: "dagger",
+        weaponId: "dagger",
+        damage: 25,
+        description: "Theo's first dream-tool. Quick jabs that sting orcs a little."
+    },
     woodenAxe: {
         name: "Wooden Axe",
         article: "a",
@@ -3472,7 +3505,7 @@ const itemCatalog = {
         icon: "warAxe",
         weaponId: "woodenAxe",
         damage: 30,
-        description: "Theo's first dream-tool. Chops obstacles and hurts orcs a little."
+        description: "The only tool that cuts trees and breaks boulders. Hurts orcs too."
     },
     steelSword: {
         name: "Steel Sword",
@@ -3481,7 +3514,7 @@ const itemCatalog = {
         icon: "steelSword",
         weaponId: "steelSword",
         damage: 60,
-        description: "A sturdy blade. Strong melee damage and reliable knockback."
+        description: "A sturdy blade with reliable knockback. Cannot cut trees or rocks."
     },
     dreamBow: {
         name: "Dream Bow",
@@ -3524,6 +3557,16 @@ const itemCatalog = {
     }
 };
 const weaponCatalog = {
+    dagger: {
+        itemId: "dagger",
+        name: "Rusty Dagger",
+        icon: "dagger",
+        actionState: "attack",
+        damage: 25,
+        cooldownMs: 320,
+        unlockLine: "Theo woke inside the dream clutching a rusty dagger.",
+        hint: "Quick, light jabs. Too small to cut trees or break boulders."
+    },
     woodenAxe: {
         itemId: "woodenAxe",
         name: "Wooden Axe",
@@ -3531,9 +3574,10 @@ const weaponCatalog = {
         actionState: "axe",
         damage: 30,
         cooldownMs: 430,
+        canChopObstacles: true,
         obstacleDamage: 100,
         unlockLine: "The first shard remembers a wooden axe. It can carve paths through the dream.",
-        hint: "Chops trees and boulders. Weak, but dependable."
+        hint: "The only tool that cuts trees and breaks boulders."
     },
     steelSword: {
         itemId: "steelSword",
@@ -3542,9 +3586,8 @@ const weaponCatalog = {
         actionState: "attack",
         damage: 60,
         cooldownMs: 360,
-        obstacleDamage: 60,
         unlockLine: "The second shard sharpens into a steel sword.",
-        hint: "Higher melee damage with knockback."
+        hint: "Higher melee damage with knockback. Keep the axe for trees and rocks."
     },
     dreamBow: {
         itemId: "dreamBow",
@@ -3559,6 +3602,7 @@ const weaponCatalog = {
     }
 };
 const weaponOrder = [
+    "dagger",
     "woodenAxe",
     "steelSword",
     "dreamBow"
@@ -3611,8 +3655,9 @@ const lateGuardDropPool = [
 //   'D' locked door (a defeated guard drops the key)
 //
 // Every layout is 10 rows of exactly 20 characters. Trees and boulders can
-// be chopped down (2 hits), so they make soft walls: a shortcut for players
-// willing to stop and swing, a detour for those who keep running.
+// only be chopped down with the wooden axe (one swing), so they make soft
+// walls once the axe is found — and hard walls before that. The axe waits on
+// the level 1 pedestal, on the only path out of the spawn corridor.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _storyContentJs = require("../story-content.js");
@@ -3646,13 +3691,15 @@ class Level {
 // character arrays the game consumes
 const parse = (rows)=>rows.map((row)=>row.split(""));
 const levelData = new LevelData();
-// 1. The Glade — tutorial: a small maze inside a forest clearing. One tree
-// blocks a corridor (teaches chopping), one boulder guards a dead end.
+// 1. The Glade — tutorial: a small maze inside a forest clearing. A tree
+// seals the narrow corridor beside the spawn (bumping into it without an
+// axe explains what is missing), and the wooden axe waits on a pedestal on
+// the only other way out. One boulder guards a dead end.
 levelData.addLevel(new Level(1, "easy", parse([
     "TTTTTTTTTTTTTTTTTTTT",
     "T##################T",
     "T#  G #PT     C   #T",
-    "T# ## #   ####### #T",
+    "T# ## # W ####### #T",
     "T#    #O#  C # ## #T",
     "T# ## # ##   #    #T",
     "T#  # #    #   ## #T",
@@ -3660,7 +3707,8 @@ levelData.addLevel(new Level(1, "easy", parse([
     "T##################T",
     "TTTTTTTTTTTTTTTTTTTT"
 ]), "The Glade", {
-    theme: "forest"
+    theme: "forest",
+    weaponReward: "woodenAxe"
 }));
 // 2. The Gatehouse — first locked door: defeat a guard to find the key
 levelData.addLevel(new Level(2, "easy", parse([
@@ -3852,7 +3900,7 @@ const introStoryBeats = [
         id: "intro-step-forward",
         imageKey: "introStepForward",
         audioId: "intro-step-forward",
-        text: "Theo tightened his pyjama sleeves, lifted his sword, and stepped forward: reclaim the shards, defeat the Orc King, and wake before dawn."
+        text: "Theo tightened his pyjama sleeves, lifted his little dagger, and stepped forward: reclaim the shards, defeat the Orc King, and wake before dawn."
     }
 ];
 const levelStoryBeats = [
@@ -4939,7 +4987,7 @@ function getWeaponUnlockCopy(itemId) {
         itemId,
         title: item.name,
         line: "The ninth shard becomes a quiver bright enough to carry more moonlit arrows.",
-        hint: "Arrow capacity raised to 20. Press 3 for the bow."
+        hint: "Arrow capacity raised to 20. Press 4 for the bow."
     };
     const weapon = (0, _itemsJs.weaponCatalog)[item.weaponId || itemId];
     return {
@@ -5070,6 +5118,7 @@ const ITEM_ASSET_URLS = {
     explosive: new URL(require("900784a7c2730965")),
     dreamShard: new URL(require("3d27847b46809984")),
     arrowBundle: new URL(require("5977c7c4bb6708ee")),
+    dagger: new URL(require("96b8bd0c21cec6c8")),
     steelSword: new URL(require("1151ba85fd7a4a86")),
     warAxe: new URL(require("d570f7b0415d629f")),
     runeHaste: new URL(require("865739fa4646a4a3")),
@@ -5180,7 +5229,7 @@ function getStoryAssets() {
     return storyAssets;
 }
 
-},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","3832bd2522ea840f":"Ce1lZ","da839ad1c17fe6f0":"fncWE","898fb160ea64be84":"4ZLXL","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","37feb728f1d13a47":"6hcNA","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","52bec872ae20d5b1":"3pTtO","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","90e65dbd57ec3767":"NHO4l","b03deaaf9e9826a2":"9GntM","a1d2262c6b94caa1":"iR9wY","10c432a4f44dfea1":"3Sp0K","659e0d16ab1d5659":"5xasI","ec60246b8166a591":"ffckV","e8adfee72ce6ea0e":"9ZZyQ","94ad01c9957574a8":"2t70W","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","a2dc87d21fe801f":"etmZ3","fb766fed36809546":"4asaW","bf43b78db4cdb63f":"7HsG7","d5a9fbbce5525c52":"iXTG0","7ed8f93c79bf2794":"7iEqo","27b96fa82ff320fc":"ajtWG","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","3d27847b46809984":"kAqHG","5977c7c4bb6708ee":"lfTOF","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","1f377051fc3892e5":"eTuGn","53b51ee34dc2d754":"hURqq","f1ccbf89b198689f":"13KtF","50fdaf1136bf476b":"afz4T","fa3619661867ba9b":"b5PuT","c8b406679ab87f82":"2r2jP","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
+},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","3832bd2522ea840f":"Ce1lZ","da839ad1c17fe6f0":"fncWE","898fb160ea64be84":"4ZLXL","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","37feb728f1d13a47":"6hcNA","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","52bec872ae20d5b1":"3pTtO","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","90e65dbd57ec3767":"NHO4l","b03deaaf9e9826a2":"9GntM","a1d2262c6b94caa1":"iR9wY","10c432a4f44dfea1":"3Sp0K","659e0d16ab1d5659":"5xasI","ec60246b8166a591":"ffckV","e8adfee72ce6ea0e":"9ZZyQ","94ad01c9957574a8":"2t70W","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","a2dc87d21fe801f":"etmZ3","fb766fed36809546":"4asaW","bf43b78db4cdb63f":"7HsG7","d5a9fbbce5525c52":"iXTG0","7ed8f93c79bf2794":"7iEqo","27b96fa82ff320fc":"ajtWG","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","3d27847b46809984":"kAqHG","5977c7c4bb6708ee":"lfTOF","96b8bd0c21cec6c8":"bZCaF","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","1f377051fc3892e5":"eTuGn","53b51ee34dc2d754":"hURqq","f1ccbf89b198689f":"13KtF","50fdaf1136bf476b":"afz4T","fa3619661867ba9b":"b5PuT","c8b406679ab87f82":"2r2jP","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
 module.exports = require("59afba6ea444a216").getBundleURL("aAnGP") + "Player.89df9642.png" + "?" + Date.now();
 
 },{"59afba6ea444a216":"lgJ39"}],"lgJ39":[function(require,module,exports) {
@@ -5452,7 +5501,10 @@ module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crys
 },{"f6b1d88be3588622":"lgJ39"}],"lfTOF":[function(require,module,exports) {
 module.exports = require("bc84e7cbbf3476a4").getBundleURL("aAnGP") + "arrow.1378276b.png" + "?" + Date.now();
 
-},{"bc84e7cbbf3476a4":"lgJ39"}],"imXnd":[function(require,module,exports) {
+},{"bc84e7cbbf3476a4":"lgJ39"}],"bZCaF":[function(require,module,exports) {
+module.exports = require("109c261fd4210d6d").getBundleURL("aAnGP") + "sword_dagger.a68f4caa.png" + "?" + Date.now();
+
+},{"109c261fd4210d6d":"lgJ39"}],"imXnd":[function(require,module,exports) {
 module.exports = require("11d54df61439d3a4").getBundleURL("aAnGP") + "sword_steel.a6a16a95.png" + "?" + Date.now();
 
 },{"11d54df61439d3a4":"lgJ39"}],"jPYxu":[function(require,module,exports) {
@@ -5608,7 +5660,7 @@ function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit
     exitButton.onclick = onExit;
     welcomeScreen.appendChild(exitButton);
     const controlsHint = document.createElement("p");
-    controlsHint.textContent = "Arrows: move \xb7 Space: sword \xb7 X: axe \xb7 P: disarm trap \xb7 U: potion \xb7 Esc: pause";
+    controlsHint.textContent = "Arrows: move \xb7 Space: attack \xb7 X: axe (cuts trees & rocks) \xb7 P: disarm trap \xb7 U: potion \xb7 Esc: pause";
     controlsHint.style.color = (0, _themeJs.theme).colors.text;
     controlsHint.style.fontFamily = (0, _themeJs.theme).fonts.subtitle;
     controlsHint.style.fontSize = "18px";
