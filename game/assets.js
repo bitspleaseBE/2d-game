@@ -6,6 +6,8 @@
 // Load guard sprite sheets
 // Load obstacle images
 
+import { supportsWebP } from "./utils/image-format.js";
+
 // NOTE: asset URLs must be written inline as `new URL('literal', import.meta.url)`.
 // Parcel only bundles the referenced file when the first argument is a string
 // literal at the call site. Wrapping it in a helper (variable argument) defeats
@@ -126,13 +128,31 @@ const POWERUP_ASSET_URLS = {
   yellowCrystal: new URL("../assets/images/powerups/Yellow_crystal2.png", import.meta.url),
 };
 
-const STORY_ASSET_URLS = {
-  introBedroom: new URL("../assets/images/story/intro_bedroom.png", import.meta.url),
-  introDoorway: new URL("../assets/images/story/intro_doorway.png", import.meta.url),
-  introOrcs: new URL("../assets/images/story/intro_orcs.png", import.meta.url),
-  introThrone: new URL("../assets/images/story/intro_throne.png", import.meta.url),
-  introStepForward: new URL("../assets/images/story/intro_step_forward.png", import.meta.url),
-  endingDawn: new URL("../assets/images/story/ending_dawn.png", import.meta.url),
+const STORY_ASSET_SOURCES = {
+  introBedroom: {
+    webp: new URL("../assets/images/story/intro_bedroom.webp", import.meta.url),
+    png: new URL("../assets/images/story/intro_bedroom.png", import.meta.url),
+  },
+  introDoorway: {
+    webp: new URL("../assets/images/story/intro_doorway.webp", import.meta.url),
+    png: new URL("../assets/images/story/intro_doorway.png", import.meta.url),
+  },
+  introOrcs: {
+    webp: new URL("../assets/images/story/intro_orcs.webp", import.meta.url),
+    png: new URL("../assets/images/story/intro_orcs.png", import.meta.url),
+  },
+  introThrone: {
+    webp: new URL("../assets/images/story/intro_throne.webp", import.meta.url),
+    png: new URL("../assets/images/story/intro_throne.png", import.meta.url),
+  },
+  introStepForward: {
+    webp: new URL("../assets/images/story/intro_step_forward.webp", import.meta.url),
+    png: new URL("../assets/images/story/intro_step_forward.png", import.meta.url),
+  },
+  endingDawn: {
+    webp: new URL("../assets/images/story/ending_dawn.webp", import.meta.url),
+    png: new URL("../assets/images/story/ending_dawn.png", import.meta.url),
+  },
 };
 
 const PROJECTILE_ASSET_URLS = {
@@ -218,18 +238,40 @@ export async function loadProjectileAssets(onProgress) {
   return loadImages(PROJECTILE_ASSET_URLS, onProgress);
 }
 
-// Story cinematics are by far the heaviest assets (~15 MB) but are only
-// shown on the story and game-won screens, so they load lazily in the
-// background instead of blocking the splash screen. The returned map is
-// shared and fills in progressively; screens fall back to a gradient for
-// any image that hasn't arrived yet.
+// Story cinematics load lazily in the background after the game is playable.
+// WebP is preferred in supporting browsers; PNG fallbacks keep older clients
+// working without downloading both formats.
 const storyAssets = {};
 let storyAssetsPromise = null;
+
+async function loadStoryImage(name, sources, preferWebp, onProgress) {
+  const primary = preferWebp ? sources.webp : sources.png;
+  const fallback = preferWebp ? sources.png : null;
+
+  try {
+    return await loadImage(primary.href, onProgress);
+  } catch (primaryError) {
+    if (!fallback) throw primaryError;
+    console.warn(`Falling back to PNG for story asset "${name}"`);
+    return loadImage(fallback.href, onProgress);
+  }
+}
+
+async function loadStoryImages(sourceMap, onProgress, target = {}) {
+  const preferWebp = await supportsWebP();
+
+  await Promise.all(
+    Object.entries(sourceMap).map(async ([name, sources]) => {
+      target[name] = await loadStoryImage(name, sources, preferWebp, onProgress);
+    })
+  );
+  return target;
+}
 
 export function loadStoryAssetsInBackground() {
   if (!storyAssetsPromise) {
     console.log("Loading story assets in the background...");
-    storyAssetsPromise = loadImages(STORY_ASSET_URLS, null, storyAssets).catch((error) => {
+    storyAssetsPromise = loadStoryImages(STORY_ASSET_SOURCES, null, storyAssets).catch((error) => {
       // Non-fatal: screens render a gradient fallback without these images.
       console.error("Error loading story assets:", error);
       return storyAssets;
