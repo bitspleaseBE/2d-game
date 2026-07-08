@@ -26,7 +26,6 @@ export const gameSettings = {
     initialLevel: 1, // Initial level of the game
     maxLevels: 10, // Maximum number of levels in the game (must match levels defined in levels/level-data.js)
     scoreIncrement: 100, // Points added to the score for each successful action
-    disarmScore: 50, // Points for disarming an armed explosive trap
     levelIntroDurationMs: 5200, // How long each level story card stays on screen
 };
 
@@ -87,7 +86,7 @@ export const entitySettings = {
     guardColor: '#ff69b4', // Color of guards (funny pink color)
     explosiveColor: '#ffd54f', // Color of explosives (Yellow)
     exitColor: '#4caf50', // Color of the exit (Green)
-    explosiveTriggerRange: 96, // Distance at which a hidden trap arms itself (and can be disarmed)
+    explosiveTriggerRange: 96, // Distance at which a hidden trap arms itself
     explosiveFuseMs: 1500, // Time between arming and detonation
     explosiveBlastRadius: 96, // Blast radius in pixels
     explosivePlayerDamage: 30, // Damage the blast deals to the player
@@ -108,7 +107,6 @@ export const controlSettings = {
     right: 'ArrowRight', // Key for moving right
     attack: ' ', // Key for attacking (Space bar)
     esc: 'Escape', // Key for going back to the welcome screen
-    pick: 'p', // Key for picking
     axe: 'x', // Key for axe
     potion: 'u', // Key for drinking a potion from the inventory
     inventory: 'i', // Key for opening/closing the inventory

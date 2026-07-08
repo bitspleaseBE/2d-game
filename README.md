@@ -32,12 +32,13 @@ Wandertrap is an exciting 2D top-down maze game that challenges players to navig
 | Space | Attack with the selected weapon |
 | Tab / 1 / 2 / 3 / 4 | Cycle or select Rusty Dagger / Wooden Axe / Steel Sword / Dream Bow |
 | X | Wooden Axe shortcut — the only tool that fells trees and boulders (once found) |
-| P | Pick — disarm an armed trap next to you |
 | U | Drink a healing potion |
 | I | Inventory and weapon recap |
 | Escape | Pause / back to menu |
 
-On touch devices an on-screen D-pad and action buttons appear automatically.
+On touch devices in **landscape**, an on-screen D-pad plus **ATK** and **INV** buttons appear automatically. Rotate to landscape on phones — a prompt appears if the device is held upright.
+
+Use the **Sound on/off** toggle on the welcome screen or during gameplay. You can also skip repeating level story cards from the welcome screen once you know the dreams.
 
 Embark on this thrilling adventure and see if you can outsmart the Wandertrap!
 
