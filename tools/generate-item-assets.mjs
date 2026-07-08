@@ -194,6 +194,35 @@ const icons = {
     ],
   },
 
+  // The dagger: a stubby sibling of the steel sword with a rusty blade
+  sword_dagger: {
+    palette: {
+      W: STEEL_EDGE,
+      S: [188, 129, 100], // rusted steel
+      G: GOLD,
+      b: BROWN,
+      d: BROWN_DARK,
+    },
+    grid: [
+      "................",
+      "................",
+      "................",
+      ".......W........",
+      ".......WS.......",
+      ".......WS.......",
+      ".......WS.......",
+      ".......WS.......",
+      ".......WS.......",
+      ".....GGGGGG.....",
+      ".......bb.......",
+      ".......bb.......",
+      ".......dd.......",
+      "......GGGG......",
+      "................",
+      "................",
+    ],
+  },
+
   sword_steel: {
     palette: { W: STEEL_EDGE, S: STEEL, G: GOLD, b: BROWN, d: BROWN_DARK },
     grid: [

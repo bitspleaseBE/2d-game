@@ -6,12 +6,14 @@
     "start": "parcel index.html --no-cache",
     "build": "parcel build index.html --public-url ./ --no-cache",
     "test": "playwright test",
-    "narrate:story": "node scripts/generate-narration.js"
+    "narrate:story": "node scripts/generate-narration.js",
+    "optimize:story": "node scripts/optimize-story-images.js"
   },
   "author": "Emiel Masyn",
   "license": "ISC",
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "parcel": "^2.12.0"
+    "parcel": "^2.12.0",
+    "sharp": "^0.34.3"
   }
 }

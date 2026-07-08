@@ -22,9 +22,10 @@ class Player extends Entity {
     // survives level changes (see Game.initializePlayer) but not a new run
     this.inventory = {};
     // Weapons are learned verbs; runes still equip from inventory.
-    this.ownedWeapons = ["woodenAxe"];
+    // Theo starts with only the dagger; axe, sword and bow come from pedestals.
+    this.ownedWeapons = ["dagger"];
     this.equipment = { weapon: null, rune: null };
-    this.weaponId = "woodenAxe";
+    this.weaponId = "dagger";
     this.arrowCount = 0;
     this.arrowCapacity = 10;
     this.quiverUpgraded = false;
@@ -184,7 +185,7 @@ class Player extends Entity {
   }
 
   attackWithWeapon(weaponId = this.weaponId) {
-    const weapon = weaponCatalog[weaponId] || weaponCatalog.woodenAxe;
+    const weapon = weaponCatalog[weaponId] || weaponCatalog.dagger;
     this.weaponId = weapon.itemId;
     this.animator.play(weapon.actionState, { restart: true, direction: this.movement });
     this.#syncAnimationState();
@@ -309,7 +310,7 @@ class Player extends Entity {
   }
 
   getSelectedWeapon() {
-    return weaponCatalog[this.weaponId] || weaponCatalog.woodenAxe;
+    return weaponCatalog[this.weaponId] || weaponCatalog.dagger;
   }
 
   addArrows(amount) {

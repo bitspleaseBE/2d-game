@@ -8,7 +8,7 @@ export function getWeaponUnlockCopy(itemId) {
       itemId,
       title: item.name,
       line: "The ninth shard becomes a quiver bright enough to carry more moonlit arrows.",
-      hint: "Arrow capacity raised to 20. Press 3 for the bow.",
+      hint: "Arrow capacity raised to 20. Press 4 for the bow.",
     };
   }
 

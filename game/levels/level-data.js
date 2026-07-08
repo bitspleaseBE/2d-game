@@ -12,8 +12,9 @@
 //   'D' locked door (a defeated guard drops the key)
 //
 // Every layout is 10 rows of exactly 20 characters. Trees and boulders can
-// be chopped down (2 hits), so they make soft walls: a shortcut for players
-// willing to stop and swing, a detour for those who keep running.
+// only be chopped down with the wooden axe (one swing), so they make soft
+// walls once the axe is found — and hard walls before that. The axe waits on
+// the level 1 pedestal, on the only path out of the spawn corridor.
 
 import { getLevelStoryBeat } from '../story-content.js';
 
@@ -53,20 +54,22 @@ const parse = (rows) => rows.map((row) => row.split(''));
 
 const levelData = new LevelData();
 
-// 1. The Glade — tutorial: a small maze inside a forest clearing. One tree
-// blocks a corridor (teaches chopping), one boulder guards a dead end.
+// 1. The Glade — tutorial: a small maze inside a forest clearing. A tree
+// seals the narrow corridor beside the spawn (bumping into it without an
+// axe explains what is missing), and the wooden axe waits on a pedestal on
+// the only other way out. One boulder guards a dead end.
 levelData.addLevel(new Level(1, 'easy', parse([
     'TTTTTTTTTTTTTTTTTTTT',
     'T##################T',
     'T#  G #PT     C   #T',
-    'T# ## #   ####### #T',
+    'T# ## # W ####### #T',
     'T#    #O#  C # ## #T',
     'T# ## # ##   #    #T',
     'T#  # #    #   ## #T',
     'T# ## E ##G# X ## #T',
     'T##################T',
     'TTTTTTTTTTTTTTTTTTTT',
-]), 'The Glade', { theme: 'forest' }));
+]), 'The Glade', { theme: 'forest', weaponReward: 'woodenAxe' }));
 
 // 2. The Gatehouse — first locked door: defeat a guard to find the key
 levelData.addLevel(new Level(2, 'easy', parse([

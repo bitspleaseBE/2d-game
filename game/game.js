@@ -13,8 +13,23 @@ import { sfx } from "./utils/sound.js";
 import { playNarration, stopNarration } from "./utils/narration.js";
 import Player from "./entities/player.js";
 import levelData from "./levels/level-data.js";
-import { clearContainer } from "./utils/canvas.js";
+import {
+  clearContainer,
+  mountGameStage,
+  removeGameOverlays,
+} from "./utils/canvas.js";
 import { isColliding } from "./utils/game.js";
+import {
+  shouldShowLevelIntro,
+  markLevelIntroSeen,
+} from "./utils/preferences.js";
+import {
+  createTouchControls,
+  shouldShowTouchControls,
+  syncTouchControlsVisibility,
+  installTouchControlVisibilityListener,
+} from "./utils/touch.js";
+import { createSoundToggleButton } from "./utils/sound-controls.js";
 import { randomInt } from "./utils/rng.js";
 import Wall from "./entities/wall.js";
 import Explosive from "./entities/explosive.js";
@@ -25,7 +40,7 @@ import Exit from "./entities/exit.js";
 import Drop from "./entities/drop.js";
 import Door from "./entities/door.js";
 import Projectile from "./entities/projectile.js";
-import { itemCatalog, guardDropPool, lateGuardDropPool, weaponCatalog } from "./items.js";
+import { itemCatalog, guardDropPool, lateGuardDropPool, weaponCatalog, weaponOrder } from "./items.js";
 import { resolveThemeAssets } from "./assets/theme-manifest.js";
 import { random } from "./utils/rng.js";
 import { getWeaponUnlockCopy } from "./screens/weapon-unlocked.js";
@@ -89,6 +104,9 @@ export class Game {
     this.explored = [];
     this.fogCanvas = null;
     this.levelIntro = null;
+    this.deathCount = 0;
+    this.runElapsedMs = 0;
+    this.touchControls = null;
   }
 
   initializeBoard() {
@@ -239,19 +257,19 @@ export class Game {
           this.cycleWeapon();
           break;
         case "1":
-          this.selectWeapon("woodenAxe");
+          this.selectWeapon("dagger");
           break;
         case "2":
-          this.selectWeapon("steelSword");
+          this.selectWeapon("woodenAxe");
           break;
         case "3":
+          this.selectWeapon("steelSword");
+          break;
+        case "4":
           this.selectWeapon("dreamBow");
           break;
         case controlSettings.attack:
           debounceAction(() => this.playerAttack(), 250)();
-          break;
-        case controlSettings.pick:
-          debounceAction(() => this.playerPick(), 150)();
           break;
         case controlSettings.axe:
           debounceAction(() => this.playerAxe(), 250)();
@@ -452,16 +470,27 @@ export class Game {
       }
     });
 
-    // Chop down obstacles (trees, boulders) that are struck
-    const obstaclesBefore = this.obstacles.length;
-    this.obstacles = this.obstacles.filter((obstacle) => {
-      if (isColliding(attackBox, obstacle.getHitBox())) {
-        obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
-        return !obstacle.isDestroyed();
-      }
-      return true;
-    });
-    if (this.obstacles.length < obstaclesBefore) sfx.chop();
+    // Only the axe can chop down obstacles (trees, boulders); a blade that
+    // strikes one just bounces off with a reminder of what is needed
+    if (weapon.canChopObstacles) {
+      const obstaclesBefore = this.obstacles.length;
+      this.obstacles = this.obstacles.filter((obstacle) => {
+        if (isColliding(attackBox, obstacle.getHitBox())) {
+          obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
+          return !obstacle.isDestroyed();
+        }
+        return true;
+      });
+      if (this.obstacles.length < obstaclesBefore) sfx.chop();
+    } else if (
+      this.obstacles.some((obstacle) => isColliding(attackBox, obstacle.getHitBox()))
+    ) {
+      this.notifyOnce(
+        this.player.hasWeapon("woodenAxe")
+          ? "Only the axe can cut trees and break boulders — press 2 to ready it."
+          : "Only an axe could clear this — find one!"
+      );
+    }
   }
 
   playerBowAttack(weapon) {
@@ -481,6 +510,11 @@ export class Game {
 
   playerAxe() {
     if (this.attackCooldownMs > 0) return;
+    // The axe shortcut only works once the axe has been found
+    if (!this.player.hasWeapon("woodenAxe")) {
+      this.notifyOnce("You have no axe yet — look for one on a glowing pedestal.");
+      return;
+    }
     const weapon = weaponCatalog.woodenAxe;
     this.attackCooldownMs = weapon.cooldownMs || combatSettings.attackCooldownMs;
 
@@ -498,27 +532,6 @@ export class Game {
       return true;
     });
     if (this.obstacles.length < obstaclesBefore) sfx.chop();
-  }
-
-  // Pick: disarm an armed explosive trap the player is standing near,
-  // before its fuse runs out
-  playerPick() {
-    this.player.pick();
-    const playerBox = this.player.getHitBox();
-    const px = playerBox.x + playerBox.width / 2;
-    const py = playerBox.y + playerBox.height / 2;
-
-    const index = this.explosives.findIndex((explosive) => {
-      if (!explosive.isArmed()) return false;
-      const center = explosive.getCenter();
-      return Math.hypot(px - center.x, py - center.y) <= entitySettings.explosiveTriggerRange;
-    });
-    if (index === -1) return;
-
-    this.explosives.splice(index, 1);
-    this.score += gameSettings.disarmScore;
-    sfx.disarm();
-    this.notify(`Trap disarmed! +${gameSettings.disarmScore} points`);
   }
 
   initializeEntities() {
@@ -770,7 +783,7 @@ export class Game {
 
   showLevelIntro({ narrate = true } = {}) {
     const level = levelData.getLevel(this.currentLevel);
-    if (!level) return;
+    if (!level || !shouldShowLevelIntro(this.currentLevel)) return;
     this.levelIntro = {
       name: level.name,
       number: level.number,
@@ -782,8 +795,58 @@ export class Game {
 
   dismissLevelIntro() {
     if (!this.levelIntro) return;
+    markLevelIntroSeen(this.currentLevel);
     this.levelIntro = null;
     stopNarration();
+  }
+
+  bootstrapProgressionForLevel(levelNumber) {
+    if (!this.player || levelNumber <= 1) return;
+    for (let level = 1; level < levelNumber; level += 1) {
+      const data = levelData.getLevel(level);
+      if (!data?.weaponReward) continue;
+      if (data.weaponReward === "moonlitQuiver") {
+        this.player.unlockQuiver();
+      } else {
+        this.player.unlockWeapon(data.weaponReward);
+      }
+    }
+  }
+
+  mountGameUi() {
+    const stage = this.container.querySelector("#game-stage") || this.container;
+
+    if (shouldShowTouchControls()) {
+      if (!this.touchControls) {
+        this.touchControls = createTouchControls(this);
+        installTouchControlVisibilityListener(this.touchControls);
+      }
+      if (this.touchControls.parentElement !== stage) {
+        stage.appendChild(this.touchControls);
+      }
+      syncTouchControlsVisibility(this.touchControls);
+    } else if (this.touchControls) {
+      this.touchControls.remove();
+      this.touchControls = null;
+    }
+
+    let soundToggle = stage.querySelector("#in-game-sound-toggle");
+    if (!soundToggle) {
+      soundToggle = createSoundToggleButton({ compact: true });
+      soundToggle.id = "in-game-sound-toggle";
+      soundToggle.style.position = "absolute";
+      soundToggle.style.top = "12px";
+      soundToggle.style.right = "12px";
+      soundToggle.style.zIndex = "11";
+      stage.appendChild(soundToggle);
+    }
+  }
+
+  formatRunTime(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
 
   // Mark every cell within the light radius of the player as explored
@@ -823,6 +886,9 @@ export class Game {
       this.updateWeaponUnlock(deltaMs);
       return;
     }
+    if (!this.inventoryOpen && !this.isPlayerDown()) {
+      this.runElapsedMs += deltaMs;
+    }
     this.attackCooldownMs = Math.max(0, this.attackCooldownMs - deltaMs);
     if (this.isPlayerDown()) {
       this.checkPlayerDeath(deltaMs);
@@ -852,6 +918,7 @@ export class Game {
     this.drops.forEach((drop) => drop.update(deltaMs));
     this.checkDoorUnlock();
     this.checkLockedDoorHint();
+    this.checkObstacleHint();
     this.checkLevelCompletion();
   }
 
@@ -901,6 +968,22 @@ export class Game {
     );
   }
 
+  // Bumping into a tree or boulder before the axe is found explains why the
+  // path will not budge (only the axe can cut trees and break boulders)
+  checkObstacleHint() {
+    if (this.player.hasWeapon("woodenAxe")) return;
+    const playerBox = this.player.getHitBox();
+    const blocking = this.obstacles.find((obstacle) =>
+      isColliding(playerBox, Game.inflateBox(obstacle.getHitBox(), 12))
+    );
+    if (!blocking) return;
+    this.notifyOnce(
+      blocking.getType() === "tree"
+        ? "A tree blocks the path — only an axe can cut it down."
+        : "A boulder blocks the way — only an axe can break it."
+    );
+  }
+
   checkPlayerDeath(deltaMs = 1000 / 60) {
     if (this.player.getHealth() > 0) return;
     if (this.pendingRespawnMs !== null) {
@@ -923,6 +1006,7 @@ export class Game {
     }
 
     this.lives -= 1;
+    this.deathCount += 1;
     if (this.lives <= 0) {
       this.player.defeat();
       this.pendingGameOverMs = playerSettings.defeatPauseMs;
@@ -947,7 +1031,7 @@ export class Game {
       explosive.update(playerHitBox, deltaMs);
       if (wasHidden && explosive.isArmed()) {
         sfx.fuse();
-        this.notifyOnce("A trap springs — run, or disarm it with 'p'!");
+        this.notifyOnce("A trap springs — run!");
       }
 
       const blast = explosive.consumeBlast();
@@ -1134,6 +1218,7 @@ export class Game {
 
     // Fog of war covers the world but never the HUD
     this.drawFog();
+    this.drawMinimap();
 
     // Draw the HUD on top of everything
     this.drawHUD();
@@ -1383,7 +1468,7 @@ export class Game {
     ctx.font = "bold 14px monospace";
     ctx.fillStyle = "#80d8ff";
     ctx.fillText("Weapons", panelX + 370, equipY - 12);
-    ["woodenAxe", "steelSword", "dreamBow"].forEach((weaponId, i) => {
+    weaponOrder.forEach((weaponId, i) => {
       const itemId = weaponCatalog[weaponId].itemId;
       this.drawInventorySlot(
         panelX + 370 + i * (slotSize + 10),
@@ -1502,13 +1587,57 @@ export class Game {
     });
   }
 
+  drawMinimap() {
+    if (!this.fogEnabled || !this.explored.length) return;
+
+    const ctx = this.context;
+    const cols = this.explored[0].length;
+    const rows = this.explored.length;
+    const mapWidth = 120;
+    const mapHeight = 60;
+    const mapX = this.canvas.width - mapWidth - 12;
+    const mapY = this.canvas.height - mapHeight - 12;
+    const cellW = mapWidth / cols;
+    const cellH = mapHeight / rows;
+    const playerCell = {
+      col: Math.floor(this.player.getPosition().x / canvasSettings.cellWidth),
+      row: Math.floor(this.player.getPosition().y / canvasSettings.cellHeight),
+    };
+
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+    ctx.strokeStyle = "rgba(255, 213, 79, 0.7)";
+    ctx.lineWidth = 1;
+    ctx.fillRect(mapX - 4, mapY - 4, mapWidth + 8, mapHeight + 8);
+    ctx.strokeRect(mapX - 4, mapY - 4, mapWidth + 8, mapHeight + 8);
+
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        if (!this.explored[row][col]) continue;
+        const cell = this.board[row]?.[col];
+        const isWall = cell === "#" || cell === "D";
+        ctx.fillStyle = isWall ? "rgba(120, 120, 140, 0.9)" : "rgba(70, 90, 120, 0.75)";
+        ctx.fillRect(mapX + col * cellW, mapY + row * cellH, cellW, cellH);
+      }
+    }
+
+    ctx.fillStyle = "#ffd54f";
+    ctx.fillRect(
+      mapX + playerCell.col * cellW,
+      mapY + playerCell.row * cellH,
+      cellW,
+      cellH
+    );
+    ctx.restore();
+  }
+
   drawHUD() {
     const ctx = this.context;
     ctx.save();
 
     // Background strip
     ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-    ctx.fillRect(8, 8, 640, 40);
+    ctx.fillRect(8, 8, 760, 40);
 
     ctx.font = "bold 18px monospace";
     ctx.textBaseline = "middle";
@@ -1543,7 +1672,7 @@ export class Game {
 
     const weapon = this.player.getSelectedWeapon();
     ctx.drawImage(icons[weapon.icon], 412, 15, iconSize, iconSize);
-    ctx.fillText(weapon.name.replace("Wooden ", "").replace("Steel ", ""), 442, 28);
+    ctx.fillText(weapon.name.replace(/^(?:Rusty|Wooden|Steel|Dream) /, ""), 442, 28);
     ctx.drawImage(icons.arrowBundle, 548, 15, iconSize, iconSize);
     ctx.fillText(`${this.player.arrowCount}`, 578, 28);
 
@@ -1551,6 +1680,13 @@ export class Game {
     ctx.font = "14px monospace";
     ctx.fillStyle = "#aaa";
     ctx.fillText("(i)", 616, 28);
+
+    ctx.font = "14px monospace";
+    ctx.fillStyle = "#bbb";
+    ctx.textAlign = "right";
+    ctx.fillText(`Time ${this.formatRunTime(this.runElapsedMs)}`, this.canvas.width - 18, 28);
+    ctx.fillText(`Deaths ${this.deathCount}`, this.canvas.width - 18, 48);
+    ctx.textAlign = "left";
 
     // Active powerup effects with their remaining time
     const effects = this.player.getActiveEffects();
@@ -1651,14 +1787,16 @@ export class Game {
     }
   }
 
-  start() {
+  start({ fromLevel = null } = {}) {
     // Fresh run: reset all progress
     this.started = true;
     this.paused = false;
     this.isGameOver = false;
     this.lives = playerSettings.initialLives;
     this.score = 0;
-    this.currentLevel = gameSettings.initialLevel;
+    this.currentLevel = fromLevel || gameSettings.initialLevel;
+    this.deathCount = 0;
+    this.runElapsedMs = 0;
     this.notifications = [];
     this.player = null; // a fresh run starts with an empty pack
     this.inventoryOpen = false;
@@ -1673,11 +1811,16 @@ export class Game {
     this.lastFrameTime = null;
     if (this.rafId) cancelAnimationFrame(this.rafId);
     clearContainer(this.container);
-    this.container.appendChild(this.canvas);
+    removeGameOverlays(this.container);
+    mountGameStage(this.container, this.canvas);
     this.initializeBoard();
     this.initializePlayer();
+    if (fromLevel && fromLevel > 1) {
+      this.bootstrapProgressionForLevel(fromLevel);
+    }
     this.initializeEntities();
     this.showLevelIntro();
+    this.mountGameUi();
     this.gameLoop();
   }
 
@@ -1686,7 +1829,9 @@ export class Game {
     this.paused = false;
     this.lastFrameTime = null;
     clearContainer(this.container);
-    this.container.appendChild(this.canvas);
+    removeGameOverlays(this.container);
+    mountGameStage(this.container, this.canvas);
+    this.mountGameUi();
     if (this.rafId) cancelAnimationFrame(this.rafId);
     if (this.levelIntro) {
       const level = levelData.getLevel(this.currentLevel);

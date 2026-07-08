@@ -6,7 +6,7 @@ import { entitySettings } from '../utils/settings.js';
 //   a short fuse starts burning (the bomb flashes faster and faster).
 // - When the fuse runs out it detonates, damaging the player AND any guards
 //   inside the blast radius. The game reads the blast via consumeBlast().
-// - An armed trap can be disarmed with the pick action before it blows.
+// - Hidden traps arm on approach, burn a fuse, then blast player and guards.
 // - Drawn procedurally (bomb + fuse spark + expanding blast), no sprite needed.
 
 const EXPLOSION_ANIMATION_MS = 350;
