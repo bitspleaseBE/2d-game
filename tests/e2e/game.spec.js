@@ -64,7 +64,9 @@ test('loads the welcome screen with all menu buttons', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'New Game' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Story' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'High Scores' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Exit' })).toBeVisible();
+  // No Exit button: a web game has nothing to exit to (it used to show the
+  // Game Over screen, of all things)
+  await expect(page.getByRole('button', { name: 'Exit' })).toHaveCount(0);
 });
 
 test('story screen opens and Escape returns to the menu', async ({ page }) => {
@@ -1310,5 +1312,139 @@ test('touch controls appear in landscape when forced with ?touch=1', async ({ pa
   await expect(page.locator('#touch-controls')).toBeVisible();
   await expect(page.locator('#touch-btn-attack')).toBeVisible();
   await expect(page.locator('#touch-btn-inventory')).toBeVisible();
+  await expect(page.locator('#touch-btn-potion')).toBeVisible();
+  await expect(page.locator('#touch-btn-weapon')).toBeVisible();
+  await expect(page.locator('#touch-btn-menu')).toBeVisible();
   await expect(page.locator('#touch-btn-pick')).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// Game feel: hit-stop, player knockback, game-time i-frames, and the
+// New Game confirmation. One test per behavior added in the juice pass.
+// ---------------------------------------------------------------------------
+
+test('a landed melee swing freezes the world briefly (hit-stop)', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.walls = []; // open field so knockback movement is measurable
+    game.teleportPlayer(300, 300);
+    const guard = game.spawnGuard(300, 360);
+    game.player.movement = 'down';
+
+    game.playerAttack();
+    const hitStopAfterHit = game.hitStopMs;
+    const positionDuringFreeze = { ...guard.getPosition() };
+    game.step(2); // ~33ms, still inside the 50ms freeze
+    const positionAfterTwoFrames = { ...guard.getPosition() };
+    game.step(12); // freeze over: the knockback push moves the guard
+    const positionAfterFreeze = { ...guard.getPosition() };
+
+    // A swing into empty air must not freeze anything
+    game.hitStopMs = 0;
+    game.attackCooldownMs = 0;
+    game.player.movement = 'up';
+    game.playerAttack();
+
+    return {
+      hitStopAfterHit,
+      hitStopAfterMiss: game.hitStopMs,
+      frozeDuringHitStop: positionAfterTwoFrames.y === positionDuringFreeze.y,
+      movedAfterHitStop: positionAfterFreeze.y > positionDuringFreeze.y,
+    };
+  });
+
+  expect(result.hitStopAfterHit).toBeGreaterThan(0);
+  expect(result.hitStopAfterMiss).toBe(0);
+  expect(result.frozeDuringHitStop).toBe(true);
+  expect(result.movedAfterHitStop).toBe(true);
+});
+
+test('contact damage knocks the player back, away from the guard', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.walls = [];
+    game.explosives = [];
+    game.teleportPlayer(320, 300);
+    game.spawnGuard(280, 300); // overlapping hitboxes, guard to the left
+    const xBefore = game.player.getPosition().x;
+
+    game.step(1); // contact damage lands and starts the shove
+    const knockbackActive = Boolean(game.playerKnockback);
+    game.step(10); // let the 120ms shove play out
+    return {
+      knockbackActive,
+      xBefore,
+      xAfter: game.player.getPosition().x,
+      health: game.player.getHealth(),
+    };
+  });
+
+  expect(result.health).toBe(90); // one contact hit
+  expect(result.knockbackActive).toBe(true);
+  expect(result.xAfter).toBeGreaterThan(result.xBefore); // pushed right, away from the guard
+});
+
+test('hurt invulnerability counts down in game time, not wall-clock time', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.guards = [];
+    game.explosives = [];
+
+    game.player.takeDamage(10);
+    const hurtAfterHit = game.player.isHurt();
+    game.player.takeDamage(10); // must be absorbed by the i-frames
+    const healthDuringIFrames = game.player.getHealth();
+
+    game.step(65); // ~1083ms of game time clears the 1000ms hurt window
+    const hurtAfterStepping = game.player.isHurt();
+    game.player.takeDamage(10); // lands again once the window has passed
+    return {
+      hurtAfterHit,
+      healthDuringIFrames,
+      hurtAfterStepping,
+      healthAfterWindow: game.player.getHealth(),
+    };
+  });
+
+  expect(result.hurtAfterHit).toBe(true);
+  expect(result.healthDuringIFrames).toBe(90);
+  expect(result.hurtAfterStepping).toBe(false);
+  expect(result.healthAfterWindow).toBe(80);
+});
+
+test('New Game mid-run asks for confirmation and starts a fresh run', async ({ page }) => {
+  await startNewGame(page);
+
+  // Fake some progress, then drop to the menu with Escape
+  await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.score = 500;
+    game.currentLevel = 3;
+  });
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
+
+  // Declining the confirmation keeps the paused run untouched
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: 'New Game' }).click();
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
+  let state = await gameState(page);
+  expect(state.score).toBe(500);
+
+  // Accepting it abandons the run and starts over on level 1
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'New Game' }).click();
+  await expect(page.locator('canvas')).toBeVisible();
+  await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
+  state = await gameState(page);
+  expect(state.score).toBe(0);
+  expect(state.level).toBe(1);
 });

@@ -12,6 +12,7 @@ import {
 } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
 import { setSeed } from './utils/rng.js';
+import { stopNarration } from './utils/narration.js';
 import { loadSoundPreferences, setCampaignComplete } from './utils/preferences.js';
 import { installOrientationGuard } from './utils/orientation.js';
 
@@ -92,6 +93,16 @@ class GameEngine {
         window.addEventListener('keydown', (event) => {
             switch (event.key) {
                 case controlSettings.esc:
+                    // While a game overlay (weapon unlock, level story card) is
+                    // up, Escape only dismisses the overlay — the game's own
+                    // handler takes care of it
+                    if (this.game && this.game.started && !this.game.paused &&
+                        (this.game.weaponUnlock || this.game.levelIntro)) {
+                        break;
+                    }
+                    // Leaving the story screen (or a level card) must not let
+                    // the narrator keep talking over the menu
+                    stopNarration();
                     if (this.game && this.game.started) {
                         this.game.pause();
                     }
@@ -112,7 +123,6 @@ class GameEngine {
                     () => this.startGame(),
                     this.game && this.game.started ? () => this.continueGame() : null,
                     () => this.highScore(),
-                    () => this.gameOver(),
                     () => this.story(),
                     () => this.levelSelect()
                 );
@@ -176,6 +186,12 @@ class GameEngine {
     }
 
     startGame() {
+        // A run may still be in progress (paused behind the menu); starting a
+        // new game must abandon it, not silently continue it
+        if (this.game && this.game.started) {
+            if (!window.confirm("Abandon Theo's current dream and start a new game?")) return;
+            this.game.started = false;
+        }
         this.pendingStartLevel = null;
         this.currentScreen = 'game';
         this.showScreen(this.currentScreen);
@@ -191,11 +207,6 @@ class GameEngine {
     continueGame() {
         this.pendingStartLevel = null;
         this.currentScreen = 'game';
-        this.showScreen(this.currentScreen);
-    }
-
-    gameOver() {
-        this.currentScreen = 'gameOver';
         this.showScreen(this.currentScreen);
     }
 

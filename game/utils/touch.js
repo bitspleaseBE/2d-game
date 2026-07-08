@@ -100,9 +100,29 @@ export function createTouchControls(game) {
   tapAction(inventoryBtn, () => game.toggleInventory());
   actions.appendChild(inventoryBtn);
 
+  const potionBtn = makeButton('touch-btn-potion', 'POT', 52);
+  tapAction(potionBtn, () => game.playerDrinkPotion());
+  actions.appendChild(potionBtn);
+
+  const weaponBtn = makeButton('touch-btn-weapon', 'WPN', 52);
+  tapAction(weaponBtn, () => game.cycleWeapon());
+  actions.appendChild(weaponBtn);
+
   const attackBtn = makeButton('touch-btn-attack', 'ATK', 72);
   tapAction(attackBtn, () => game.playerAttack());
   actions.appendChild(attackBtn);
+
+  // Pause/menu next to the sound toggle in the top-right (the top-left is
+  // HUD territory); routed through a synthetic Escape so it follows the
+  // keyboard path exactly
+  const menuBtn = makeButton('touch-btn-menu', '☰', 44);
+  menuBtn.style.position = 'absolute';
+  menuBtn.style.top = '12px';
+  menuBtn.style.right = '64px';
+  tapAction(menuBtn, () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  });
+  overlay.appendChild(menuBtn);
 
   overlay.appendChild(actions);
   return overlay;

@@ -70,6 +70,8 @@ Five intro beats, one sentence per level, one ending. The sentences are good ("T
 
 ### Do this weekend (biggest feel-per-hour)
 
+> **Status:** items 1–4 below have been implemented (screen shake, hit-stop, impact particles, player knockback, game-clock i-frames, New Game confirmation, Exit button removed, Escape narration/overlay fixes, extra touch buttons). Touch wiring and canvas scaling had already landed on main independently.
+
 1. **Juice pass.** 4-6px screen shake on explosions and boss hits (offset the canvas transform for ~150ms); 40-60ms hit-stop when a swing connects; a burst of 6-10 canvas-drawn particles on hit/death/chop (colored squares are enough at this art scale); knock Theo back ~24px on contact damage. One file each, transforms the game.
 2. **Wire in `touch.js`.** It's one import plus a pause/inventory/weapon-cycle button and CSS canvas scaling (`max-width:100vw; aspect-ratio:2/1`). The README already promises it.
 3. **Fix the menu gremlins.** "New Game" prompts "Abandon Theo's dream?"; "Exit" either goes away or becomes credits; Escape opens a proper pause overlay (Resume / Restart / Quit) instead of dumping to the menu; stop narration on any exit path.
