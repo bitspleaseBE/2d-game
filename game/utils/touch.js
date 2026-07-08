@@ -1,12 +1,18 @@
 // On-screen touch controls: a D-pad on the left, action buttons on the right.
-// Shown on touch-capable devices (or with ?touch=1 in the URL, which the
-// automated tests use). Buttons drive the same input paths as the keyboard:
-// directions feed game.pressedDirections, actions call the player methods.
+// Shown on touch-capable devices in landscape (or with ?touch=1 in the URL).
 
 export function shouldShowTouchControls() {
   if (typeof window === 'undefined') return false;
   if (new URLSearchParams(window.location.search).has('touch')) return true;
   return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+}
+
+export function isLandscapeViewport() {
+  return window.innerWidth >= window.innerHeight;
+}
+
+export function shouldShowTouchControlsNow() {
+  return shouldShowTouchControls() && isLandscapeViewport();
 }
 
 function makeButton(id, label, size) {
@@ -34,14 +40,15 @@ export function createTouchControls(game) {
   overlay.id = 'touch-controls';
   overlay.style.position = 'absolute';
   overlay.style.inset = '0';
-  overlay.style.pointerEvents = 'none'; // only the buttons catch input
+  overlay.style.pointerEvents = 'none';
   overlay.style.zIndex = '10';
 
   const holdDirection = (btn, direction) => {
     btn.style.pointerEvents = 'auto';
     btn.addEventListener('pointerdown', (event) => {
       event.preventDefault();
-      game.movePlayer(direction); // immediate nudge, like a key tap
+      if (!game.started || game.paused || game.isGameOver) return;
+      game.movePlayer(direction);
       game.pressedDirections.add(direction);
     });
     for (const type of ['pointerup', 'pointerleave', 'pointercancel']) {
@@ -57,7 +64,6 @@ export function createTouchControls(game) {
     });
   };
 
-  // D-pad, bottom-left
   const dpad = document.createElement('div');
   dpad.style.position = 'absolute';
   dpad.style.left = '16px';
@@ -82,7 +88,6 @@ export function createTouchControls(game) {
   }
   overlay.appendChild(dpad);
 
-  // Action cluster, bottom-right
   const actions = document.createElement('div');
   actions.style.position = 'absolute';
   actions.style.right = '16px';
@@ -91,17 +96,9 @@ export function createTouchControls(game) {
   actions.style.alignItems = 'flex-end';
   actions.style.gap = '10px';
 
-  const axeBtn = makeButton('touch-btn-axe', 'AXE', 52);
-  tapAction(axeBtn, () => game.playerAxe());
-  actions.appendChild(axeBtn);
-
-  const potionBtn = makeButton('touch-btn-potion', 'POT', 52);
-  tapAction(potionBtn, () => game.playerDrinkPotion());
-  actions.appendChild(potionBtn);
-
-  const pickBtn = makeButton('touch-btn-pick', 'PICK', 52);
-  tapAction(pickBtn, () => game.playerPick());
-  actions.appendChild(pickBtn);
+  const inventoryBtn = makeButton('touch-btn-inventory', 'INV', 52);
+  tapAction(inventoryBtn, () => game.toggleInventory());
+  actions.appendChild(inventoryBtn);
 
   const attackBtn = makeButton('touch-btn-attack', 'ATK', 72);
   tapAction(attackBtn, () => game.playerAttack());
@@ -109,4 +106,16 @@ export function createTouchControls(game) {
 
   overlay.appendChild(actions);
   return overlay;
+}
+
+export function syncTouchControlsVisibility(overlay) {
+  if (!overlay) return;
+  overlay.style.display = shouldShowTouchControlsNow() ? 'block' : 'none';
+}
+
+export function installTouchControlVisibilityListener(overlay) {
+  const update = () => syncTouchControlsVisibility(overlay);
+  window.addEventListener('resize', update);
+  window.addEventListener('orientationchange', update);
+  update();
 }

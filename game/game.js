@@ -13,8 +13,23 @@ import { sfx } from "./utils/sound.js";
 import { playNarration, stopNarration } from "./utils/narration.js";
 import Player from "./entities/player.js";
 import levelData from "./levels/level-data.js";
-import { clearContainer } from "./utils/canvas.js";
+import {
+  clearContainer,
+  mountGameStage,
+  removeGameOverlays,
+} from "./utils/canvas.js";
 import { isColliding } from "./utils/game.js";
+import {
+  shouldShowLevelIntro,
+  markLevelIntroSeen,
+} from "./utils/preferences.js";
+import {
+  createTouchControls,
+  shouldShowTouchControls,
+  syncTouchControlsVisibility,
+  installTouchControlVisibilityListener,
+} from "./utils/touch.js";
+import { createSoundToggleButton } from "./utils/sound-controls.js";
 import { randomInt } from "./utils/rng.js";
 import Wall from "./entities/wall.js";
 import Explosive from "./entities/explosive.js";
@@ -89,6 +104,9 @@ export class Game {
     this.explored = [];
     this.fogCanvas = null;
     this.levelIntro = null;
+    this.deathCount = 0;
+    this.runElapsedMs = 0;
+    this.touchControls = null;
   }
 
   initializeBoard() {
@@ -252,9 +270,6 @@ export class Game {
           break;
         case controlSettings.attack:
           debounceAction(() => this.playerAttack(), 250)();
-          break;
-        case controlSettings.pick:
-          debounceAction(() => this.playerPick(), 150)();
           break;
         case controlSettings.axe:
           debounceAction(() => this.playerAxe(), 250)();
@@ -519,27 +534,6 @@ export class Game {
     if (this.obstacles.length < obstaclesBefore) sfx.chop();
   }
 
-  // Pick: disarm an armed explosive trap the player is standing near,
-  // before its fuse runs out
-  playerPick() {
-    this.player.pick();
-    const playerBox = this.player.getHitBox();
-    const px = playerBox.x + playerBox.width / 2;
-    const py = playerBox.y + playerBox.height / 2;
-
-    const index = this.explosives.findIndex((explosive) => {
-      if (!explosive.isArmed()) return false;
-      const center = explosive.getCenter();
-      return Math.hypot(px - center.x, py - center.y) <= entitySettings.explosiveTriggerRange;
-    });
-    if (index === -1) return;
-
-    this.explosives.splice(index, 1);
-    this.score += gameSettings.disarmScore;
-    sfx.disarm();
-    this.notify(`Trap disarmed! +${gameSettings.disarmScore} points`);
-  }
-
   initializeEntities() {
     const level = levelData.getLevel(this.currentLevel);
 
@@ -789,7 +783,7 @@ export class Game {
 
   showLevelIntro({ narrate = true } = {}) {
     const level = levelData.getLevel(this.currentLevel);
-    if (!level) return;
+    if (!level || !shouldShowLevelIntro(this.currentLevel)) return;
     this.levelIntro = {
       name: level.name,
       number: level.number,
@@ -801,8 +795,58 @@ export class Game {
 
   dismissLevelIntro() {
     if (!this.levelIntro) return;
+    markLevelIntroSeen(this.currentLevel);
     this.levelIntro = null;
     stopNarration();
+  }
+
+  bootstrapProgressionForLevel(levelNumber) {
+    if (!this.player || levelNumber <= 1) return;
+    for (let level = 1; level < levelNumber; level += 1) {
+      const data = levelData.getLevel(level);
+      if (!data?.weaponReward) continue;
+      if (data.weaponReward === "moonlitQuiver") {
+        this.player.unlockQuiver();
+      } else {
+        this.player.unlockWeapon(data.weaponReward);
+      }
+    }
+  }
+
+  mountGameUi() {
+    const stage = this.container.querySelector("#game-stage") || this.container;
+
+    if (shouldShowTouchControls()) {
+      if (!this.touchControls) {
+        this.touchControls = createTouchControls(this);
+        installTouchControlVisibilityListener(this.touchControls);
+      }
+      if (this.touchControls.parentElement !== stage) {
+        stage.appendChild(this.touchControls);
+      }
+      syncTouchControlsVisibility(this.touchControls);
+    } else if (this.touchControls) {
+      this.touchControls.remove();
+      this.touchControls = null;
+    }
+
+    let soundToggle = stage.querySelector("#in-game-sound-toggle");
+    if (!soundToggle) {
+      soundToggle = createSoundToggleButton({ compact: true });
+      soundToggle.id = "in-game-sound-toggle";
+      soundToggle.style.position = "absolute";
+      soundToggle.style.top = "12px";
+      soundToggle.style.right = "12px";
+      soundToggle.style.zIndex = "11";
+      stage.appendChild(soundToggle);
+    }
+  }
+
+  formatRunTime(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
 
   // Mark every cell within the light radius of the player as explored
@@ -841,6 +885,9 @@ export class Game {
     if (this.weaponUnlock) {
       this.updateWeaponUnlock(deltaMs);
       return;
+    }
+    if (!this.inventoryOpen && !this.isPlayerDown()) {
+      this.runElapsedMs += deltaMs;
     }
     this.attackCooldownMs = Math.max(0, this.attackCooldownMs - deltaMs);
     if (this.isPlayerDown()) {
@@ -959,6 +1006,7 @@ export class Game {
     }
 
     this.lives -= 1;
+    this.deathCount += 1;
     if (this.lives <= 0) {
       this.player.defeat();
       this.pendingGameOverMs = playerSettings.defeatPauseMs;
@@ -983,7 +1031,7 @@ export class Game {
       explosive.update(playerHitBox, deltaMs);
       if (wasHidden && explosive.isArmed()) {
         sfx.fuse();
-        this.notifyOnce("A trap springs — run, or disarm it with 'p'!");
+        this.notifyOnce("A trap springs — run!");
       }
 
       const blast = explosive.consumeBlast();
@@ -1170,6 +1218,7 @@ export class Game {
 
     // Fog of war covers the world but never the HUD
     this.drawFog();
+    this.drawMinimap();
 
     // Draw the HUD on top of everything
     this.drawHUD();
@@ -1538,13 +1587,57 @@ export class Game {
     });
   }
 
+  drawMinimap() {
+    if (!this.fogEnabled || !this.explored.length) return;
+
+    const ctx = this.context;
+    const cols = this.explored[0].length;
+    const rows = this.explored.length;
+    const mapWidth = 120;
+    const mapHeight = 60;
+    const mapX = this.canvas.width - mapWidth - 12;
+    const mapY = this.canvas.height - mapHeight - 12;
+    const cellW = mapWidth / cols;
+    const cellH = mapHeight / rows;
+    const playerCell = {
+      col: Math.floor(this.player.getPosition().x / canvasSettings.cellWidth),
+      row: Math.floor(this.player.getPosition().y / canvasSettings.cellHeight),
+    };
+
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+    ctx.strokeStyle = "rgba(255, 213, 79, 0.7)";
+    ctx.lineWidth = 1;
+    ctx.fillRect(mapX - 4, mapY - 4, mapWidth + 8, mapHeight + 8);
+    ctx.strokeRect(mapX - 4, mapY - 4, mapWidth + 8, mapHeight + 8);
+
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        if (!this.explored[row][col]) continue;
+        const cell = this.board[row]?.[col];
+        const isWall = cell === "#" || cell === "D";
+        ctx.fillStyle = isWall ? "rgba(120, 120, 140, 0.9)" : "rgba(70, 90, 120, 0.75)";
+        ctx.fillRect(mapX + col * cellW, mapY + row * cellH, cellW, cellH);
+      }
+    }
+
+    ctx.fillStyle = "#ffd54f";
+    ctx.fillRect(
+      mapX + playerCell.col * cellW,
+      mapY + playerCell.row * cellH,
+      cellW,
+      cellH
+    );
+    ctx.restore();
+  }
+
   drawHUD() {
     const ctx = this.context;
     ctx.save();
 
     // Background strip
     ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-    ctx.fillRect(8, 8, 640, 40);
+    ctx.fillRect(8, 8, 760, 40);
 
     ctx.font = "bold 18px monospace";
     ctx.textBaseline = "middle";
@@ -1587,6 +1680,13 @@ export class Game {
     ctx.font = "14px monospace";
     ctx.fillStyle = "#aaa";
     ctx.fillText("(i)", 616, 28);
+
+    ctx.font = "14px monospace";
+    ctx.fillStyle = "#bbb";
+    ctx.textAlign = "right";
+    ctx.fillText(`Time ${this.formatRunTime(this.runElapsedMs)}`, this.canvas.width - 18, 28);
+    ctx.fillText(`Deaths ${this.deathCount}`, this.canvas.width - 18, 48);
+    ctx.textAlign = "left";
 
     // Active powerup effects with their remaining time
     const effects = this.player.getActiveEffects();
@@ -1687,14 +1787,16 @@ export class Game {
     }
   }
 
-  start() {
+  start({ fromLevel = null } = {}) {
     // Fresh run: reset all progress
     this.started = true;
     this.paused = false;
     this.isGameOver = false;
     this.lives = playerSettings.initialLives;
     this.score = 0;
-    this.currentLevel = gameSettings.initialLevel;
+    this.currentLevel = fromLevel || gameSettings.initialLevel;
+    this.deathCount = 0;
+    this.runElapsedMs = 0;
     this.notifications = [];
     this.player = null; // a fresh run starts with an empty pack
     this.inventoryOpen = false;
@@ -1709,11 +1811,16 @@ export class Game {
     this.lastFrameTime = null;
     if (this.rafId) cancelAnimationFrame(this.rafId);
     clearContainer(this.container);
-    this.container.appendChild(this.canvas);
+    removeGameOverlays(this.container);
+    mountGameStage(this.container, this.canvas);
     this.initializeBoard();
     this.initializePlayer();
+    if (fromLevel && fromLevel > 1) {
+      this.bootstrapProgressionForLevel(fromLevel);
+    }
     this.initializeEntities();
     this.showLevelIntro();
+    this.mountGameUi();
     this.gameLoop();
   }
 
@@ -1722,7 +1829,9 @@ export class Game {
     this.paused = false;
     this.lastFrameTime = null;
     clearContainer(this.container);
-    this.container.appendChild(this.canvas);
+    removeGameOverlays(this.container);
+    mountGameStage(this.container, this.canvas);
+    this.mountGameUi();
     if (this.rafId) cancelAnimationFrame(this.rafId);
     if (this.levelIntro) {
       const level = levelData.getLevel(this.currentLevel);

@@ -47,7 +47,6 @@ This document provides an overview of the entities in "Wandertrap" and the lette
 - **Explosive (E)**
   - A hidden trap. Invisible until the player comes within 1.5 cells, then it reveals itself and arms: the fuse burns for ~1.5 seconds with an accelerating red warning flash.
   - On detonation it damages everything in the blast radius — 30 to the player, 100 to guards (enough to kill a regular guard). Traps can be used tactically against pursuers.
-  - An armed trap can be defused: stand next to it and press **P** (pick) to disarm it for +50 points — if you're quick enough.
 
 - **Key (K)**
   - A golden key collected on touch (+50 points).
@@ -89,9 +88,9 @@ An automated test BFS-checks every level for solvability and asserts that no two
 
 - **Selected weapon (Space)** — Rusty Dagger jabs quickly, Wooden Axe chops obstacles and weakly hurts orcs, Steel Sword is stronger melee with knockback, Dream Bow fires arrows.
 - **Axe (X)** — shortcut to the Wooden Axe chop (only once the axe has been found).
-- **Pick (P)** — disarms an armed explosive trap the player is standing next to (+50 points).
+- **Inventory (I)** — opens the inventory overlay to ready weapons, equip runes, or drink potions.
 - **Potion (U)** — drinks a carried potion, restoring 50 health. Potions carry between levels and cap at 3; overflow pickups convert to score.
 
 ## Touch controls
 
-On touch devices (or with `?touch=1` in the URL) an on-screen D-pad and action buttons (ATK / AXE / POT / PICK) overlay the game, driving the same input paths as the keyboard.
+On touch devices in landscape (or with `?touch=1` in the URL) an on-screen D-pad plus **ATK** and **INV** buttons overlay the game. Hold the device sideways — portrait mode shows a rotate prompt on phones.

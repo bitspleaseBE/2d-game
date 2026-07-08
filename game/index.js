@@ -1,9 +1,19 @@
 import { Game } from './game.js';
 import { loadPlayerAssets, loadLevelAssets, loadGuardAssets, loadPowerUpsAssets, loadItemAssets, loadProjectileAssets, loadStoryAssetsInBackground, getStoryAssets, getTotalAssetCount } from './assets.js';
 import { showSplashScreen, updateSplashScreenProgress } from './screens/splash.js';
-import { showWelcomeScreen, showGameOverScreen, showGameWonScreen, showHighScoreScreen, showLevelCompletedScreen, showStoryScreen } from './screens/index.js';
+import {
+  showWelcomeScreen,
+  showLevelSelectScreen,
+  showGameOverScreen,
+  showGameWonScreen,
+  showHighScoreScreen,
+  showLevelCompletedScreen,
+  showStoryScreen,
+} from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
 import { setSeed } from './utils/rng.js';
+import { loadSoundPreferences, setCampaignComplete } from './utils/preferences.js';
+import { installOrientationGuard } from './utils/orientation.js';
 
 // Entry point of the game
 // - Initialize the game engine
@@ -19,10 +29,7 @@ class GameEngine {
         this.context = this.canvas.getContext('2d');
         this.canvas.width = canvasSettings.width;
         this.canvas.height = canvasSettings.height;
-        this.canvas.style.display = 'block';
-        this.canvas.style.margin = 'auto';
-        this.container.appendChild(this.canvas);
-        
+        this.pendingStartLevel = null;
         this.currentScreen = 'splash';
     }
 
@@ -37,6 +44,9 @@ class GameEngine {
     async initialize() {
         try {
             console.log('Initializing game...');
+            loadSoundPreferences();
+            installOrientationGuard();
+
             const totalAssets = getTotalAssetCount();
             let loadedAssets = 0;
 
@@ -55,8 +65,6 @@ class GameEngine {
                 loadProjectileAssets(onProgress),
             ]);
 
-            // Heavy story cinematics load lazily after the game is playable;
-            // getStoryAssets() returns a live map that fills in as they arrive.
             const storyAssets = getStoryAssets();
             loadStoryAssetsInBackground();
 
@@ -67,14 +75,15 @@ class GameEngine {
                     this.levelCompletion = { score, completedLevel, nextLevel };
                     this.showScreen('levelCompleted');
                 },
-                onGameWon: () => this.showScreen('gameWon'),
+                onGameWon: () => {
+                    setCampaignComplete();
+                    this.showScreen('gameWon');
+                },
             });
             this.showScreen('welcome');
             this.setupGameControls();
         } catch (error) {
             console.error('Error initializing game:', error);
-            // Re-throw so the splash screen can surface the failure instead of
-            // transitioning to a welcome screen backed by an uninitialized game.
             throw error;
         }
     }
@@ -104,7 +113,14 @@ class GameEngine {
                     this.game && this.game.started ? () => this.continueGame() : null,
                     () => this.highScore(),
                     () => this.gameOver(),
-                    () => this.story()
+                    () => this.story(),
+                    () => this.levelSelect()
+                );
+                break;
+            case 'levelSelect':
+                showLevelSelectScreen(
+                    (levelNumber) => this.startFromLevel(levelNumber),
+                    () => this.showScreen('welcome')
                 );
                 break;
             case 'story':
@@ -116,7 +132,10 @@ class GameEngine {
                     console.error('Cannot start game: assets are still loading or failed to load.');
                     return;
                 }
-                if (!this.game.started) {
+                if (this.pendingStartLevel) {
+                    this.game.start({ fromLevel: this.pendingStartLevel });
+                    this.pendingStartLevel = null;
+                } else if (!this.game.started) {
                     this.game.start();
                 } else {
                     this.game.continue();
@@ -136,7 +155,7 @@ class GameEngine {
             case 'levelCompleted':
                 showLevelCompletedScreen(
                     this.game.score,
-                    () => this.startGame(),
+                    () => this.continueGame(),
                     () => this.showScreen('welcome'),
                     this.levelCompletion
                 );
@@ -151,12 +170,26 @@ class GameEngine {
         this.showScreen(this.currentScreen);
     }
 
+    levelSelect() {
+        this.currentScreen = 'levelSelect';
+        this.showScreen(this.currentScreen);
+    }
+
     startGame() {
+        this.pendingStartLevel = null;
+        this.currentScreen = 'game';
+        this.showScreen(this.currentScreen);
+    }
+
+    startFromLevel(levelNumber) {
+        this.pendingStartLevel = levelNumber;
+        this.game.started = false;
         this.currentScreen = 'game';
         this.showScreen(this.currentScreen);
     }
 
     continueGame() {
+        this.pendingStartLevel = null;
         this.currentScreen = 'game';
         this.showScreen(this.currentScreen);
     }
@@ -175,8 +208,5 @@ class GameEngine {
 const gameEngine = new GameEngine('game-container');
 gameEngine.showScreen('splash');
 
-// Exposed for automated (Playwright) tests to inspect game state.
-// setSeed makes randomness reproducible mid-run; ?seed=N in the URL
-// seeds the RNG at load time.
 window.__wandertrap = gameEngine;
 window.__wandertrap.setSeed = setSeed;

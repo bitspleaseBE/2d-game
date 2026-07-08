@@ -532,34 +532,6 @@ test('a hidden trap arms near the player and its blast deals damage', async ({ p
   expect(result.trapsLeft).toBe(0); // the spent trap is removed
 });
 
-test('an armed trap can be disarmed with the pick action for bonus points', async ({ page }) => {
-  await startNewGame(page);
-
-  const result = await page.evaluate(() => {
-    const game = window.__wandertrap.game;
-    game.pause();
-    game.guards = [];
-
-    const trap = game.explosives[0];
-    const trapPosition = trap.getPosition();
-    game.teleportPlayer(trapPosition.x, trapPosition.y);
-    game.step(1); // arm it
-
-    const scoreBefore = game.score;
-    game.playerPick();
-    return {
-      scoreBefore,
-      scoreAfter: game.score,
-      trapsLeft: game.explosives.length,
-      health: game.player.getHealth(),
-    };
-  });
-
-  expect(result.trapsLeft).toBe(0);
-  expect(result.scoreAfter).toBe(result.scoreBefore + 50); // disarmScore
-  expect(result.health).toBe(100); // no blast happened
-});
-
 test('the attack cooldown blocks an immediate second swing', async ({ page }) => {
   await startNewGame(page);
 
@@ -1323,4 +1295,20 @@ test('reaching the exit completes level 1 and advances to level 2', async ({ pag
   expect(next.level).toBe(2);
   // Level 2 spawn is the top-left corner of its maze
   expect(next.position).toEqual({ x: 64, y: 64 });
+});
+
+test('welcome screen exposes sound and story-skip settings', async ({ page }) => {
+  await openWelcomeScreen(page);
+  await expect(page.getByRole('button', { name: /Sound/i })).toBeVisible();
+  await expect(page.getByText('Skip level story cards')).toBeVisible();
+});
+
+test('touch controls appear in landscape when forced with ?touch=1', async ({ page }) => {
+  await page.goto('/?touch=1');
+  await expect(page.locator('#welcome-screen')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'New Game' }).click();
+  await expect(page.locator('#touch-controls')).toBeVisible();
+  await expect(page.locator('#touch-btn-attack')).toBeVisible();
+  await expect(page.locator('#touch-btn-inventory')).toBeVisible();
+  await expect(page.locator('#touch-btn-pick')).toHaveCount(0);
 });

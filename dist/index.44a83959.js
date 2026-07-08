@@ -590,6 +590,8 @@ var _splashJs = require("./screens/splash.js");
 var _indexJs = require("./screens/index.js");
 var _settingsJs = require("./utils/settings.js");
 var _rngJs = require("./utils/rng.js");
+var _preferencesJs = require("./utils/preferences.js");
+var _orientationJs = require("./utils/orientation.js");
 // Entry point of the game
 // - Initialize the game engine
 // - Load assets (images, sounds, etc.)
@@ -603,9 +605,7 @@ class GameEngine {
         this.context = this.canvas.getContext("2d");
         this.canvas.width = (0, _settingsJs.canvasSettings).width;
         this.canvas.height = (0, _settingsJs.canvasSettings).height;
-        this.canvas.style.display = "block";
-        this.canvas.style.margin = "auto";
-        this.container.appendChild(this.canvas);
+        this.pendingStartLevel = null;
         this.currentScreen = "splash";
     }
     getCanvas() {
@@ -617,6 +617,8 @@ class GameEngine {
     async initialize() {
         try {
             console.log("Initializing game...");
+            (0, _preferencesJs.loadSoundPreferences)();
+            (0, _orientationJs.installOrientationGuard)();
             const totalAssets = (0, _assetsJs.getTotalAssetCount)();
             let loadedAssets = 0;
             const onProgress = (src, img)=>{
@@ -632,8 +634,6 @@ class GameEngine {
                 (0, _assetsJs.loadItemAssets)(onProgress),
                 (0, _assetsJs.loadProjectileAssets)(onProgress)
             ]);
-            // Heavy story cinematics load lazily after the game is playable;
-            // getStoryAssets() returns a live map that fills in as they arrive.
             const storyAssets = (0, _assetsJs.getStoryAssets)();
             (0, _assetsJs.loadStoryAssetsInBackground)();
             this.assets = {
@@ -655,14 +655,15 @@ class GameEngine {
                     };
                     this.showScreen("levelCompleted");
                 },
-                onGameWon: ()=>this.showScreen("gameWon")
+                onGameWon: ()=>{
+                    (0, _preferencesJs.setCampaignComplete)();
+                    this.showScreen("gameWon");
+                }
             });
             this.showScreen("welcome");
             this.setupGameControls();
         } catch (error) {
             console.error("Error initializing game:", error);
-            // Re-throw so the splash screen can surface the failure instead of
-            // transitioning to a welcome screen backed by an uninitialized game.
             throw error;
         }
     }
@@ -683,7 +684,10 @@ class GameEngine {
                 (0, _splashJs.showSplashScreen)(this.initialize.bind(this), ()=>this.showScreen("welcome"));
                 break;
             case "welcome":
-                (0, _indexJs.showWelcomeScreen)(()=>this.startGame(), this.game && this.game.started ? ()=>this.continueGame() : null, ()=>this.highScore(), ()=>this.gameOver(), ()=>this.story());
+                (0, _indexJs.showWelcomeScreen)(()=>this.startGame(), this.game && this.game.started ? ()=>this.continueGame() : null, ()=>this.highScore(), ()=>this.gameOver(), ()=>this.story(), ()=>this.levelSelect());
+                break;
+            case "levelSelect":
+                (0, _indexJs.showLevelSelectScreen)((levelNumber)=>this.startFromLevel(levelNumber), ()=>this.showScreen("welcome"));
                 break;
             case "story":
                 (0, _indexJs.showStoryScreen)(()=>this.showScreen("welcome"), this.assets.storyAssets);
@@ -694,7 +698,12 @@ class GameEngine {
                     console.error("Cannot start game: assets are still loading or failed to load.");
                     return;
                 }
-                if (!this.game.started) this.game.start();
+                if (this.pendingStartLevel) {
+                    this.game.start({
+                        fromLevel: this.pendingStartLevel
+                    });
+                    this.pendingStartLevel = null;
+                } else if (!this.game.started) this.game.start();
                 else this.game.continue();
                 break;
             case "gameOver":
@@ -709,7 +718,7 @@ class GameEngine {
                 (0, _indexJs.showHighScoreScreen)(()=>this.showScreen("welcome"));
                 break;
             case "levelCompleted":
-                (0, _indexJs.showLevelCompletedScreen)(this.game.score, ()=>this.startGame(), ()=>this.showScreen("welcome"), this.levelCompletion);
+                (0, _indexJs.showLevelCompletedScreen)(this.game.score, ()=>this.continueGame(), ()=>this.showScreen("welcome"), this.levelCompletion);
                 break;
             default:
                 console.error("Unknown screen:", screen);
@@ -719,11 +728,23 @@ class GameEngine {
         this.currentScreen = "story";
         this.showScreen(this.currentScreen);
     }
+    levelSelect() {
+        this.currentScreen = "levelSelect";
+        this.showScreen(this.currentScreen);
+    }
     startGame() {
+        this.pendingStartLevel = null;
+        this.currentScreen = "game";
+        this.showScreen(this.currentScreen);
+    }
+    startFromLevel(levelNumber) {
+        this.pendingStartLevel = levelNumber;
+        this.game.started = false;
         this.currentScreen = "game";
         this.showScreen(this.currentScreen);
     }
     continueGame() {
+        this.pendingStartLevel = null;
         this.currentScreen = "game";
         this.showScreen(this.currentScreen);
     }
@@ -738,13 +759,10 @@ class GameEngine {
 }
 const gameEngine = new GameEngine("game-container");
 gameEngine.showScreen("splash");
-// Exposed for automated (Playwright) tests to inspect game state.
-// setSeed makes randomness reproducible mid-run; ?seed=N in the URL
-// seeds the RNG at load time.
 window.__wandertrap = gameEngine;
 window.__wandertrap.setSeed = (0, _rngJs.setSeed);
 
-},{"./game.js":"7sRy4","./assets.js":"2MtDO","./screens/splash.js":"kNfRL","./screens/index.js":"2Rkrn","./utils/settings.js":"hBndc","./utils/rng.js":"7uRsi"}],"7sRy4":[function(require,module,exports) {
+},{"./game.js":"7sRy4","./assets.js":"2MtDO","./screens/splash.js":"kNfRL","./screens/index.js":"2Rkrn","./utils/settings.js":"hBndc","./utils/rng.js":"7uRsi","./utils/preferences.js":"3e82j","./utils/orientation.js":"bcQ3D"}],"7sRy4":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Main game logic
@@ -764,6 +782,9 @@ var _levelDataJs = require("./levels/level-data.js");
 var _levelDataJsDefault = parcelHelpers.interopDefault(_levelDataJs);
 var _canvasJs = require("./utils/canvas.js");
 var _gameJs = require("./utils/game.js");
+var _preferencesJs = require("./utils/preferences.js");
+var _touchJs = require("./utils/touch.js");
+var _soundControlsJs = require("./utils/sound-controls.js");
 var _rngJs = require("./utils/rng.js");
 var _wallJs = require("./entities/wall.js");
 var _wallJsDefault = parcelHelpers.interopDefault(_wallJs);
@@ -843,6 +864,9 @@ class Game {
         this.explored = [];
         this.fogCanvas = null;
         this.levelIntro = null;
+        this.deathCount = 0;
+        this.runElapsedMs = 0;
+        this.touchControls = null;
     }
     initializeBoard() {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
@@ -969,9 +993,6 @@ class Game {
                     break;
                 case (0, _settingsJs.controlSettings).attack:
                     debounceAction(()=>this.playerAttack(), 250)();
-                    break;
-                case (0, _settingsJs.controlSettings).pick:
-                    debounceAction(()=>this.playerPick(), 150)();
                     break;
                 case (0, _settingsJs.controlSettings).axe:
                     debounceAction(()=>this.playerAxe(), 250)();
@@ -1188,24 +1209,6 @@ class Game {
             return true;
         });
         if (this.obstacles.length < obstaclesBefore) (0, _soundJs.sfx).chop();
-    }
-    // Pick: disarm an armed explosive trap the player is standing near,
-    // before its fuse runs out
-    playerPick() {
-        this.player.pick();
-        const playerBox = this.player.getHitBox();
-        const px = playerBox.x + playerBox.width / 2;
-        const py = playerBox.y + playerBox.height / 2;
-        const index = this.explosives.findIndex((explosive)=>{
-            if (!explosive.isArmed()) return false;
-            const center = explosive.getCenter();
-            return Math.hypot(px - center.x, py - center.y) <= (0, _settingsJs.entitySettings).explosiveTriggerRange;
-        });
-        if (index === -1) return;
-        this.explosives.splice(index, 1);
-        this.score += (0, _settingsJs.gameSettings).disarmScore;
-        (0, _soundJs.sfx).disarm();
-        this.notify(`Trap disarmed! +${(0, _settingsJs.gameSettings).disarmScore} points`);
     }
     initializeEntities() {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
@@ -1427,7 +1430,7 @@ class Game {
     }
     showLevelIntro({ narrate = true } = {}) {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
-        if (!level) return;
+        if (!level || !(0, _preferencesJs.shouldShowLevelIntro)(this.currentLevel)) return;
         this.levelIntro = {
             name: level.name,
             number: level.number,
@@ -1438,8 +1441,50 @@ class Game {
     }
     dismissLevelIntro() {
         if (!this.levelIntro) return;
+        (0, _preferencesJs.markLevelIntroSeen)(this.currentLevel);
         this.levelIntro = null;
         (0, _narrationJs.stopNarration)();
+    }
+    bootstrapProgressionForLevel(levelNumber) {
+        if (!this.player || levelNumber <= 1) return;
+        for(let level = 1; level < levelNumber; level += 1){
+            const data = (0, _levelDataJsDefault.default).getLevel(level);
+            if (!data?.weaponReward) continue;
+            if (data.weaponReward === "moonlitQuiver") this.player.unlockQuiver();
+            else this.player.unlockWeapon(data.weaponReward);
+        }
+    }
+    mountGameUi() {
+        const stage = this.container.querySelector("#game-stage") || this.container;
+        if ((0, _touchJs.shouldShowTouchControls)()) {
+            if (!this.touchControls) {
+                this.touchControls = (0, _touchJs.createTouchControls)(this);
+                (0, _touchJs.installTouchControlVisibilityListener)(this.touchControls);
+            }
+            if (this.touchControls.parentElement !== stage) stage.appendChild(this.touchControls);
+            (0, _touchJs.syncTouchControlsVisibility)(this.touchControls);
+        } else if (this.touchControls) {
+            this.touchControls.remove();
+            this.touchControls = null;
+        }
+        let soundToggle = stage.querySelector("#in-game-sound-toggle");
+        if (!soundToggle) {
+            soundToggle = (0, _soundControlsJs.createSoundToggleButton)({
+                compact: true
+            });
+            soundToggle.id = "in-game-sound-toggle";
+            soundToggle.style.position = "absolute";
+            soundToggle.style.top = "12px";
+            soundToggle.style.right = "12px";
+            soundToggle.style.zIndex = "11";
+            stage.appendChild(soundToggle);
+        }
+    }
+    formatRunTime(ms) {
+        const totalSeconds = Math.floor(ms / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes}:${String(seconds).padStart(2, "0")}`;
     }
     // Mark every cell within the light radius of the player as explored
     revealAroundPlayer() {
@@ -1473,6 +1518,7 @@ class Game {
             this.updateWeaponUnlock(deltaMs);
             return;
         }
+        if (!this.inventoryOpen && !this.isPlayerDown()) this.runElapsedMs += deltaMs;
         this.attackCooldownMs = Math.max(0, this.attackCooldownMs - deltaMs);
         if (this.isPlayerDown()) {
             this.checkPlayerDeath(deltaMs);
@@ -1577,6 +1623,7 @@ class Game {
             return;
         }
         this.lives -= 1;
+        this.deathCount += 1;
         if (this.lives <= 0) {
             this.player.defeat();
             this.pendingGameOverMs = (0, _settingsJs.playerSettings).defeatPauseMs;
@@ -1598,7 +1645,7 @@ class Game {
             explosive.update(playerHitBox, deltaMs);
             if (wasHidden && explosive.isArmed()) {
                 (0, _soundJs.sfx).fuse();
-                this.notifyOnce("A trap springs \u2014 run, or disarm it with 'p'!");
+                this.notifyOnce("A trap springs \u2014 run!");
             }
             const blast = explosive.consumeBlast();
             if (!blast) return;
@@ -1754,6 +1801,7 @@ class Game {
         this.player.draw(this.context);
         // Fog of war covers the world but never the HUD
         this.drawFog();
+        this.drawMinimap();
         // Draw the HUD on top of everything
         this.drawHUD();
         // The inventory screen covers the frozen world; notifications (e.g.
@@ -2045,12 +2093,44 @@ class Game {
             ctx.fillText(line, boxX + 12, boxY + 18 + i * 20);
         });
     }
+    drawMinimap() {
+        if (!this.fogEnabled || !this.explored.length) return;
+        const ctx = this.context;
+        const cols = this.explored[0].length;
+        const rows = this.explored.length;
+        const mapWidth = 120;
+        const mapHeight = 60;
+        const mapX = this.canvas.width - mapWidth - 12;
+        const mapY = this.canvas.height - mapHeight - 12;
+        const cellW = mapWidth / cols;
+        const cellH = mapHeight / rows;
+        const playerCell = {
+            col: Math.floor(this.player.getPosition().x / (0, _settingsJs.canvasSettings).cellWidth),
+            row: Math.floor(this.player.getPosition().y / (0, _settingsJs.canvasSettings).cellHeight)
+        };
+        ctx.save();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+        ctx.strokeStyle = "rgba(255, 213, 79, 0.7)";
+        ctx.lineWidth = 1;
+        ctx.fillRect(mapX - 4, mapY - 4, mapWidth + 8, mapHeight + 8);
+        ctx.strokeRect(mapX - 4, mapY - 4, mapWidth + 8, mapHeight + 8);
+        for(let row = 0; row < rows; row += 1)for(let col = 0; col < cols; col += 1){
+            if (!this.explored[row][col]) continue;
+            const cell = this.board[row]?.[col];
+            const isWall = cell === "#" || cell === "D";
+            ctx.fillStyle = isWall ? "rgba(120, 120, 140, 0.9)" : "rgba(70, 90, 120, 0.75)";
+            ctx.fillRect(mapX + col * cellW, mapY + row * cellH, cellW, cellH);
+        }
+        ctx.fillStyle = "#ffd54f";
+        ctx.fillRect(mapX + playerCell.col * cellW, mapY + playerCell.row * cellH, cellW, cellH);
+        ctx.restore();
+    }
     drawHUD() {
         const ctx = this.context;
         ctx.save();
         // Background strip
         ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-        ctx.fillRect(8, 8, 640, 40);
+        ctx.fillRect(8, 8, 760, 40);
         ctx.font = "bold 18px monospace";
         ctx.textBaseline = "middle";
         // Score
@@ -2086,6 +2166,12 @@ class Game {
         ctx.font = "14px monospace";
         ctx.fillStyle = "#aaa";
         ctx.fillText("(i)", 616, 28);
+        ctx.font = "14px monospace";
+        ctx.fillStyle = "#bbb";
+        ctx.textAlign = "right";
+        ctx.fillText(`Time ${this.formatRunTime(this.runElapsedMs)}`, this.canvas.width - 18, 28);
+        ctx.fillText(`Deaths ${this.deathCount}`, this.canvas.width - 18, 48);
+        ctx.textAlign = "left";
         // Active powerup effects with their remaining time
         const effects = this.player.getActiveEffects();
         if (effects.length > 0) {
@@ -2155,14 +2241,16 @@ class Game {
             this.rafId = null;
         }
     }
-    start() {
+    start({ fromLevel = null } = {}) {
         // Fresh run: reset all progress
         this.started = true;
         this.paused = false;
         this.isGameOver = false;
         this.lives = (0, _settingsJs.playerSettings).initialLives;
         this.score = 0;
-        this.currentLevel = (0, _settingsJs.gameSettings).initialLevel;
+        this.currentLevel = fromLevel || (0, _settingsJs.gameSettings).initialLevel;
+        this.deathCount = 0;
+        this.runElapsedMs = 0;
         this.notifications = [];
         this.player = null; // a fresh run starts with an empty pack
         this.inventoryOpen = false;
@@ -2177,11 +2265,14 @@ class Game {
         this.lastFrameTime = null;
         if (this.rafId) cancelAnimationFrame(this.rafId);
         (0, _canvasJs.clearContainer)(this.container);
-        this.container.appendChild(this.canvas);
+        (0, _canvasJs.removeGameOverlays)(this.container);
+        (0, _canvasJs.mountGameStage)(this.container, this.canvas);
         this.initializeBoard();
         this.initializePlayer();
+        if (fromLevel && fromLevel > 1) this.bootstrapProgressionForLevel(fromLevel);
         this.initializeEntities();
         this.showLevelIntro();
+        this.mountGameUi();
         this.gameLoop();
     }
     continue() {
@@ -2189,7 +2280,9 @@ class Game {
         this.paused = false;
         this.lastFrameTime = null;
         (0, _canvasJs.clearContainer)(this.container);
-        this.container.appendChild(this.canvas);
+        (0, _canvasJs.removeGameOverlays)(this.container);
+        (0, _canvasJs.mountGameStage)(this.container, this.canvas);
+        this.mountGameUi();
         if (this.rafId) cancelAnimationFrame(this.rafId);
         if (this.levelIntro) {
             const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
@@ -2235,7 +2328,7 @@ class Game {
 }
 exports.default = Game;
 
-},{"./utils/settings.js":"hBndc","./utils/sound.js":"6QCfZ","./utils/narration.js":"402l2","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./entities/projectile.js":"g7qsG","./items.js":"8gP9P","./assets/theme-manifest.js":"d5R3E","./screens/weapon-unlocked.js":"5sboX","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
+},{"./utils/settings.js":"hBndc","./utils/sound.js":"6QCfZ","./utils/narration.js":"402l2","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/preferences.js":"3e82j","./utils/touch.js":"fsjN9","./utils/sound-controls.js":"fnm3C","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./entities/projectile.js":"g7qsG","./items.js":"8gP9P","./assets/theme-manifest.js":"d5R3E","./screens/weapon-unlocked.js":"5sboX","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
 // Game settings and configurations
 // - This file contains global settings and configurations for the game
 // - These settings can be adjusted to change the game's behavior and appearance
@@ -2271,7 +2364,6 @@ const gameSettings = {
     initialLevel: 1,
     maxLevels: 10,
     scoreIncrement: 100,
-    disarmScore: 50,
     levelIntroDurationMs: 5200
 };
 const powerupSettings = {
@@ -2337,7 +2429,6 @@ const controlSettings = {
     right: "ArrowRight",
     attack: " ",
     esc: "Escape",
-    pick: "p",
     axe: "x",
     potion: "u",
     inventory: "i"
@@ -2521,13 +2612,6 @@ const sfx = {
             delay: 0.08
         });
     },
-    disarm: ()=>tone({
-            type: "sine",
-            from: 900,
-            to: 300,
-            duration: 0.25,
-            volume: 0.2
-        }),
     gulp: ()=>{
         tone({
             type: "sine",
@@ -3966,24 +4050,439 @@ function getLevelStoryBeat(levelNumber) {
 }
 
 },{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"TkAKd":[function(require,module,exports) {
-// helper functions for the canvas
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
+// helper functions for the canvas
 parcelHelpers.export(exports, "clearCanvas", ()=>clearCanvas);
 parcelHelpers.export(exports, "clearContainer", ()=>clearContainer);
+// Scale the fixed-size game canvas to fit landscape viewports while keeping
+// the native 1280×640 drawing buffer pixel-perfect.
+parcelHelpers.export(exports, "applyLandscapeCanvasLayout", ()=>applyLandscapeCanvasLayout);
+parcelHelpers.export(exports, "fitCanvasToContainer", ()=>fitCanvasToContainer);
+// Wrap the canvas in a relatively positioned stage so touch overlays line up.
+parcelHelpers.export(exports, "mountGameStage", ()=>mountGameStage);
+parcelHelpers.export(exports, "removeGameOverlays", ()=>removeGameOverlays);
+var _settingsJs = require("./settings.js");
 function clearCanvas(canvas, context) {
     context.clearRect(0, 0, canvas.width, canvas.height);
 }
 function clearContainer(container) {
     container.innerHTML = "";
 }
+function applyLandscapeCanvasLayout(container, canvas) {
+    container.style.position = "relative";
+    container.style.width = "100vw";
+    container.style.height = "100vh";
+    container.style.overflow = "hidden";
+    container.style.display = "flex";
+    container.style.alignItems = "center";
+    container.style.justifyContent = "center";
+    container.style.backgroundColor = "#000";
+    fitCanvasToContainer(canvas, container);
+}
+function fitCanvasToContainer(canvas, container) {
+    const nativeWidth = (0, _settingsJs.canvasSettings).width;
+    const nativeHeight = (0, _settingsJs.canvasSettings).height;
+    const aspect = nativeWidth / nativeHeight;
+    const update = ()=>{
+        const maxWidth = container.clientWidth || window.innerWidth;
+        const maxHeight = container.clientHeight || window.innerHeight;
+        let displayWidth = maxWidth;
+        let displayHeight = displayWidth / aspect;
+        if (displayHeight > maxHeight) {
+            displayHeight = maxHeight;
+            displayWidth = displayHeight * aspect;
+        }
+        canvas.style.width = `${Math.floor(displayWidth)}px`;
+        canvas.style.height = `${Math.floor(displayHeight)}px`;
+        canvas.style.display = "block";
+        canvas.style.margin = "0";
+        canvas.style.imageRendering = "pixelated";
+    };
+    update();
+    if (!canvas._layoutListenerAttached) {
+        canvas._layoutListenerAttached = true;
+        window.addEventListener("resize", update);
+        window.addEventListener("orientationchange", update);
+    }
+}
+function mountGameStage(container, canvas) {
+    let stage = container.querySelector("#game-stage");
+    if (!stage) {
+        stage = document.createElement("div");
+        stage.id = "game-stage";
+        stage.style.position = "relative";
+        stage.style.display = "inline-block";
+        stage.style.lineHeight = "0";
+        container.appendChild(stage);
+    } else stage.innerHTML = "";
+    stage.appendChild(canvas);
+    applyLandscapeCanvasLayout(container, canvas);
+    return stage;
+}
+function removeGameOverlays(container) {
+    container.querySelector("#touch-controls")?.remove();
+    container.querySelector("#in-game-sound-toggle")?.remove();
+}
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"jBBaN":[function(require,module,exports) {
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"jBBaN":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "isColliding", ()=>isColliding);
 function isColliding(rect1, rect2) {
     return rect1.x < rect2.x + rect2.width && rect1.x + rect1.width > rect2.x && rect1.y < rect2.y + rect2.height && rect1.y + rect1.height > rect2.y;
+}
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"3e82j":[function(require,module,exports) {
+// Player preferences and light campaign progress in localStorage.
+// Every accessor is wrapped so blocked storage never crashes the game.
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "loadSoundPreferences", ()=>loadSoundPreferences);
+parcelHelpers.export(exports, "isSoundMuted", ()=>isSoundMuted);
+parcelHelpers.export(exports, "setSoundMuted", ()=>setSoundMuted);
+parcelHelpers.export(exports, "toggleSoundMuted", ()=>toggleSoundMuted);
+parcelHelpers.export(exports, "getSkipLevelIntros", ()=>getSkipLevelIntros);
+parcelHelpers.export(exports, "setSkipLevelIntros", ()=>setSkipLevelIntros);
+parcelHelpers.export(exports, "hasSeenLevelIntro", ()=>hasSeenLevelIntro);
+parcelHelpers.export(exports, "markLevelIntroSeen", ()=>markLevelIntroSeen);
+parcelHelpers.export(exports, "shouldShowLevelIntro", ()=>shouldShowLevelIntro);
+parcelHelpers.export(exports, "isCampaignComplete", ()=>isCampaignComplete);
+parcelHelpers.export(exports, "setCampaignComplete", ()=>setCampaignComplete);
+var _settingsJs = require("./settings.js");
+const KEYS = {
+    soundMuted: "wandertrap.soundMuted",
+    skipLevelIntros: "wandertrap.skipLevelIntros",
+    seenLevelIntros: "wandertrap.seenLevelIntros",
+    campaignComplete: "wandertrap.campaignComplete"
+};
+function readJson(key, fallback) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+    } catch  {
+        return fallback;
+    }
+}
+function writeJson(key, value) {
+    try {
+        localStorage.setItem(key, JSON.stringify(value));
+    } catch  {
+    // Storage unavailable — preference just isn't persisted
+    }
+}
+function loadSoundPreferences() {
+    try {
+        const raw = localStorage.getItem(KEYS.soundMuted);
+        if (raw !== null) (0, _settingsJs.soundSettings).mute = raw === "true";
+    } catch  {
+    // Keep default
+    }
+}
+function isSoundMuted() {
+    return (0, _settingsJs.soundSettings).mute;
+}
+function setSoundMuted(mute) {
+    (0, _settingsJs.soundSettings).mute = Boolean(mute);
+    try {
+        localStorage.setItem(KEYS.soundMuted, String((0, _settingsJs.soundSettings).mute));
+    } catch  {
+    // best-effort
+    }
+}
+function toggleSoundMuted() {
+    setSoundMuted(!(0, _settingsJs.soundSettings).mute);
+    return (0, _settingsJs.soundSettings).mute;
+}
+function getSkipLevelIntros() {
+    try {
+        return localStorage.getItem(KEYS.skipLevelIntros) === "true";
+    } catch  {
+        return false;
+    }
+}
+function setSkipLevelIntros(skip) {
+    try {
+        localStorage.setItem(KEYS.skipLevelIntros, String(Boolean(skip)));
+    } catch  {
+    // best-effort
+    }
+}
+function getSeenLevelIntroSet() {
+    const seen = readJson(KEYS.seenLevelIntros, []);
+    return new Set(Array.isArray(seen) ? seen : []);
+}
+function hasSeenLevelIntro(levelNumber) {
+    return getSeenLevelIntroSet().has(levelNumber);
+}
+function markLevelIntroSeen(levelNumber) {
+    const seen = getSeenLevelIntroSet();
+    seen.add(levelNumber);
+    writeJson(KEYS.seenLevelIntros, [
+        ...seen
+    ]);
+}
+function shouldShowLevelIntro(levelNumber) {
+    if (getSkipLevelIntros()) return false;
+    return !hasSeenLevelIntro(levelNumber);
+}
+function isCampaignComplete() {
+    try {
+        return localStorage.getItem(KEYS.campaignComplete) === "true";
+    } catch  {
+        return false;
+    }
+}
+function setCampaignComplete() {
+    try {
+        localStorage.setItem(KEYS.campaignComplete, "true");
+    } catch  {
+    // best-effort
+    }
+}
+
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"fsjN9":[function(require,module,exports) {
+// On-screen touch controls: a D-pad on the left, action buttons on the right.
+// Shown on touch-capable devices in landscape (or with ?touch=1 in the URL).
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "shouldShowTouchControls", ()=>shouldShowTouchControls);
+parcelHelpers.export(exports, "isLandscapeViewport", ()=>isLandscapeViewport);
+parcelHelpers.export(exports, "shouldShowTouchControlsNow", ()=>shouldShowTouchControlsNow);
+parcelHelpers.export(exports, "createTouchControls", ()=>createTouchControls);
+parcelHelpers.export(exports, "syncTouchControlsVisibility", ()=>syncTouchControlsVisibility);
+parcelHelpers.export(exports, "installTouchControlVisibilityListener", ()=>installTouchControlVisibilityListener);
+function shouldShowTouchControls() {
+    if (typeof window === "undefined") return false;
+    if (new URLSearchParams(window.location.search).has("touch")) return true;
+    return "ontouchstart" in window || navigator.maxTouchPoints > 0;
+}
+function isLandscapeViewport() {
+    return window.innerWidth >= window.innerHeight;
+}
+function shouldShowTouchControlsNow() {
+    return shouldShowTouchControls() && isLandscapeViewport();
+}
+function makeButton(id, label, size) {
+    const btn = document.createElement("button");
+    btn.id = id;
+    btn.textContent = label;
+    btn.style.width = `${size}px`;
+    btn.style.height = `${size}px`;
+    btn.style.borderRadius = "50%";
+    btn.style.border = "2px solid rgba(255, 255, 255, 0.5)";
+    btn.style.backgroundColor = "rgba(0, 0, 0, 0.35)";
+    btn.style.color = "rgba(255, 255, 255, 0.9)";
+    btn.style.fontSize = `${Math.floor(size / 2.6)}px`;
+    btn.style.fontFamily = "monospace";
+    btn.style.touchAction = "none";
+    btn.style.userSelect = "none";
+    btn.style.webkitUserSelect = "none";
+    btn.style.cursor = "pointer";
+    btn.style.padding = "0";
+    return btn;
+}
+function createTouchControls(game) {
+    const overlay = document.createElement("div");
+    overlay.id = "touch-controls";
+    overlay.style.position = "absolute";
+    overlay.style.inset = "0";
+    overlay.style.pointerEvents = "none";
+    overlay.style.zIndex = "10";
+    const holdDirection = (btn, direction)=>{
+        btn.style.pointerEvents = "auto";
+        btn.addEventListener("pointerdown", (event)=>{
+            event.preventDefault();
+            if (!game.started || game.paused || game.isGameOver) return;
+            game.movePlayer(direction);
+            game.pressedDirections.add(direction);
+        });
+        for (const type of [
+            "pointerup",
+            "pointerleave",
+            "pointercancel"
+        ])btn.addEventListener(type, ()=>game.pressedDirections.delete(direction));
+    };
+    const tapAction = (btn, action)=>{
+        btn.style.pointerEvents = "auto";
+        btn.addEventListener("pointerdown", (event)=>{
+            event.preventDefault();
+            action();
+        });
+    };
+    const dpad = document.createElement("div");
+    dpad.style.position = "absolute";
+    dpad.style.left = "16px";
+    dpad.style.bottom = "16px";
+    dpad.style.display = "grid";
+    dpad.style.gridTemplateColumns = "repeat(3, 56px)";
+    dpad.style.gridTemplateRows = "repeat(3, 56px)";
+    dpad.style.gap = "4px";
+    const placements = {
+        up: {
+            row: 1,
+            col: 2,
+            label: "\u25B2"
+        },
+        left: {
+            row: 2,
+            col: 1,
+            label: "\u25C0"
+        },
+        right: {
+            row: 2,
+            col: 3,
+            label: "\u25B6"
+        },
+        down: {
+            row: 3,
+            col: 2,
+            label: "\u25BC"
+        }
+    };
+    for (const [direction, spec] of Object.entries(placements)){
+        const btn = makeButton(`touch-btn-${direction}`, spec.label, 56);
+        btn.style.gridRow = String(spec.row);
+        btn.style.gridColumn = String(spec.col);
+        holdDirection(btn, direction);
+        dpad.appendChild(btn);
+    }
+    overlay.appendChild(dpad);
+    const actions = document.createElement("div");
+    actions.style.position = "absolute";
+    actions.style.right = "16px";
+    actions.style.bottom = "16px";
+    actions.style.display = "flex";
+    actions.style.alignItems = "flex-end";
+    actions.style.gap = "10px";
+    const inventoryBtn = makeButton("touch-btn-inventory", "INV", 52);
+    tapAction(inventoryBtn, ()=>game.toggleInventory());
+    actions.appendChild(inventoryBtn);
+    const attackBtn = makeButton("touch-btn-attack", "ATK", 72);
+    tapAction(attackBtn, ()=>game.playerAttack());
+    actions.appendChild(attackBtn);
+    overlay.appendChild(actions);
+    return overlay;
+}
+function syncTouchControlsVisibility(overlay) {
+    if (!overlay) return;
+    overlay.style.display = shouldShowTouchControlsNow() ? "block" : "none";
+}
+function installTouchControlVisibilityListener(overlay) {
+    const update = ()=>syncTouchControlsVisibility(overlay);
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    update();
+}
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"fnm3C":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+// Small mute/unmute control reused on menu screens and during gameplay.
+parcelHelpers.export(exports, "createSoundToggleButton", ()=>createSoundToggleButton);
+var _themeJs = require("./theme.js");
+var _preferencesJs = require("./preferences.js");
+function createSoundToggleButton({ compact = false } = {}) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("aria-label", "Toggle sound");
+    button.style.cursor = "pointer";
+    button.style.border = `2px solid ${(0, _themeJs.theme).colors.text}`;
+    button.style.borderRadius = compact ? "50%" : (0, _themeJs.theme).button.borderRadius;
+    button.style.backgroundColor = "rgba(0, 0, 0, 0.55)";
+    button.style.color = (0, _themeJs.theme).colors.text;
+    button.style.fontFamily = (0, _themeJs.theme).fonts.subtitle;
+    button.style.transition = "transform 0.2s ease";
+    if (compact) {
+        button.style.width = "44px";
+        button.style.height = "44px";
+        button.style.fontSize = "20px";
+        button.style.padding = "0";
+    } else {
+        button.style.padding = "10px 18px";
+        button.style.fontSize = "18px";
+        button.style.minWidth = "auto";
+        button.style.margin = "0";
+    }
+    const refresh = ()=>{
+        const muted = (0, _preferencesJs.isSoundMuted)();
+        button.textContent = muted ? "\uD83D\uDD07 Sound off" : "\uD83D\uDD0A Sound on";
+        button.setAttribute("aria-pressed", String(muted));
+        if (compact) button.textContent = muted ? "\uD83D\uDD07" : "\uD83D\uDD0A";
+    };
+    button.addEventListener("click", ()=>{
+        (0, _preferencesJs.toggleSoundMuted)();
+        refresh();
+    });
+    refresh();
+    return button;
+}
+
+},{"./theme.js":"6OzmZ","./preferences.js":"3e82j","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"6OzmZ":[function(require,module,exports) {
+// Theme configuration for the game
+// This file contains styles and colors used across different screens
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "theme", ()=>theme);
+// Helper function to apply common styles to a container
+parcelHelpers.export(exports, "applyContainerStyles", ()=>applyContainerStyles);
+// Helper function to style a button
+parcelHelpers.export(exports, "styleButton", ()=>styleButton);
+const theme = {
+    colors: {
+        background: "#1a0d00",
+        text: "#d4af37",
+        primary: "#8B4513",
+        secondary: "#2e8b57",
+        accent: "#ff4500"
+    },
+    fonts: {
+        main: '"Luminari", "Papyrus", fantasy',
+        subtitle: '"Arial", sans-serif'
+    },
+    fontSize: {
+        title: "52px",
+        subtitle: "28px",
+        button: "24px"
+    },
+    spacing: {
+        padding: "25px"
+    },
+    button: {
+        minWidth: "265px",
+        padding: "15px 35px",
+        borderRadius: "4px"
+    }
+};
+function applyContainerStyles(container) {
+    container.style.backgroundColor = theme.colors.background;
+    container.style.color = theme.colors.text;
+    container.style.fontFamily = theme.fonts.main;
+    container.style.textAlign = "center";
+    container.style.padding = theme.spacing.padding;
+}
+function styleButton(button, color = theme.colors.primary) {
+    button.style.display = "block";
+    button.style.margin = "20px auto";
+    button.style.padding = theme.button.padding;
+    button.style.fontSize = theme.fontSize.button;
+    button.style.cursor = "pointer";
+    button.style.backgroundColor = color;
+    button.style.color = theme.colors.text;
+    button.style.border = "2px solid " + theme.colors.text;
+    button.style.borderRadius = theme.button.borderRadius;
+    button.style.textTransform = "uppercase";
+    button.style.letterSpacing = "2px";
+    button.style.boxShadow = "0 0 10px rgba(212, 175, 55, 0.5)";
+    button.style.transition = "all 0.3s ease";
+    button.style.minWidth = theme.button.minWidth;
+    // Add hover effect
+    button.addEventListener("mouseover", ()=>{
+        button.style.transform = "scale(1.1)";
+    });
+    button.addEventListener("mouseout", ()=>{
+        button.style.transform = "scale(1)";
+    });
 }
 
 },{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"7uRsi":[function(require,module,exports) {
@@ -4066,7 +4565,7 @@ var _settingsJs = require("../utils/settings.js");
 //   a short fuse starts burning (the bomb flashes faster and faster).
 // - When the fuse runs out it detonates, damaging the player AND any guards
 //   inside the blast radius. The game reads the blast via consumeBlast().
-// - An armed trap can be disarmed with the pick action before it blows.
+// - Hidden traps arm on approach, burn a fuse, then blast player and guards.
 // - Drawn procedurally (bomb + fuse spark + expanding blast), no sprite needed.
 const EXPLOSION_ANIMATION_MS = 350;
 class Explosive extends (0, _entityJsDefault.default) {
@@ -5593,6 +6092,7 @@ function updateSplashScreenProgress(progress) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "showWelcomeScreen", ()=>(0, _welcomeJs.showWelcomeScreen));
+parcelHelpers.export(exports, "showLevelSelectScreen", ()=>(0, _welcomeJs.showLevelSelectScreen));
 parcelHelpers.export(exports, "showGameOverScreen", ()=>(0, _gameOverJs.showGameOverScreen));
 parcelHelpers.export(exports, "showGameWonScreen", ()=>(0, _gameWonJs.showGameWonScreen));
 parcelHelpers.export(exports, "showHighScoreScreen", ()=>(0, _highScoreJs.showHighScoreScreen));
@@ -5608,18 +6108,90 @@ var _storyJs = require("./story.js");
 },{"./welcome.js":"cZkQX","./game-over.js":"92Yef","./game-won.js":"12l5K","./high-score.js":"4usRq","./level-completed.js":"9FY8c","./story.js":"2HIwu","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"cZkQX":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
+// Pick any unlocked dream after beating the campaign once.
+parcelHelpers.export(exports, "showLevelSelectScreen", ()=>showLevelSelectScreen);
 // Welcome screen logic
 // - Display game title
 // - Provide buttons to start the game, view high scores, and adjust sound settings
-// - Style: background color, text color, font size, button styles
-// - Include sound control (mute/unmute button)
 parcelHelpers.export(exports, "showWelcomeScreen", ()=>showWelcomeScreen);
 var _themeJs = require("../utils/theme.js");
-function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit, onStory) {
+var _soundControlsJs = require("../utils/sound-controls.js");
+var _preferencesJs = require("../utils/preferences.js");
+var _levelDataJs = require("../levels/level-data.js");
+var _levelDataJsDefault = parcelHelpers.interopDefault(_levelDataJs);
+function showLevelSelectScreen(onPickLevel, onBack) {
     const container = document.getElementById("game-container");
-    container.innerHTML = ""; // Clear previous content
+    container.innerHTML = "";
+    const screen = document.createElement("div");
+    screen.id = "level-select-screen";
+    const title = document.createElement("h1");
+    title.textContent = "Level Select";
+    title.style.marginBottom = "12px";
+    screen.appendChild(title);
+    const subtitle = document.createElement("p");
+    subtitle.textContent = "Replay any dream Theo has already braved.";
+    subtitle.style.fontFamily = (0, _themeJs.theme).fonts.subtitle;
+    subtitle.style.fontSize = "18px";
+    subtitle.style.opacity = "0.85";
+    subtitle.style.marginBottom = "24px";
+    screen.appendChild(subtitle);
+    const grid = document.createElement("div");
+    grid.style.display = "grid";
+    grid.style.gridTemplateColumns = "repeat(auto-fit, minmax(220px, 1fr))";
+    grid.style.gap = "12px";
+    grid.style.maxWidth = "960px";
+    grid.style.margin = "0 auto 24px";
+    for(let levelNumber = 1; levelNumber <= 10; levelNumber += 1){
+        const level = (0, _levelDataJsDefault.default).getLevel(levelNumber);
+        const button = document.createElement("button");
+        button.textContent = `${levelNumber}. ${level ? level.name : `Level ${levelNumber}`}`;
+        button.style.minWidth = "auto";
+        button.style.margin = "0";
+        button.style.width = "100%";
+        button.onclick = ()=>onPickLevel(levelNumber);
+        (0, _themeJs.styleButton)(button, (0, _themeJs.theme).colors.secondary);
+        grid.appendChild(button);
+    }
+    screen.appendChild(grid);
+    const backButton = document.createElement("button");
+    backButton.textContent = "Back";
+    backButton.onclick = onBack;
+    screen.appendChild(backButton);
+    container.appendChild(screen);
+    (0, _themeJs.applyContainerStyles)(container);
+    title.style.fontSize = (0, _themeJs.theme).fontSize.title;
+    (0, _themeJs.styleButton)(backButton);
+}
+function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit, onStory, onLevelSelect) {
+    const container = document.getElementById("game-container");
+    container.innerHTML = "";
     const welcomeScreen = document.createElement("div");
     welcomeScreen.id = "welcome-screen";
+    const settingsBar = document.createElement("div");
+    settingsBar.style.display = "flex";
+    settingsBar.style.flexWrap = "wrap";
+    settingsBar.style.gap = "16px";
+    settingsBar.style.alignItems = "center";
+    settingsBar.style.justifyContent = "center";
+    settingsBar.style.marginBottom = "24px";
+    settingsBar.appendChild((0, _soundControlsJs.createSoundToggleButton)());
+    const skipLabel = document.createElement("label");
+    skipLabel.style.display = "flex";
+    skipLabel.style.alignItems = "center";
+    skipLabel.style.gap = "8px";
+    skipLabel.style.fontFamily = (0, _themeJs.theme).fonts.subtitle;
+    skipLabel.style.fontSize = "16px";
+    skipLabel.style.cursor = "pointer";
+    const skipCheckbox = document.createElement("input");
+    skipCheckbox.type = "checkbox";
+    skipCheckbox.checked = (0, _preferencesJs.getSkipLevelIntros)();
+    skipCheckbox.addEventListener("change", ()=>(0, _preferencesJs.setSkipLevelIntros)(skipCheckbox.checked));
+    const skipText = document.createElement("span");
+    skipText.textContent = "Skip level story cards";
+    skipLabel.appendChild(skipCheckbox);
+    skipLabel.appendChild(skipText);
+    settingsBar.appendChild(skipLabel);
+    welcomeScreen.appendChild(settingsBar);
     const title = document.createElement("h1");
     title.textContent = "Welcome to Wandertrap!";
     title.style.textShadow = "2px 2px 4px rgba(0, 0, 0, 0.5)";
@@ -5646,6 +6218,13 @@ function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit
     startButton.textContent = "New Game";
     startButton.onclick = onStartGame;
     welcomeScreen.appendChild(startButton);
+    if (onLevelSelect && (0, _preferencesJs.isCampaignComplete)()) {
+        const levelSelectButton = document.createElement("button");
+        levelSelectButton.textContent = "Level Select";
+        levelSelectButton.onclick = onLevelSelect;
+        welcomeScreen.appendChild(levelSelectButton);
+        (0, _themeJs.styleButton)(levelSelectButton, (0, _themeJs.theme).colors.accent);
+    }
     const storyButton = document.createElement("button");
     storyButton.textContent = "Story";
     storyButton.onclick = onStory;
@@ -5660,7 +6239,7 @@ function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit
     exitButton.onclick = onExit;
     welcomeScreen.appendChild(exitButton);
     const controlsHint = document.createElement("p");
-    controlsHint.textContent = "Arrows: move \xb7 Space: attack \xb7 X: axe (cuts trees & rocks) \xb7 P: disarm trap \xb7 U: potion \xb7 Esc: pause";
+    controlsHint.textContent = "Arrows: move \xb7 Space: attack \xb7 I: inventory \xb7 Esc: menu";
     controlsHint.style.color = (0, _themeJs.theme).colors.text;
     controlsHint.style.fontFamily = (0, _themeJs.theme).fonts.subtitle;
     controlsHint.style.fontSize = "18px";
@@ -5668,7 +6247,6 @@ function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit
     controlsHint.style.marginTop = "30px";
     welcomeScreen.appendChild(controlsHint);
     container.appendChild(welcomeScreen);
-    // Apply styles
     (0, _themeJs.applyContainerStyles)(container);
     title.style.fontSize = (0, _themeJs.theme).fontSize.title;
     title.style.marginBottom = "20px";
@@ -5677,74 +6255,7 @@ function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit
     (0, _themeJs.styleButton)(exitButton);
 }
 
-},{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"6OzmZ":[function(require,module,exports) {
-// Theme configuration for the game
-// This file contains styles and colors used across different screens
-var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
-parcelHelpers.defineInteropFlag(exports);
-parcelHelpers.export(exports, "theme", ()=>theme);
-// Helper function to apply common styles to a container
-parcelHelpers.export(exports, "applyContainerStyles", ()=>applyContainerStyles);
-// Helper function to style a button
-parcelHelpers.export(exports, "styleButton", ()=>styleButton);
-const theme = {
-    colors: {
-        background: "#1a0d00",
-        text: "#d4af37",
-        primary: "#8B4513",
-        secondary: "#2e8b57",
-        accent: "#ff4500"
-    },
-    fonts: {
-        main: '"Luminari", "Papyrus", fantasy',
-        subtitle: '"Arial", sans-serif'
-    },
-    fontSize: {
-        title: "52px",
-        subtitle: "28px",
-        button: "24px"
-    },
-    spacing: {
-        padding: "25px"
-    },
-    button: {
-        minWidth: "265px",
-        padding: "15px 35px",
-        borderRadius: "4px"
-    }
-};
-function applyContainerStyles(container) {
-    container.style.backgroundColor = theme.colors.background;
-    container.style.color = theme.colors.text;
-    container.style.fontFamily = theme.fonts.main;
-    container.style.textAlign = "center";
-    container.style.padding = theme.spacing.padding;
-}
-function styleButton(button, color = theme.colors.primary) {
-    button.style.display = "block";
-    button.style.margin = "20px auto";
-    button.style.padding = theme.button.padding;
-    button.style.fontSize = theme.fontSize.button;
-    button.style.cursor = "pointer";
-    button.style.backgroundColor = color;
-    button.style.color = theme.colors.text;
-    button.style.border = "2px solid " + theme.colors.text;
-    button.style.borderRadius = theme.button.borderRadius;
-    button.style.textTransform = "uppercase";
-    button.style.letterSpacing = "2px";
-    button.style.boxShadow = "0 0 10px rgba(212, 175, 55, 0.5)";
-    button.style.transition = "all 0.3s ease";
-    button.style.minWidth = theme.button.minWidth;
-    // Add hover effect
-    button.addEventListener("mouseover", ()=>{
-        button.style.transform = "scale(1.1)";
-    });
-    button.addEventListener("mouseout", ()=>{
-        button.style.transform = "scale(1)";
-    });
-}
-
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"92Yef":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","../utils/sound-controls.js":"fnm3C","../utils/preferences.js":"3e82j","../levels/level-data.js":"57eJ8","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"92Yef":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Game Over screen
@@ -6296,6 +6807,54 @@ function styleStoryScreen(storyScreen, textContainer) {
     textContainer.style.lineHeight = "1.35";
 }
 
-},{"../utils/theme.js":"6OzmZ","../story-content.js":"2sig9","../utils/narration.js":"402l2","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}]},["aAwE2","6JHOc"], "6JHOc", "parcelRequire6d7b")
+},{"../utils/theme.js":"6OzmZ","../story-content.js":"2sig9","../utils/narration.js":"402l2","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"bcQ3D":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "installOrientationGuard", ()=>installOrientationGuard);
+var _touchJs = require("./touch.js");
+// Prompt mobile players to rotate to landscape — Wandertrap is built for wide screens.
+function isPortraitViewport() {
+    return window.innerHeight > window.innerWidth;
+}
+function shouldWarnPortrait() {
+    if (!isPortraitViewport()) return false;
+    return (0, _touchJs.shouldShowTouchControls)() || window.matchMedia("(max-width: 900px)").matches;
+}
+function installOrientationGuard() {
+    if (typeof document === "undefined") return;
+    const overlay = document.createElement("div");
+    overlay.id = "orientation-notice";
+    overlay.style.cssText = [
+        "display:none",
+        "position:fixed",
+        "inset:0",
+        "z-index:10000",
+        "align-items:center",
+        "justify-content:center",
+        "padding:32px",
+        "text-align:center",
+        "background:rgba(8, 4, 2, 0.96)",
+        "color:#d4af37",
+        "font-family:Arial,sans-serif"
+    ].join(";");
+    overlay.innerHTML = `
+    <div style="max-width:420px">
+      <p style="font-size:56px;margin:0 0 16px">\u{21BB}</p>
+      <h2 style="margin:0 0 12px;font-size:28px;font-family:Luminari,fantasy">Rotate your device</h2>
+      <p style="margin:0;font-size:18px;line-height:1.5;opacity:0.9">
+        Wandertrap plays best in landscape. Turn your phone sideways to continue.
+      </p>
+    </div>
+  `;
+    document.body.appendChild(overlay);
+    const update = ()=>{
+        overlay.style.display = shouldWarnPortrait() ? "flex" : "none";
+    };
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    update();
+}
+
+},{"./touch.js":"fsjN9","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}]},["aAwE2","6JHOc"], "6JHOc", "parcelRequire6d7b")
 
 //# sourceMappingURL=index.44a83959.js.map
