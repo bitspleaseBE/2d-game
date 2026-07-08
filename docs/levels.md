@@ -12,7 +12,7 @@ Moonlit grass whispers around Theo as the first stolen dream-shard glows beyond 
 
 ### Entities
 
-Player, walls, trees, a boulder, 2 guards, 2 powerups, 1 explosive trap, exit.
+Player, walls, trees (one sealing the spawn corridor), a boulder, 2 guards, 2 powerups, Wooden Axe pedestal, 1 explosive trap, exit.
 
 ## Level 2: Easy — The Gatehouse
 
@@ -109,7 +109,8 @@ Player, walls, trees, 3 guards, 2 archers, 1 boss, powerups, 1 locked door, 1 ex
 - Levels are declared in `game/levels/level-data.js`; rows can be written as plain strings for readability.
 - Every level is BFS-verified solvable by an automated test (`all levels are distinct and solvable`), which also asserts no two levels share a layout and that any key is reachable before its door.
 - Each level has a `theme` (`forest`, `desert`, `snow`, `dungeon`) that controls the floor tile, wall tile, obstacle sprites, boulder sprite, and exit ruin.
-- Weapon progression is fixed: Wooden Axe at start, Steel Sword on level 3, Dream Bow on level 6, and Moonlit Quiver on level 9. Wardens intentionally do not grant a weapon.
+- Weapon progression is fixed: Rusty Dagger at start, Wooden Axe on level 1, Steel Sword on level 3, Dream Bow on level 6, and Moonlit Quiver on level 9. Wardens intentionally do not grant a weapon.
+- Only the Wooden Axe chops trees and boulders, so its level 1 pedestal sits on the forced path out of the spawn, and the level checker verifies no earlier route ever requires chopping.
 - Runes are fixed pickups in riskier spots: Haste on level 4, Warding on level 7, Might on level 9.
 
 ## Theme assignment

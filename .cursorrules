@@ -1,8 +1,8 @@
-# Programming Rules: Pyjama Game
+# Programming Rules: Wandertrap
 
 ## Overview
 
-This codebase is for a 2D platform game called "Pyjama Game." The game is built using JavaScript and HTML, with Parcel as the bundler. The game features multiple screens, including a welcome screen, game screen, game over screen, high score screen, and level completed screen. The game logic includes initializing the game board, handling player input, updating game state, checking for collisions, and rendering the game board and entities.
+This codebase is for a 2D top-down maze game called "Wandertrap." The game is built using JavaScript and HTML, with Parcel as the bundler. The game features multiple screens, including a welcome screen, game screen, game over screen, high score screen, and level completed screen. The game logic includes initializing the game board, handling player input, updating game state, checking for collisions, and rendering the game board and entities.
 
 ## Project Structure
 

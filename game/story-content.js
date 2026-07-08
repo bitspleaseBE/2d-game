@@ -30,7 +30,7 @@ export const introStoryBeats = [
     id: 'intro-step-forward',
     imageKey: 'introStepForward',
     audioId: 'intro-step-forward',
-    text: 'Theo tightened his pyjama sleeves, lifted his sword, and stepped forward: reclaim the shards, defeat the Orc King, and wake before dawn.',
+    text: 'Theo tightened his pyjama sleeves, lifted his little dagger, and stepped forward: reclaim the shards, defeat the Orc King, and wake before dawn.',
   },
 ];
 

@@ -83,6 +83,12 @@ export const playerSpriteManifest = {
     },
   },
   weapons: {
+    // Both blades (dagger and steel sword) share the default "attack" swing
+    // from the movement sheet, so no extra sprite rows are needed for them.
+    dagger: {
+      actionState: "attack",
+      states: {},
+    },
     woodenAxe: {
       actionState: "axe",
       states: {

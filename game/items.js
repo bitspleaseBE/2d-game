@@ -44,6 +44,15 @@ export const itemCatalog = {
     arrowAmount: 5,
     description: "Five dream-arrows for the bow.",
   },
+  dagger: {
+    name: "Rusty Dagger",
+    article: "a",
+    kind: "weapon",
+    icon: "dagger",
+    weaponId: "dagger",
+    damage: 25,
+    description: "Theo's first dream-tool. Quick jabs that sting orcs a little.",
+  },
   woodenAxe: {
     name: "Wooden Axe",
     article: "a",
@@ -51,7 +60,7 @@ export const itemCatalog = {
     icon: "warAxe",
     weaponId: "woodenAxe",
     damage: 30,
-    description: "Theo's first dream-tool. Chops obstacles and hurts orcs a little.",
+    description: "The only tool that cuts trees and breaks boulders. Hurts orcs too.",
   },
   steelSword: {
     name: "Steel Sword",
@@ -60,7 +69,7 @@ export const itemCatalog = {
     icon: "steelSword",
     weaponId: "steelSword",
     damage: 60,
-    description: "A sturdy blade. Strong melee damage and reliable knockback.",
+    description: "A sturdy blade with reliable knockback. Cannot cut trees or rocks.",
   },
   dreamBow: {
     name: "Dream Bow",
@@ -103,7 +112,19 @@ export const itemCatalog = {
   },
 };
 
+// Only weapons with `canChopObstacles` can damage trees and boulders — the
+// wooden axe is the sole tool that carves paths through the labyrinth.
 export const weaponCatalog = {
+  dagger: {
+    itemId: "dagger",
+    name: "Rusty Dagger",
+    icon: "dagger",
+    actionState: "attack",
+    damage: 25,
+    cooldownMs: 320,
+    unlockLine: "Theo woke inside the dream clutching a rusty dagger.",
+    hint: "Quick, light jabs. Too small to cut trees or break boulders.",
+  },
   woodenAxe: {
     itemId: "woodenAxe",
     name: "Wooden Axe",
@@ -111,9 +132,10 @@ export const weaponCatalog = {
     actionState: "axe",
     damage: 30,
     cooldownMs: 430,
+    canChopObstacles: true,
     obstacleDamage: 100,
     unlockLine: "The first shard remembers a wooden axe. It can carve paths through the dream.",
-    hint: "Chops trees and boulders. Weak, but dependable.",
+    hint: "The only tool that cuts trees and breaks boulders.",
   },
   steelSword: {
     itemId: "steelSword",
@@ -122,9 +144,8 @@ export const weaponCatalog = {
     actionState: "attack",
     damage: 60,
     cooldownMs: 360,
-    obstacleDamage: 60,
     unlockLine: "The second shard sharpens into a steel sword.",
-    hint: "Higher melee damage with knockback.",
+    hint: "Higher melee damage with knockback. Keep the axe for trees and rocks.",
   },
   dreamBow: {
     itemId: "dreamBow",
@@ -139,7 +160,7 @@ export const weaponCatalog = {
   },
 };
 
-export const weaponOrder = ["woodenAxe", "steelSword", "dreamBow"];
+export const weaponOrder = ["dagger", "woodenAxe", "steelSword", "dreamBow"];
 
 // Weighted non-key guard drops. `null` means nothing falls.
 export const guardDropPool = [
