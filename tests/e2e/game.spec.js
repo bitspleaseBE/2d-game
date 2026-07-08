@@ -277,7 +277,7 @@ test('regression: attacking damages and defeats an adjacent guard', async ({ pag
     game.player.movement = 'down'; // face the guard
 
     const scoreBefore = game.score;
-    game.playerAttack(); // Wooden Axe deals 30 damage
+    game.playerAttack(); // the starting Rusty Dagger deals 25 damage
     const guardsAfterOneHit = game.guards.length;
     for (let i = 0; i < 3; i++) {
       game.attackCooldownMs = 0; // skip the swing cooldown between test hits
@@ -330,7 +330,7 @@ test('regression: attack only hits in the direction the player is facing', async
   expect(result.guards).toBe(1); // guard behind the player is untouched
 });
 
-test('axe action clears an adjacent obstacle through the weapon action path', async ({ page }) => {
+test('axe action clears an adjacent obstacle, but only once the axe is owned', async ({ page }) => {
   await startNewGame(page);
 
   const result = await page.evaluate(() => {
@@ -340,21 +340,111 @@ test('axe action clears an adjacent obstacle through the weapon action path', as
     game.teleportPlayer(x, y - 64);
     game.player.movement = 'down';
 
+    // Without the axe the shortcut refuses and explains what is missing
+    game.notifications = [];
     game.playerAxe();
-    const afterOneHit = game.obstacles.includes(obstacle);
-    game.attackCooldownMs = 0; // skip the swing cooldown between test hits
+    const withoutAxe = {
+      intact: game.obstacles.includes(obstacle),
+      notifications: game.notifications.map((n) => n.text),
+    };
+
+    game.player.unlockWeapon('woodenAxe');
+    game.attackCooldownMs = 0;
     game.playerAxe();
 
     return {
-      afterOneHit,
-      afterTwoHits: game.obstacles.includes(obstacle),
+      withoutAxe,
+      afterOneHit: game.obstacles.includes(obstacle),
       action: game.player.action,
     };
   });
 
-  expect(result.afterOneHit).toBe(false);
-  expect(result.afterTwoHits).toBe(false);
+  expect(result.withoutAxe.intact).toBe(true);
+  expect(result.withoutAxe.notifications.some((t) => t.includes('no axe yet'))).toBe(true);
+  expect(result.afterOneHit).toBe(false); // the axe fells a boulder in one swing
   expect(result.action).toBe('axe');
+});
+
+test('only the axe can cut trees and break boulders', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    const obstacle = game.obstacles.find((item) => item.getType() === 'boulder');
+    const { x, y } = obstacle.getPosition();
+    game.teleportPlayer(x, y - 64);
+    game.player.movement = 'down';
+
+    // The steel sword strikes the boulder but cannot damage it
+    game.player.unlockWeapon('steelSword');
+    game.player.selectWeapon('steelSword');
+    game.notifications = [];
+    game.playerAttack();
+    const swordResult = {
+      intact: game.obstacles.includes(obstacle),
+      notifications: game.notifications.map((n) => n.text),
+    };
+
+    // The axe clears it in one swing
+    game.player.unlockWeapon('woodenAxe');
+    game.player.selectWeapon('woodenAxe');
+    game.attackCooldownMs = 0;
+    game.playerAttack();
+
+    return { swordResult, afterAxe: game.obstacles.includes(obstacle) };
+  });
+
+  expect(result.swordResult.intact).toBe(true);
+  expect(result.swordResult.notifications.some((t) =>
+    t.includes('Only the axe can cut trees and break boulders')
+  )).toBe(true);
+  expect(result.afterAxe).toBe(false);
+});
+
+test('bumping into the level 1 tree without the axe shows a hint', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    game.notifications = [];
+    // A tree seals the narrow corridor directly right of the level 1 spawn
+    for (let i = 0; i < 30; i++) game.movePlayer('right');
+    game.step(1);
+    return {
+      hasAxe: game.player.hasWeapon('woodenAxe'),
+      position: game.player.getPosition(),
+      notifications: game.notifications.map((n) => n.text),
+    };
+  });
+
+  expect(result.hasAxe).toBe(false); // a fresh run starts with only the dagger
+  expect(result.position.x).toBeLessThan(512); // stopped before the tree cell
+  expect(result.notifications.some((t) =>
+    t.includes('only an axe can cut it down')
+  )).toBe(true);
+});
+
+test('the level 1 pedestal grants the wooden axe', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    const pedestal = game.weaponPedestals[0];
+    game.teleportPlayer(pedestal.x, pedestal.y);
+    game.step(1);
+    return {
+      hasAxe: game.player.hasWeapon('woodenAxe'),
+      selected: game.player.weaponId,
+      overlayTitle: game.weaponUnlock?.title,
+    };
+  });
+
+  expect(result.hasAxe).toBe(true);
+  expect(result.selected).toBe('woodenAxe');
+  expect(result.overlayTitle).toBe('Wooden Axe');
 });
 
 test('hitting a guard shows its health bar and knocks it back', async ({ page }) => {
@@ -481,8 +571,8 @@ test('the attack cooldown blocks an immediate second swing', async ({ page }) =>
     };
   });
 
-  expect(result.healthAfterSpam).toBe(70); // only the first swing landed
-  expect(result.healthAfterCooldown).toBe(40); // swing after cooldown lands
+  expect(result.healthAfterSpam).toBe(75); // only the first dagger jab landed
+  expect(result.healthAfterCooldown).toBe(50); // swing after cooldown lands
 });
 
 test('a boss is tanky but beatable, always shows its health bar, and awards bonus score', async ({ page }) => {
@@ -499,7 +589,7 @@ test('a boss is tanky but beatable, always shows its health bar, and awards bonu
     const barVisibleBeforeAnyHit = boss.isHealthBarVisible();
     const scoreBefore = game.score;
 
-    // 300 health / 30 per Wooden Axe swing = 10 swings to bring the boss down
+    // 300 health / 25 per Rusty Dagger jab = 12 swings to bring the boss down
     let swings = 0;
     while (!boss.isDefeated() && swings < 20) {
       game.attackCooldownMs = 0;
@@ -519,7 +609,7 @@ test('a boss is tanky but beatable, always shows its health bar, and awards bonu
   expect(result.isBoss).toBe(true);
   expect(result.barVisibleBeforeAnyHit).toBe(true); // danger is telegraphed up front
   expect(result.maxHealth).toBe(300);
-  expect(result.swings).toBe(10); // tanky, but goes down to persistent attack
+  expect(result.swings).toBe(12); // tanky, but goes down to persistent attack
   expect(result.scoreGained).toBe(500); // bosses are worth five guards
 });
 
@@ -831,6 +921,7 @@ test('owned weapon selection and rune bonuses update attack power', async ({ pag
     player.addItem('runeMight');
 
     const base = player.attackPower;
+    player.unlockWeapon('woodenAxe');
     player.unlockWeapon('steelSword');
     player.equip('steelSword');
     const withSword = player.attackPower;
@@ -842,7 +933,7 @@ test('owned weapon selection and rune bonuses update attack power', async ({ pag
     return { base, withSword, withBoth, afterAxeSelected, equipment: player.equipment, weaponId: player.weaponId };
   });
 
-  expect(result.base).toBe(30);
+  expect(result.base).toBe(25); // the starting dagger
   expect(result.withSword).toBe(60);
   expect(result.withBoth).toBe(85); // rune of might: +25
   expect(result.afterAxeSelected).toBe(55); // rune stays on, axe is readied

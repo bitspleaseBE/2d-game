@@ -14,7 +14,7 @@ Wandertrap is an exciting 2D top-down maze game that challenges players to navig
 
 - Engaging top-down maze gameplay with smooth, frame-based movement (diagonals included)
 - Ten distinct, themed levels (forest, desert, snow, dungeon) with increasing difficulty — all verified solvable by automated tests
-- Hero weapon progression: Wooden Axe, Steel Sword, Dream Bow, and a Moonlit Quiver upgrade
+- Hero weapon progression: Rusty Dagger, Wooden Axe, Steel Sword, Dream Bow, and a Moonlit Quiver upgrade — only the axe can cut trees and break boulders
 - Melee and ranged combat with attack cooldowns, arrows, lingering guard corpses, archers, Wardens, and a final boss guarding the last exit
 - Hidden explosive traps that arm on approach and damage player and guards alike
 - Four powerups — health, speed, strength, invincibility (timed effects shown in the HUD) — plus healing potions you carry between levels
@@ -30,8 +30,8 @@ Wandertrap is an exciting 2D top-down maze game that challenges players to navig
 | --- | --- |
 | Arrow keys | Move (hold for continuous movement) |
 | Space | Attack with the selected weapon |
-| Tab / 1 / 2 / 3 | Cycle or select Wooden Axe / Steel Sword / Dream Bow |
-| X | Wooden Axe shortcut — fells an obstacle in one swing |
+| Tab / 1 / 2 / 3 / 4 | Cycle or select Rusty Dagger / Wooden Axe / Steel Sword / Dream Bow |
+| X | Wooden Axe shortcut — the only tool that fells trees and boulders (once found) |
 | P | Pick — disarm an armed trap next to you |
 | U | Drink a healing potion |
 | I | Inventory and weapon recap |

@@ -25,7 +25,7 @@ import Exit from "./entities/exit.js";
 import Drop from "./entities/drop.js";
 import Door from "./entities/door.js";
 import Projectile from "./entities/projectile.js";
-import { itemCatalog, guardDropPool, lateGuardDropPool, weaponCatalog } from "./items.js";
+import { itemCatalog, guardDropPool, lateGuardDropPool, weaponCatalog, weaponOrder } from "./items.js";
 import { resolveThemeAssets } from "./assets/theme-manifest.js";
 import { random } from "./utils/rng.js";
 import { getWeaponUnlockCopy } from "./screens/weapon-unlocked.js";
@@ -239,12 +239,15 @@ export class Game {
           this.cycleWeapon();
           break;
         case "1":
-          this.selectWeapon("woodenAxe");
+          this.selectWeapon("dagger");
           break;
         case "2":
-          this.selectWeapon("steelSword");
+          this.selectWeapon("woodenAxe");
           break;
         case "3":
+          this.selectWeapon("steelSword");
+          break;
+        case "4":
           this.selectWeapon("dreamBow");
           break;
         case controlSettings.attack:
@@ -452,16 +455,27 @@ export class Game {
       }
     });
 
-    // Chop down obstacles (trees, boulders) that are struck
-    const obstaclesBefore = this.obstacles.length;
-    this.obstacles = this.obstacles.filter((obstacle) => {
-      if (isColliding(attackBox, obstacle.getHitBox())) {
-        obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
-        return !obstacle.isDestroyed();
-      }
-      return true;
-    });
-    if (this.obstacles.length < obstaclesBefore) sfx.chop();
+    // Only the axe can chop down obstacles (trees, boulders); a blade that
+    // strikes one just bounces off with a reminder of what is needed
+    if (weapon.canChopObstacles) {
+      const obstaclesBefore = this.obstacles.length;
+      this.obstacles = this.obstacles.filter((obstacle) => {
+        if (isColliding(attackBox, obstacle.getHitBox())) {
+          obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
+          return !obstacle.isDestroyed();
+        }
+        return true;
+      });
+      if (this.obstacles.length < obstaclesBefore) sfx.chop();
+    } else if (
+      this.obstacles.some((obstacle) => isColliding(attackBox, obstacle.getHitBox()))
+    ) {
+      this.notifyOnce(
+        this.player.hasWeapon("woodenAxe")
+          ? "Only the axe can cut trees and break boulders — press 2 to ready it."
+          : "Only an axe could clear this — find one!"
+      );
+    }
   }
 
   playerBowAttack(weapon) {
@@ -481,6 +495,11 @@ export class Game {
 
   playerAxe() {
     if (this.attackCooldownMs > 0) return;
+    // The axe shortcut only works once the axe has been found
+    if (!this.player.hasWeapon("woodenAxe")) {
+      this.notifyOnce("You have no axe yet — look for one on a glowing pedestal.");
+      return;
+    }
     const weapon = weaponCatalog.woodenAxe;
     this.attackCooldownMs = weapon.cooldownMs || combatSettings.attackCooldownMs;
 
@@ -852,6 +871,7 @@ export class Game {
     this.drops.forEach((drop) => drop.update(deltaMs));
     this.checkDoorUnlock();
     this.checkLockedDoorHint();
+    this.checkObstacleHint();
     this.checkLevelCompletion();
   }
 
@@ -898,6 +918,22 @@ export class Game {
       keyOnGround
         ? "The door is locked — pick up the key first!"
         : "The door is locked — defeat a guard to find the key."
+    );
+  }
+
+  // Bumping into a tree or boulder before the axe is found explains why the
+  // path will not budge (only the axe can cut trees and break boulders)
+  checkObstacleHint() {
+    if (this.player.hasWeapon("woodenAxe")) return;
+    const playerBox = this.player.getHitBox();
+    const blocking = this.obstacles.find((obstacle) =>
+      isColliding(playerBox, Game.inflateBox(obstacle.getHitBox(), 12))
+    );
+    if (!blocking) return;
+    this.notifyOnce(
+      blocking.getType() === "tree"
+        ? "A tree blocks the path — only an axe can cut it down."
+        : "A boulder blocks the way — only an axe can break it."
     );
   }
 
@@ -1383,7 +1419,7 @@ export class Game {
     ctx.font = "bold 14px monospace";
     ctx.fillStyle = "#80d8ff";
     ctx.fillText("Weapons", panelX + 370, equipY - 12);
-    ["woodenAxe", "steelSword", "dreamBow"].forEach((weaponId, i) => {
+    weaponOrder.forEach((weaponId, i) => {
       const itemId = weaponCatalog[weaponId].itemId;
       this.drawInventorySlot(
         panelX + 370 + i * (slotSize + 10),
@@ -1543,7 +1579,7 @@ export class Game {
 
     const weapon = this.player.getSelectedWeapon();
     ctx.drawImage(icons[weapon.icon], 412, 15, iconSize, iconSize);
-    ctx.fillText(weapon.name.replace("Wooden ", "").replace("Steel ", ""), 442, 28);
+    ctx.fillText(weapon.name.replace(/^(?:Rusty|Wooden|Steel|Dream) /, ""), 442, 28);
     ctx.drawImage(icons.arrowBundle, 548, 15, iconSize, iconSize);
     ctx.fillText(`${this.player.arrowCount}`, 578, 28);
 
