@@ -109,6 +109,7 @@ const ITEM_ASSET_URLS = {
   explosive: new URL("../assets/images/generated/items/explosive.png", import.meta.url),
   dreamShard: new URL("../assets/images/powerups/Green_crystal2.png", import.meta.url),
   arrowBundle: new URL("../assets/images/projectiles/arrow.png", import.meta.url),
+  dagger: new URL("../assets/images/generated/items/sword_dagger.png", import.meta.url),
   steelSword: new URL("../assets/images/generated/items/sword_steel.png", import.meta.url),
   warAxe: new URL("../assets/images/generated/items/axe_war.png", import.meta.url),
   runeHaste: new URL("../assets/images/generated/items/rune_haste.png", import.meta.url),
