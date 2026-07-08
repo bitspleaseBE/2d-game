@@ -92,7 +92,7 @@ export const playerSpriteManifest = {
           frameHeight: 48,
           frames: 2,
           frameDurationMs: 110,
-          rows: { down: 10, left: 10, right: 10, up: 10 },
+          rows: { down: 4, left: 3, right: 3, up: 5 },
           flipLeft: true,
           oneShot: true,
           returnTo: "idle",
