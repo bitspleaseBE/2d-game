@@ -8,6 +8,11 @@ import { soundSettings } from './settings.js';
 
 let ctx = null;
 
+// Shared with the music box (music.js) so the whole game runs one context
+export function getAudioContext() {
+  return getContext();
+}
+
 function getContext() {
   if (soundSettings.mute) return null;
   try {
@@ -92,6 +97,10 @@ export const sfx = {
     tone({ type: 'sine', from: 350, to: 180, duration: 0.12, volume: 0.25, delay: 0.12 });
   },
   chop: () => tone({ type: 'square', from: 120, to: 50, duration: 0.15, volume: 0.3 }),
+  disarm: () => {
+    tone({ type: 'sine', from: 900, to: 900, duration: 0.06, volume: 0.2 });
+    tone({ type: 'sine', from: 600, to: 300, duration: 0.18, volume: 0.2, delay: 0.07 });
+  },
   levelComplete: () => {
     [523, 659, 784, 1047].forEach((f, i) =>
       tone({ type: 'triangle', from: f, to: f, duration: 0.15, volume: 0.25, delay: i * 0.12 })

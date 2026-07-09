@@ -1063,11 +1063,16 @@ test('orc archers keep distance and fire arrows', async ({ page }) => {
     game.teleportPlayer(300, 300);
     const archer = game.spawnGuard(360, 300, 'orc1', { ranged: true });
     const xBefore = archer.getPosition().x;
-    game.step(1);
+    game.step(1); // spots the player: retreat starts and the bow draw begins
+    const drawing = archer.isDrawingBow();
+    const projectilesDuringDraw = game.projectiles.length;
+    game.step(26); // the 400ms draw telegraph completes and the arrow releases
     return {
       isRanged: archer.isRanged(),
       maxHealth: archer.getMaxHealth(),
       damage: archer.damage,
+      drawing,
+      projectilesDuringDraw,
       xBefore,
       xAfter: archer.getPosition().x,
       projectiles: game.projectiles.length,
@@ -1077,6 +1082,8 @@ test('orc archers keep distance and fire arrows', async ({ page }) => {
   expect(result.isRanged).toBe(true);
   expect(result.maxHealth).toBe(60);
   expect(result.damage).toBe(5);
+  expect(result.drawing).toBe(true); // the shot is telegraphed...
+  expect(result.projectilesDuringDraw).toBe(0); // ...and nothing flies during the draw
   expect(result.xAfter).toBeGreaterThan(result.xBefore);
   expect(result.projectiles).toBeGreaterThan(0);
 });
@@ -1265,11 +1272,13 @@ test('winning the final level asks for a high score name and saves it', async ({
   await page.getByRole('button', { name: 'Save Score' }).click();
   await expect(page.getByText('Score saved!')).toBeVisible();
 
-  // The saved entry shows up in the high scores table (1234 + 100 exit bonus)
+  // The saved entry shows up in the high scores table: 1234 + 100 exit bonus
+  // + 200 instant-time bonus + 150 untouched bonus + 250 sneak bonus (the
+  // Orc King was never touched — teleporting to the exit is the ultimate sneak)
   await page.getByRole('button', { name: 'Main Menu' }).click();
   await page.getByRole('button', { name: 'High Scores' }).click();
   await expect(page.getByRole('cell', { name: 'Theo' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: '1334' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '1934' })).toBeVisible();
 });
 
 test('reaching the exit completes level 1 and advances to level 2', async ({ page }) => {
@@ -1315,7 +1324,7 @@ test('touch controls appear in landscape when forced with ?touch=1', async ({ pa
   await expect(page.locator('#touch-btn-potion')).toBeVisible();
   await expect(page.locator('#touch-btn-weapon')).toBeVisible();
   await expect(page.locator('#touch-btn-menu')).toBeVisible();
-  await expect(page.locator('#touch-btn-pick')).toHaveCount(0);
+  await expect(page.locator('#touch-btn-pick')).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
@@ -1371,22 +1380,25 @@ test('contact damage knocks the player back, away from the guard', async ({ page
     game.walls = [];
     game.explosives = [];
     game.teleportPlayer(320, 300);
-    game.spawnGuard(280, 300); // overlapping hitboxes, guard to the left
+    const guard = game.spawnGuard(280, 300); // overlapping hitboxes, guard to the left
     const xBefore = game.player.getPosition().x;
 
-    game.step(1); // contact damage lands and starts the shove
-    const knockbackActive = Boolean(game.playerKnockback);
-    game.step(10); // let the 120ms shove play out
+    game.step(2); // contact starts the windup telegraph — no damage yet
+    const healthDuringWindup = game.player.getHealth();
+    const windingUp = guard.isWindingUp();
+    game.step(30); // the 250ms windup finishes: the strike lands and shoves Theo
     return {
-      knockbackActive,
+      healthDuringWindup,
+      windingUp,
       xBefore,
       xAfter: game.player.getPosition().x,
       health: game.player.getHealth(),
     };
   });
 
-  expect(result.health).toBe(90); // one contact hit
-  expect(result.knockbackActive).toBe(true);
+  expect(result.windingUp).toBe(true); // the hit is telegraphed first
+  expect(result.healthDuringWindup).toBe(100); // no damage during the windup
+  expect(result.health).toBe(90); // then one contact hit lands
   expect(result.xAfter).toBeGreaterThan(result.xBefore); // pushed right, away from the guard
 });
 
@@ -1447,4 +1459,207 @@ test('New Game mid-run asks for confirmation and starts a fresh run', async ({ p
   state = await gameState(page);
   expect(state.score).toBe(0);
   expect(state.level).toBe(1);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2 features: disarming, secrets, weapon arcs, tally, persistence,
+// Daily Dream, dawn timer, and patrol AI.
+// ---------------------------------------------------------------------------
+
+test("pressing 'p' disarms an armed trap for score", async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    const trap = game.explosives[0];
+    const pos = trap.getPosition();
+    game.teleportPlayer(pos.x + 64, pos.y); // next to the trap: it arms
+    game.step(2);
+    const armed = trap.isArmed();
+    const scoreBefore = game.score;
+    game.playerPick();
+    game.step(2); // the disarmed trap is removed on the next update
+    return {
+      armed,
+      scoreGained: game.score - scoreBefore,
+      explosivesLeft: game.explosives.length,
+      health: game.player.getHealth(),
+    };
+  });
+
+  expect(result.armed).toBe(true);
+  expect(result.scoreGained).toBe(50);
+  expect(result.explosivesLeft).toBe(0); // gone without detonating
+  expect(result.health).toBe(100);
+});
+
+test('an axe swing breaks a cracked wall and reveals a stash', async ({ page }) => {
+  await startNewGame(page);
+
+  // Level 1 has a cracked wall ('R') at column 11, row 3 => pixel (704, 192)
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    game.player.unlockWeapon('woodenAxe');
+    game.teleportPlayer(704, 128); // free cell directly above the cracked wall
+    game.player.movement = 'down';
+    const wallsBefore = game.walls.length;
+    game.playerAttack();
+    return {
+      wallsBefore,
+      wallsAfter: game.walls.length,
+      stash: game.drops.map((drop) => drop.getType()),
+    };
+  });
+
+  expect(result.wallsAfter).toBe(result.wallsBefore - 1);
+  expect(result.stash).toContain('dreamShard');
+});
+
+test('the axe sweeps a wide arc, the sword only hits straight ahead', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    game.walls = [];
+    game.player.unlockWeapon('woodenAxe');
+    game.player.unlockWeapon('steelSword');
+    game.teleportPlayer(300, 300);
+    // A guard to Theo's side while he faces down: inside the axe's 180°
+    // sweep, but outside the sword's narrow forward thrust
+    const guard = game.spawnGuard(240, 330);
+    game.player.movement = 'down';
+
+    game.player.selectWeapon('steelSword');
+    game.playerAttack();
+    const healthAfterSword = guard.getHealth();
+
+    game.attackCooldownMs = 0;
+    game.hitStopMs = 0;
+    game.player.selectWeapon('woodenAxe');
+    game.player.movement = 'down';
+    game.playerAttack();
+    const healthAfterAxe = guard.getHealth();
+
+    return { maxHealth: guard.getMaxHealth(), healthAfterSword, healthAfterAxe };
+  });
+
+  expect(result.healthAfterSword).toBe(result.maxHealth); // narrow thrust misses the flank
+  expect(result.healthAfterAxe).toBeLessThan(result.maxHealth); // the sweep connects
+});
+
+test('completing a level shows the mastery tally with stars', async ({ page }) => {
+  await startNewGame(page);
+
+  await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    const exit = game.exit.getPosition();
+    game.teleportPlayer(exit.x, exit.y);
+    game.step(1);
+  });
+
+  await expect(page.getByText('Level Completed!')).toBeVisible();
+  await expect(page.getByText('★★★')).toBeVisible(); // instant and untouched
+  await expect(page.getByText(/time bonus \+\d+/)).toBeVisible();
+  await expect(page.getByText(/Untouched! \+\d+/)).toBeVisible();
+});
+
+test('a bookmarked run survives a page refresh via Continue', async ({ page }) => {
+  await startNewGame(page);
+
+  // Complete level 1 so the run is bookmarked to localStorage
+  await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    const exit = game.exit.getPosition();
+    game.teleportPlayer(exit.x, exit.y);
+    game.step(1);
+  });
+  await expect(page.getByText('Level Completed!')).toBeVisible();
+  const scoreBefore = await page.evaluate(() => window.__wandertrap.game.score);
+
+  // A refresh wipes the in-memory game, but the bookmark restores it
+  await page.reload();
+  await expect(page.locator('#welcome-screen')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.locator('canvas')).toBeVisible();
+  await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
+
+  const restored = await gameState(page);
+  expect(restored.level).toBe(2);
+  expect(restored.score).toBe(scoreBefore);
+});
+
+test('the Daily Dream runs date-seeded and records a shareable result', async ({ page }) => {
+  await openWelcomeScreen(page);
+  await page.getByRole('button', { name: 'Daily Dream' }).click();
+  await expect(page.locator('canvas')).toBeVisible();
+  await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
+  const isDaily = await page.evaluate(() => window.__wandertrap.game.dailyMode);
+  expect(isDaily).toBe(true);
+
+  // Lose quickly: the result is recorded and the game-over screen offers a share
+  await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.dismissLevelIntro();
+    game.lives = 1;
+    game.player.takeDamage(100);
+    game.step(120); // defeat pause plays out and the run ends
+  });
+  await expect(page.locator('#game-over-screen')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Share Daily Result' })).toBeVisible();
+
+  // Back on the menu, today's attempt is spent and turns into a share action
+  await page.getByRole('button', { name: 'Main Menu' }).click();
+  await expect(page.getByRole('button', { name: /Daily Dream ✓/ })).toBeVisible();
+});
+
+test('the dawn timer collapses the dream when it runs out', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.startAtLevel(7); // The Serpent carries the dawn timer
+    game.guards = [];
+    game.explosives = [];
+    const timerArmed = game.dawnTimerMs !== null && game.dawnTimerMs > 0;
+    game.dawnTimerMs = 50; // fast-forward to just before dawn
+    game.step(20); // the timer expires and the first collapse tick hits
+    return { timerArmed, health: game.player.getHealth() };
+  });
+
+  expect(result.timerArmed).toBe(true);
+  expect(result.health).toBeLessThan(100);
+});
+
+test('guards without a target wander near their post instead of freezing', async ({ page }) => {
+  await page.goto('/?seed=7');
+  await expect(page.locator('#welcome-screen')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'New Game' }).click();
+  await expect(page.locator('canvas')).toBeVisible();
+  await page.evaluate(() => window.__wandertrap.game.dismissLevelIntro());
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    game.walls = [];
+    game.teleportPlayer(1200, 550); // far away: no line of sight at 5 cells
+    const guard = game.spawnGuard(300, 300);
+    const start = { ...guard.getPosition() };
+    game.step(360); // six seconds of idle time
+    const end = guard.getPosition();
+    return {
+      moved: Math.hypot(end.x - start.x, end.y - start.y),
+      nearPost: Math.hypot(end.x - 300, end.y - 300) < 64 * 3,
+    };
+  });
+
+  expect(result.moved).toBeGreaterThan(0); // patrolling, not frozen
+  expect(result.nearPost).toBe(true); // but leashed to its post
 });

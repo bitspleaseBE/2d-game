@@ -7,7 +7,7 @@ import { appendScoreEntry } from './score-entry.js';
 // - Provide options to restart the game or go to the high score screen
 // - Style: background color, text color, font size, button styles
 
-export function showGameOverScreen(finalScore, onTryAgain, onMainMenu) {
+export function showGameOverScreen(finalScore, onTryAgain, onMainMenu, dailyShare = null) {
     const container = document.getElementById('game-container');
     container.innerHTML = ''; // Clear previous content
 
@@ -27,6 +27,22 @@ export function showGameOverScreen(finalScore, onTryAgain, onMainMenu) {
     gameOverScreen.appendChild(scoreDisplay);
 
     appendScoreEntry(gameOverScreen, finalScore);
+
+    // Daily Dream runs end with a shareable one-liner of today's result
+    if (dailyShare) {
+        const shareButton = document.createElement('button');
+        shareButton.textContent = 'Share Daily Result';
+        shareButton.onclick = async () => {
+            try {
+                await navigator.clipboard.writeText(dailyShare);
+                shareButton.textContent = 'Copied to clipboard!';
+            } catch {
+                shareButton.textContent = dailyShare;
+            }
+        };
+        gameOverScreen.appendChild(shareButton);
+        styleButton(shareButton, theme.colors.accent);
+    }
 
     const tryAgainButton = document.createElement('button');
     tryAgainButton.textContent = 'Try Again';

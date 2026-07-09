@@ -104,6 +104,10 @@ export function createTouchControls(game) {
   tapAction(potionBtn, () => game.playerDrinkPotion());
   actions.appendChild(potionBtn);
 
+  const pickBtn = makeButton('touch-btn-pick', 'PICK', 52);
+  tapAction(pickBtn, () => game.playerPick());
+  actions.appendChild(pickBtn);
+
   const weaponBtn = makeButton('touch-btn-weapon', 'WPN', 52);
   tapAction(weaponBtn, () => game.cycleWeapon());
   actions.appendChild(weaponBtn);

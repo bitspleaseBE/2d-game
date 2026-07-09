@@ -17,11 +17,12 @@
 
 import levelData from '../game/levels/level-data.js';
 
-const KNOWN = new Set(['#', ' ', 'P', 'X', 'T', 'O', 'G', 'A', 'B', 'C', 'E', 'D', 'W', 'H', 'V', 'M']);
+const KNOWN = new Set(['#', ' ', 'P', 'X', 'T', 'O', 'G', 'A', 'B', 'C', 'E', 'D', 'W', 'H', 'V', 'M', 'R']);
 // Cells the player can eventually occupy or clear out of the way
-const PASSABLE = new Set([' ', 'P', 'X', 'T', 'O', 'G', 'A', 'B', 'C', 'E', 'D', 'W', 'H', 'V', 'M']);
-// Same, but before the axe is found: trees and boulders are hard walls
-const PASSABLE_WITHOUT_AXE = new Set([...PASSABLE].filter((c) => c !== 'T' && c !== 'O'));
+// ('R' cracked walls break to an axe swing, like trees and boulders)
+const PASSABLE = new Set([' ', 'P', 'X', 'T', 'O', 'G', 'A', 'B', 'C', 'E', 'D', 'W', 'H', 'V', 'M', 'R']);
+// Same, but before the axe is found: trees, boulders and cracked walls are hard walls
+const PASSABLE_WITHOUT_AXE = new Set([...PASSABLE].filter((c) => c !== 'T' && c !== 'O' && c !== 'R'));
 
 // The level whose pedestal grants the axe; earlier levels get no chopping
 const axeLevelNumber = (() => {

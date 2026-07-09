@@ -11,6 +11,7 @@ import {
   juiceSettings,
 } from "./utils/settings.js";
 import { sfx } from "./utils/sound.js";
+import { music } from "./utils/music.js";
 import { playNarration, stopNarration } from "./utils/narration.js";
 import Player from "./entities/player.js";
 import levelData from "./levels/level-data.js";
@@ -23,7 +24,12 @@ import { isColliding } from "./utils/game.js";
 import {
   shouldShowLevelIntro,
   markLevelIntroSeen,
+  recordLevelStars,
+  recordFurthestLevel,
+  saveRunState,
+  clearRunState,
 } from "./utils/preferences.js";
+import { tallySettings } from "./utils/settings.js";
 import {
   createTouchControls,
   shouldShowTouchControls,
@@ -108,6 +114,12 @@ export class Game {
     this.deathCount = 0;
     this.runElapsedMs = 0;
     this.touchControls = null;
+    // End-of-level tally: when this level started (in run time) and whether
+    // Theo has been hit since, for the time and no-damage bonuses
+    this.levelStartMs = 0;
+    this.levelDamageTaken = false;
+    // Set for Daily Dream runs (date-seeded, one attempt per day)
+    this.dailyMode = false;
     // Game feel: a short freeze when a melee hit lands, a decaying screen
     // shake, impact particles, and a shove on the player when damage lands.
     // None of it changes combat outcomes — it only makes them readable.
@@ -116,6 +128,12 @@ export class Game {
     this.shakeTimeMs = 0;
     this.particles = [];
     this.playerKnockback = null;
+    // Per-level twists: the defuse-all trap counter and the dawn timer
+    this.objective = null;
+    this.trapStats = null;
+    this.dawnTimerMs = null;
+    this.dawnTimerTotal = null;
+    this.collapseTickMs = 0;
   }
 
   initializeBoard() {
@@ -126,6 +144,11 @@ export class Game {
       this.exit = null;
       this.board = level.layout;
       this.themeAssets = resolveThemeAssets(this.assets.levelAssets, level.theme);
+      music.setTheme(level.theme);
+      this.objective = level.objective || null;
+      this.dawnTimerTotal = level.dawnTimerMs || null;
+      this.dawnTimerMs = this.dawnTimerTotal;
+      this.collapseTickMs = 0;
       this.fogEnabled = level.fogOfWar;
       this.explored = level.layout.map((row) => row.map(() => false));
       if (this.fogEnabled) {
@@ -133,12 +156,12 @@ export class Game {
       }
       for (let y = 0; y < level.layout.length; y++) {
         for (let x = 0; x < level.layout[y].length; x++) {
-          if (level.layout[y][x] === "#") {
+          if (level.layout[y][x] === "#" || level.layout[y][x] === "R") {
             this.walls.push(
               new Wall(
                 x * canvasSettings.cellWidth,
                 y * canvasSettings.cellHeight,
-                "normal",
+                level.layout[y][x] === "R" ? "breakable" : "normal",
                 this.themeAssets
               )
             );
@@ -282,6 +305,9 @@ export class Game {
           break;
         case controlSettings.axe:
           debounceAction(() => this.playerAxe(), 250)();
+          break;
+        case controlSettings.pick:
+          debounceAction(() => this.playerPick(), 250)();
           break;
         case controlSettings.potion:
           debounceAction(() => this.playerDrinkPotion(), 500)();
@@ -470,7 +496,7 @@ export class Game {
       if (guard.isDefeated()) return;
       if (isColliding(attackBox, guard.getHitBox())) {
         swingLanded = true;
-        guard.takeDamage(this.player.attackPower, this.player.movement);
+        guard.takeDamage(this.player.attackPower, this.player.movement, weapon.knockbackMultiplier || 1);
         const guardCenter = Game.boxCenter(guard.getHitBox());
         if (guard.consumeDefeatAward()) {
           sfx.guardDown();
@@ -488,20 +514,8 @@ export class Game {
     // Only the axe can chop down obstacles (trees, boulders); a blade that
     // strikes one just bounces off with a reminder of what is needed
     if (weapon.canChopObstacles) {
-      const obstaclesBefore = this.obstacles.length;
-      this.obstacles = this.obstacles.filter((obstacle) => {
-        if (isColliding(attackBox, obstacle.getHitBox())) {
-          obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
-          if (obstacle.isDestroyed()) {
-            const center = Game.boxCenter(obstacle.getHitBox());
-            this.spawnParticles(center.x, center.y, { color: "#a1887f", count: 10, speed: 160 });
-            return false;
-          }
-          return true;
-        }
-        return true;
-      });
-      if (this.obstacles.length < obstaclesBefore) sfx.chop();
+      this.chopObstaclesInSwing(attackBox, weapon);
+      this.breakWallsInSwing(attackBox);
     } else if (
       this.obstacles.some((obstacle) => isColliding(attackBox, obstacle.getHitBox()))
     ) {
@@ -542,7 +556,13 @@ export class Game {
     sfx.swing();
     if (!this.player.isActionActive("axe")) return;
     const attackBox = this.player.getAttackBox();
+    this.chopObstaclesInSwing(attackBox, weapon);
+    this.breakWallsInSwing(attackBox);
+  }
 
+  // Fell every tree/boulder caught in the swing; a destroyed obstacle can
+  // leave a small surprise behind (rolled on the seeded RNG, like drops)
+  chopObstaclesInSwing(attackBox, weapon) {
     const obstaclesBefore = this.obstacles.length;
     this.obstacles = this.obstacles.filter((obstacle) => {
       if (isColliding(attackBox, obstacle.getHitBox())) {
@@ -550,6 +570,7 @@ export class Game {
         if (obstacle.isDestroyed()) {
           const center = Game.boxCenter(obstacle.getHitBox());
           this.spawnParticles(center.x, center.y, { color: "#a1887f", count: 10, speed: 160 });
+          this.spawnObstacleDrop(obstacle.getHitBox());
           return false;
         }
         return true;
@@ -557,6 +578,69 @@ export class Game {
       return true;
     });
     if (this.obstacles.length < obstaclesBefore) sfx.chop();
+  }
+
+  // Sometimes a felled tree or broken boulder had something wedged inside
+  spawnObstacleDrop(box) {
+    const roll = random();
+    const itemId = roll < 0.15 ? "potion" : roll < 0.27 ? "dreamShard" : null;
+    if (!itemId) return;
+    this.drops.push(new Drop(box.x, box.y, itemId, this.assets.itemAssets));
+  }
+
+  // Cracked walls ('R' cells) crumble to an axe swing and always hide a
+  // stash — the reward for spotting the hairline cracks
+  breakWallsInSwing(attackBox) {
+    let broke = false;
+    this.walls = this.walls.filter((wall) => {
+      if (!wall.isBreakable() || !isColliding(attackBox, wall.getHitBox())) return true;
+      const box = wall.getHitBox();
+      const center = Game.boxCenter(box);
+      this.spawnParticles(center.x, center.y, { color: "#9e9e9e", count: 14, speed: 200 });
+      this.drops.push(new Drop(box.x, box.y, "dreamShard", this.assets.itemAssets));
+      this.notify("The cracked wall crumbles — something glitters in the rubble!");
+      broke = true;
+      return false;
+    });
+    if (broke) {
+      sfx.chop();
+      this.triggerShake(juiceSettings.damageShakeMagnitude, juiceSettings.damageShakeMs);
+    }
+    return broke;
+  }
+
+  // Disarm an armed trap next to the player ('p'): cut the fuse for score.
+  // On defuse-objective levels, clearing every trap pays a fat bonus.
+  playerPick() {
+    if (this.attackCooldownMs > 0) return;
+    this.attackCooldownMs = combatSettings.attackCooldownMs;
+    this.player.pick();
+    const range = Game.inflateBox(this.player.getHitBox(), canvasSettings.cellWidth * 0.75);
+    const target = this.explosives.find(
+      (explosive) => explosive.isArmed() && isColliding(range, explosive.getHitBox())
+    );
+    if (!target) {
+      this.notifyOnce("Nothing to disarm — stand beside an armed, hissing trap.");
+      return;
+    }
+    target.disarm();
+    sfx.disarm();
+    this.score += gameSettings.disarmScore;
+    const center = Game.boxCenter(target.getHitBox());
+    this.spawnParticles(center.x, center.y, { color: "#80d8ff", count: 8 });
+
+    if (this.trapStats) {
+      this.trapStats.disarmed += 1;
+      if (this.trapStats.disarmed >= this.trapStats.total && !this.trapStats.bonusAwarded) {
+        this.trapStats.bonusAwarded = true;
+        this.score += gameSettings.defuseAllBonus;
+        this.notify(`Every trap defused! +${gameSettings.defuseAllBonus}`);
+      } else {
+        this.notify(`Trap disarmed! +${gameSettings.disarmScore} (${this.trapStats.disarmed}/${this.trapStats.total})`);
+      }
+    } else {
+      this.notify(`Trap disarmed! +${gameSettings.disarmScore}`);
+    }
   }
 
   initializeEntities() {
@@ -641,6 +725,11 @@ export class Game {
           }
         }
       }
+
+      // The defuse-all objective tracks every buried trap on the level
+      this.trapStats = this.objective === "defuseAll"
+        ? { total: this.explosives.length, disarmed: 0, bonusAwarded: false }
+        : null;
     }
   }
 
@@ -816,6 +905,7 @@ export class Game {
       name: level.name,
       number: level.number,
       story: level.story,
+      guide: level.guide,
       msLeft: gameSettings.levelIntroDurationMs,
     };
     if (narrate) playNarration(level.audioId);
@@ -826,6 +916,13 @@ export class Game {
     markLevelIntroSeen(this.currentLevel);
     this.levelIntro = null;
     stopNarration();
+    // Announce this level's twist once play actually begins
+    if (this.objective === "defuseAll" && this.trapStats) {
+      this.notifyOnce(`Bonus dream: disarm all ${this.trapStats.total} traps with '${controlSettings.pick}'!`);
+    }
+    if (this.dawnTimerMs !== null) {
+      this.notifyOnce("Wake before dawn — reach the exit before the timer runs out!");
+    }
   }
 
   bootstrapProgressionForLevel(levelNumber) {
@@ -932,6 +1029,9 @@ export class Game {
       this.updateNotifications(deltaMs);
       return;
     }
+    // The lullaby thins out to sparse low notes while a boss is alive
+    music.setBossActive(this.guards.some((guard) => guard.isBoss() && !guard.isDefeated()));
+    this.updateDawnTimer(deltaMs);
     this.applyPlayerKnockback(deltaMs);
     this.applyMovementInput(deltaMs);
     this.revealAroundPlayer();
@@ -957,6 +1057,25 @@ export class Game {
     this.checkLockedDoorHint();
     this.checkObstacleHint();
     this.checkLevelCompletion();
+  }
+
+  // The dawn timer ('wake before dawn'): when it runs out the dream starts
+  // collapsing — periodic damage and shaking until the player reaches the
+  // exit. Respawning resets the countdown for a fresh attempt.
+  updateDawnTimer(deltaMs) {
+    if (this.dawnTimerMs === null) return;
+    this.dawnTimerMs -= deltaMs;
+    if (this.dawnTimerMs <= 15000 && this.dawnTimerMs > 0) {
+      this.notifyOnce("Dawn is closing in — hurry to the exit!");
+    }
+    if (this.dawnTimerMs > 0) return;
+    this.collapseTickMs -= deltaMs;
+    if (this.collapseTickMs <= 0) {
+      this.collapseTickMs = gameSettings.collapseIntervalMs;
+      this.notifyOnce("The dream is collapsing — run!");
+      this.triggerShake(juiceSettings.damageShakeMagnitude, juiceSettings.damageShakeMs);
+      this.damagePlayer(gameSettings.collapseDamage);
+    }
   }
 
   // Rectangle around a door: touching it means "at the door", one cell of
@@ -1028,6 +1147,9 @@ export class Game {
       if (this.pendingRespawnMs <= 0) {
         this.pendingRespawnMs = null;
         this.playerKnockback = null;
+        // A fresh attempt gets a fresh dawn countdown
+        this.dawnTimerMs = this.dawnTimerTotal;
+        this.collapseTickMs = 0;
         this.player.respawn(this.playerStart.x, this.playerStart.y);
       }
       return;
@@ -1038,6 +1160,8 @@ export class Game {
         this.isGameOver = true;
         this.started = false;
         this.pendingGameOverMs = null;
+        // The run is over — there is nothing left to Continue into
+        clearRunState();
         this.onGameOver(this.score);
       }
       return;
@@ -1111,6 +1235,7 @@ export class Game {
     const healthBefore = this.player.getHealth();
     this.player.takeDamage(amount);
     if (this.player.getHealth() >= healthBefore) return;
+    this.levelDamageTaken = true;
     sfx.hurt();
     this.triggerShake(juiceSettings.damageShakeMagnitude, juiceSettings.damageShakeMs);
     const center = this.playerCenter();
@@ -1228,9 +1353,14 @@ export class Game {
   checkCollisions() {
     const playerPosition = this.player.getHitBox();
 
+    // Contact damage is telegraphed: touching a guard starts its windup
+    // (the '!' flash); the hit lands only if the player is still in reach
+    // when the windup finishes — stepping away makes it whiff
     this.guards.forEach((guard) => {
       if (guard.isDefeated()) return;
-      if (isColliding(playerPosition, guard.getHitBox())) {
+      const touching = isColliding(playerPosition, guard.getHitBox());
+      if (touching) guard.beginWindup();
+      if (guard.consumeStrike() && touching) {
         this.damagePlayer(guard.damage, guard.getHitBox());
       }
     });
@@ -1320,21 +1450,97 @@ export class Game {
     sfx.levelComplete();
 
     const completedLevel = levelData.getLevel(this.currentLevel);
+    // Mastery tally: time and no-damage bonuses, plus a 1-3 star rating
+    // that persists (and only ever improves) per level
+    const tally = this.computeLevelTally();
+    // On sneak levels, exiting while the boss still breathes pays extra
+    if (completedLevel.sneakBonus > 0) {
+      const bossAlive = this.guards.some((guard) => guard.isBoss() && !guard.isDefeated());
+      tally.sneakBonus = bossAlive ? completedLevel.sneakBonus : 0;
+      tally.total += tally.sneakBonus;
+    }
+    this.score += tally.total;
+    recordLevelStars(completedLevel.number, tally.stars);
+
     const nextLevel = levelData.getLevel(this.currentLevel + 1);
     if (nextLevel) {
       this.currentLevel += 1;
+      recordFurthestLevel(this.currentLevel);
       this.initializeBoard();
       this.initializePlayer();
       this.initializeEntities();
+      this.resetLevelTally();
+      this.saveRun();
       this.showLevelIntro({ narrate: false });
       this.pause();
-      this.onLevelCompleted(this.score, completedLevel, nextLevel);
+      this.onLevelCompleted(this.score, completedLevel, nextLevel, tally);
     } else {
       // Last level cleared: the player won the game
       this.isGameOver = true;
       this.started = false;
+      clearRunState();
+      music.stop();
       this.onGameWon(this.score);
     }
+  }
+
+  computeLevelTally() {
+    const elapsedMs = Math.max(0, this.runElapsedMs - this.levelStartMs);
+    const underPar = elapsedMs <= tallySettings.parTimeMs;
+    const timeBonus = Math.round(
+      Math.max(0, tallySettings.timeBonusMax * (1 - elapsedMs / (tallySettings.parTimeMs * 2)))
+    );
+    const noDamageBonus = this.levelDamageTaken ? 0 : tallySettings.noDamageBonus;
+    const stars = !this.levelDamageTaken && underPar ? 3 : !this.levelDamageTaken || underPar ? 2 : 1;
+    return { elapsedMs, timeBonus, noDamageBonus, stars, total: timeBonus + noDamageBonus };
+  }
+
+  resetLevelTally() {
+    this.levelStartMs = this.runElapsedMs;
+    this.levelDamageTaken = false;
+  }
+
+  // Bookmark the run after each completed level so Continue survives a page
+  // refresh. Daily Dream runs are one attempt by design, so they never save.
+  saveRun() {
+    if (this.dailyMode) return;
+    saveRunState({
+      level: this.currentLevel,
+      score: this.score,
+      lives: this.lives,
+      deathCount: this.deathCount,
+      runElapsedMs: this.runElapsedMs,
+      player: {
+        inventory: { ...this.player.inventory },
+        equipment: { ...this.player.equipment },
+        ownedWeapons: [...this.player.ownedWeapons],
+        weaponId: this.player.weaponId,
+        arrowCount: this.player.arrowCount,
+        arrowCapacity: this.player.arrowCapacity,
+        quiverUpgraded: this.player.quiverUpgraded,
+      },
+    });
+  }
+
+  // Resume a bookmarked run from localStorage (the reverse of saveRun)
+  restoreRun(state) {
+    this.start({ fromLevel: state.level });
+    this.score = state.score || 0;
+    this.lives = state.lives || playerSettings.initialLives;
+    this.deathCount = state.deathCount || 0;
+    this.runElapsedMs = state.runElapsedMs || 0;
+    this.levelStartMs = this.runElapsedMs;
+    const saved = state.player || {};
+    if (saved.inventory) this.player.inventory = { ...saved.inventory };
+    if (saved.equipment) this.player.equipment = { ...saved.equipment };
+    if (Array.isArray(saved.ownedWeapons) && saved.ownedWeapons.length > 0) {
+      this.player.ownedWeapons = [...saved.ownedWeapons];
+    }
+    if (saved.weaponId) this.player.weaponId = saved.weaponId;
+    if (typeof saved.arrowCount === "number") this.player.arrowCount = saved.arrowCount;
+    if (typeof saved.arrowCapacity === "number") this.player.arrowCapacity = saved.arrowCapacity;
+    this.player.quiverUpgraded = Boolean(saved.quiverUpgraded);
+    this.saveRun();
   }
 
   isLevelComplete() {
@@ -1398,7 +1604,8 @@ export class Game {
   drawLevelIntro() {
     const ctx = this.context;
     const panelWidth = 760;
-    const panelHeight = 250;
+    // The dream-guide's remark (when this act has one) needs an extra row
+    const panelHeight = this.levelIntro.guide ? 300 : 250;
     const panelX = (this.canvas.width - panelWidth) / 2;
     const panelY = (this.canvas.height - panelHeight) / 2;
 
@@ -1425,6 +1632,18 @@ export class Game {
     ctx.fillStyle = "#f8e7a1";
     ctx.font = "20px monospace";
     this.drawWrappedText(this.levelIntro.story, this.canvas.width / 2, panelY + 136, panelWidth - 90, 28);
+
+    if (this.levelIntro.guide) {
+      ctx.fillStyle = "#80d8ff";
+      ctx.font = "italic 16px monospace";
+      this.drawWrappedText(
+        `Sooth the dream-dragon: “${this.levelIntro.guide}”`,
+        this.canvas.width / 2,
+        panelY + 200,
+        panelWidth - 90,
+        22
+      );
+    }
 
     ctx.fillStyle = "rgba(255, 255, 255, 0.68)";
     ctx.font = "14px monospace";
@@ -1779,7 +1998,7 @@ export class Game {
       for (let col = 0; col < cols; col += 1) {
         if (!this.explored[row][col]) continue;
         const cell = this.board[row]?.[col];
-        const isWall = cell === "#" || cell === "D";
+        const isWall = cell === "#" || cell === "D" || cell === "R";
         ctx.fillStyle = isWall ? "rgba(120, 120, 140, 0.9)" : "rgba(70, 90, 120, 0.75)";
         ctx.fillRect(mapX + col * cellW, mapY + row * cellH, cellW, cellH);
       }
@@ -1850,6 +2069,29 @@ export class Game {
     ctx.textAlign = "right";
     ctx.fillText(`Time ${this.formatRunTime(this.runElapsedMs)}`, this.canvas.width - 18, 28);
     ctx.fillText(`Deaths ${this.deathCount}`, this.canvas.width - 18, 48);
+
+    // The dawn countdown, turning urgent-red as it runs out
+    if (this.dawnTimerMs !== null) {
+      const msLeft = Math.max(0, this.dawnTimerMs);
+      ctx.font = "bold 16px monospace";
+      ctx.fillStyle = msLeft <= 15000 ? "#ff5252" : "#ffd54f";
+      ctx.fillText(
+        msLeft > 0 ? `Dawn ${this.formatRunTime(msLeft)}` : "THE DREAM COLLAPSES",
+        this.canvas.width - 18,
+        70
+      );
+    }
+
+    // The defuse-objective counter
+    if (this.trapStats) {
+      ctx.font = "bold 14px monospace";
+      ctx.fillStyle = this.trapStats.disarmed >= this.trapStats.total ? "#8bc34a" : "#80d8ff";
+      ctx.fillText(
+        `Traps ${this.trapStats.disarmed}/${this.trapStats.total}`,
+        this.canvas.width - 18,
+        this.dawnTimerMs !== null ? 90 : 70
+      );
+    }
     ctx.textAlign = "left";
 
     // Active powerup effects with their remaining time
@@ -1943,6 +2185,7 @@ export class Game {
 
   pause() {
     this.paused = true;
+    music.stop();
     this.inventoryOpen = false;
     this.pressedDirections.clear();
     this.lastFrameTime = null;
@@ -1952,8 +2195,10 @@ export class Game {
     }
   }
 
-  start({ fromLevel = null } = {}) {
-    // Fresh run: reset all progress
+  start({ fromLevel = null, daily = false } = {}) {
+    // Fresh run: reset all progress and abandon any bookmarked run
+    clearRunState();
+    this.dailyMode = daily;
     this.started = true;
     this.paused = false;
     this.isGameOver = false;
@@ -1962,6 +2207,8 @@ export class Game {
     this.currentLevel = fromLevel || gameSettings.initialLevel;
     this.deathCount = 0;
     this.runElapsedMs = 0;
+    this.levelStartMs = 0;
+    this.levelDamageTaken = false;
     this.notifications = [];
     this.player = null; // a fresh run starts with an empty pack
     this.inventoryOpen = false;
@@ -1990,6 +2237,8 @@ export class Game {
     this.initializeEntities();
     this.showLevelIntro();
     this.mountGameUi();
+    const level = levelData.getLevel(this.currentLevel);
+    music.start(level ? level.theme : "forest");
     this.gameLoop();
   }
 
@@ -2002,10 +2251,11 @@ export class Game {
     mountGameStage(this.container, this.canvas);
     this.mountGameUi();
     if (this.rafId) cancelAnimationFrame(this.rafId);
+    const level = levelData.getLevel(this.currentLevel);
     if (this.levelIntro) {
-      const level = levelData.getLevel(this.currentLevel);
       playNarration(level && level.audioId);
     }
+    music.start(level ? level.theme : "forest");
     this.gameLoop();
   }
 
@@ -2046,6 +2296,7 @@ export class Game {
     this.initializeBoard();
     this.initializePlayer();
     this.initializeEntities();
+    this.resetLevelTally();
     this.showLevelIntro();
   }
 }

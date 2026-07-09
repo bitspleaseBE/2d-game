@@ -1,7 +1,15 @@
 import { theme, applyContainerStyles, styleButton } from '../utils/theme.js';
 import { createSoundToggleButton } from '../utils/sound-controls.js';
-import { getSkipLevelIntros, setSkipLevelIntros, isCampaignComplete } from '../utils/preferences.js';
+import {
+  getSkipLevelIntros,
+  setSkipLevelIntros,
+  isCampaignComplete,
+  getLevelStars,
+  getFurthestLevel,
+  getDailyResult,
+} from '../utils/preferences.js';
 import levelData from '../levels/level-data.js';
+import { getTodayResult, copyShareString, shareString } from '../utils/daily.js';
 
 // Pick any unlocked dream after beating the campaign once.
 
@@ -32,10 +40,16 @@ export function showLevelSelectScreen(onPickLevel, onBack) {
   grid.style.maxWidth = '960px';
   grid.style.margin = '0 auto 24px';
 
-  for (let levelNumber = 1; levelNumber <= 10; levelNumber += 1) {
+  const stars = getLevelStars();
+  // Finished campaigns unlock everything; otherwise the furthest dream
+  // reached so far marks the end of the list
+  const unlockedUpTo = isCampaignComplete() ? 10 : getFurthestLevel();
+  for (let levelNumber = 1; levelNumber <= unlockedUpTo; levelNumber += 1) {
     const level = levelData.getLevel(levelNumber);
+    const earned = stars[levelNumber] || 0;
+    const rating = earned > 0 ? `  ${'★★★'.slice(0, earned)}${'☆☆☆'.slice(earned)}` : '';
     const button = document.createElement('button');
-    button.textContent = `${levelNumber}. ${level ? level.name : `Level ${levelNumber}`}`;
+    button.textContent = `${levelNumber}. ${level ? level.name : `Level ${levelNumber}`}${rating}`;
     button.style.minWidth = 'auto';
     button.style.margin = '0';
     button.style.width = '100%';
@@ -61,7 +75,7 @@ export function showLevelSelectScreen(onPickLevel, onBack) {
 // - Display game title
 // - Provide buttons to start the game, view high scores, and adjust sound settings
 
-export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onStory, onLevelSelect) {
+export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onStory, onLevelSelect, onDailyDream) {
   const container = document.getElementById('game-container');
   container.innerHTML = '';
 
@@ -129,7 +143,26 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   startButton.onclick = onStartGame;
   welcomeScreen.appendChild(startButton);
 
-  if (onLevelSelect && isCampaignComplete()) {
+  // The Daily Dream: one date-seeded attempt per day. Once played, the
+  // button turns into a share action for today's result.
+  if (onDailyDream) {
+    const dailyButton = document.createElement('button');
+    const played = getTodayResult();
+    if (played) {
+      dailyButton.textContent = 'Daily Dream ✓ — Share';
+      dailyButton.onclick = async () => {
+        const copied = await copyShareString();
+        dailyButton.textContent = copied ? 'Copied to clipboard!' : shareString();
+      };
+    } else {
+      dailyButton.textContent = 'Daily Dream';
+      dailyButton.onclick = onDailyDream;
+    }
+    welcomeScreen.appendChild(dailyButton);
+    styleButton(dailyButton, theme.colors.accent);
+  }
+
+  if (onLevelSelect && (isCampaignComplete() || getFurthestLevel() > 1)) {
     const levelSelectButton = document.createElement('button');
     levelSelectButton.textContent = 'Level Select';
     levelSelectButton.onclick = onLevelSelect;

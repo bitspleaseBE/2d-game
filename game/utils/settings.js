@@ -28,6 +28,10 @@ export const gameSettings = {
     maxLevels: 10, // Maximum number of levels in the game (must match levels defined in levels/level-data.js)
     scoreIncrement: 100, // Points added to the score for each successful action
     levelIntroDurationMs: 5200, // How long each level story card stays on screen
+    disarmScore: 50, // Score for disarming an armed trap with the pick ('p')
+    defuseAllBonus: 300, // Bonus for defusing every trap on a defuse-objective level
+    collapseIntervalMs: 2000, // How often the collapsing dream hurts a player who overstays the dawn timer
+    collapseDamage: 10, // Damage per collapse tick after the dawn timer runs out
 };
 
 // Powerup settings (durations are in milliseconds)
@@ -56,8 +60,12 @@ export const combatSettings = {
     archerRangeCells: 6, // Line-of-sight range for archer shots
     archerHealth: 60,
     archerDamage: 5,
+    archerArrowDamage: 20, // Damage per archer arrow (contact damage is archerDamage)
     playerKnockbackSpeed: 260, // How fast the player is shoved away from a damage source
     playerKnockbackDurationMs: 120, // How long that shove lasts
+    guardWindupMs: 250, // Telegraph before a guard's contact hit lands (the '!' flash)
+    guardStrikeGraceMs: 150, // How long a finished windup still counts as a hit
+    archerDrawMs: 400, // Telegraph while an archer draws before releasing an arrow
 };
 
 // Game-feel ("juice") settings: none of these affect the outcome of a fight,
@@ -82,6 +90,14 @@ export const bossSettings = {
     height: 128,
     detectionRangeCells: 6, // How far the boss spots the player, in cells
     scoreValue: 500, // Score awarded for defeating a boss
+};
+
+// End-of-level tally: mastery bonuses shown on the level-completed screen.
+// Stars: 3 = untouched AND under par, 2 = one of the two, 1 = finished.
+export const tallySettings = {
+    parTimeMs: 90000, // Target completion time for a level (90s)
+    timeBonusMax: 200, // Time bonus at instant completion; fades to 0 at twice par
+    noDamageBonus: 150, // Bonus for finishing the level without taking a hit
 };
 
 // Fog of war settings (levels with fogOfWar: true in level-data.js)
@@ -111,6 +127,7 @@ export const entitySettings = {
 export const soundSettings = {
     mute: false, // Mute/unmute game sounds
     volume: 0.5, // Volume level of game sounds (0.0 to 1.0)
+    musicVolume: 0.35, // Music level relative to the master volume
 };
 
 // Control settings
@@ -122,6 +139,7 @@ export const controlSettings = {
     attack: ' ', // Key for attacking (Space bar)
     esc: 'Escape', // Key for going back to the welcome screen
     axe: 'x', // Key for axe
+    pick: 'p', // Key for disarming an armed trap next to the player
     potion: 'u', // Key for drinking a potion from the inventory
     inventory: 'i', // Key for opening/closing the inventory
 };

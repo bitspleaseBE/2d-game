@@ -70,7 +70,7 @@ Five intro beats, one sentence per level, one ending. The sentences are good ("T
 
 ### Do this weekend (biggest feel-per-hour)
 
-> **Status:** items 1–4 below have been implemented (screen shake, hit-stop, impact particles, player knockback, game-clock i-frames, New Game confirmation, Exit button removed, Escape narration/overlay fixes, extra touch buttons). Touch wiring and canvas scaling had already landed on main independently.
+> **Status:** every item in this review has now been implemented. The weekend list (1–4: juice pass, game-clock i-frames, menu fixes, touch buttons) landed first; touch wiring and canvas scaling had already landed on main independently. The month list (5–10) and the 1.0 list (11–14) followed: procedural lullaby music, weapon personalities (wide-arc axe with heavy knockback vs. fast narrow sword), enemy telegraphs, the Daily Dream, run bookmarking with level-select stars, cracked-wall secrets with finished obstacle drops, the dawn-timer and defuse-all level twists with sneak bonuses on both Wardens, the end-of-level tally, guard patrol/investigate AI, and Sooth the dream-dragon's act commentary.
 
 1. **Juice pass.** 4-6px screen shake on explosions and boss hits (offset the canvas transform for ~150ms); 40-60ms hit-stop when a swing connects; a burst of 6-10 canvas-drawn particles on hit/death/chop (colored squares are enough at this art scale); knock Theo back ~24px on contact damage. One file each, transforms the game.
 2. **Wire in `touch.js`.** It's one import plus a pause/inventory/weapon-cycle button and CSS canvas scaling (`max-width:100vw; aspect-ratio:2/1`). The README already promises it.
