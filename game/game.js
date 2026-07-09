@@ -1681,11 +1681,14 @@ export class Game {
     ctx.fillStyle = "#aaa";
     ctx.fillText("(i)", 616, 28);
 
+    // Right-side info strip; kept clear of the sound toggle floating in the corner
+    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.fillRect(this.canvas.width - 250, 8, 140, 52);
     ctx.font = "14px monospace";
     ctx.fillStyle = "#bbb";
     ctx.textAlign = "right";
-    ctx.fillText(`Time ${this.formatRunTime(this.runElapsedMs)}`, this.canvas.width - 18, 28);
-    ctx.fillText(`Deaths ${this.deathCount}`, this.canvas.width - 18, 48);
+    ctx.fillText(`Time ${this.formatRunTime(this.runElapsedMs)}`, this.canvas.width - 122, 28);
+    ctx.fillText(`Deaths ${this.deathCount}`, this.canvas.width - 122, 48);
     ctx.textAlign = "left";
 
     // Active powerup effects with their remaining time
