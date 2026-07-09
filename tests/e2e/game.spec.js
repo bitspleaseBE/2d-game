@@ -1299,10 +1299,13 @@ test('reaching the exit completes level 1 and advances to level 2', async ({ pag
   expect(next.position).toEqual({ x: 64, y: 64 });
 });
 
-test('welcome screen exposes sound and story-skip settings', async ({ page }) => {
+test('settings screen exposes sound and story-skip settings', async ({ page }) => {
   await openWelcomeScreen(page);
+  await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('button', { name: /Sound/i })).toBeVisible();
   await expect(page.getByText('Skip level story cards')).toBeVisible();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.locator('#welcome-screen')).toBeVisible();
 });
 
 test('touch controls appear in landscape when forced with ?touch=1', async ({ page }) => {
