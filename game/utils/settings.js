@@ -18,6 +18,7 @@ export const playerSettings = {
     speed: 300, // Player movement speed in pixels per second
     respawnProtectionMs: 2000, // Invincibility after respawning, so a guard camping the spawn cannot chain-kill
     defeatPauseMs: 1500, // How long Theo stays down before respawn or game over
+    hurtInvulnerabilityMs: 1000, // Invincibility after taking a hit, shown as the hurt flicker (game time)
     color: '#ff69b4', // Color of the player (funny pink color)
 };
 
@@ -55,6 +56,19 @@ export const combatSettings = {
     archerRangeCells: 6, // Line-of-sight range for archer shots
     archerHealth: 60,
     archerDamage: 5,
+    playerKnockbackSpeed: 260, // How fast the player is shoved away from a damage source
+    playerKnockbackDurationMs: 120, // How long that shove lasts
+};
+
+// Game-feel ("juice") settings: none of these affect the outcome of a fight,
+// only how clearly the game communicates that a hit landed
+export const juiceSettings = {
+    hitStopMs: 50, // Frozen frames when a melee swing connects, so hits have weight
+    explosionShakeMagnitude: 7, // Screen shake strength for explosions, in pixels
+    explosionShakeMs: 260,
+    damageShakeMagnitude: 4, // Softer shake when the player takes a hit
+    damageShakeMs: 150,
+    particleLifetimeMs: 420, // How long impact particles stay on screen
 };
 
 // Boss settings ('B' cells in level layouts). Bosses are tanky and hit harder,

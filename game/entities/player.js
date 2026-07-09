@@ -8,8 +8,9 @@ class Player extends Entity {
   #health;
   #baseSpeed;
   #attackPower;
-  #isHurt = false;
-  #hurtInterval = null;
+  // Remaining invulnerability after a hit, in game time; the hurt flicker is
+  // derived from it so pausing the game also pauses the i-frames
+  #hurtMs = 0;
   #effectMs = { speed: 0, strength: 0, invincibility: 0 };
 
   constructor(x, y, assets) {
@@ -113,7 +114,7 @@ class Player extends Entity {
 
   takeDamage(amount) {
     if (this.#effectMs.invincibility > 0) return;
-    if (this.#isHurt || this.#health <= 0) return;
+    if (this.#hurtMs > 0 || this.#health <= 0) return;
     if (this.equipment.rune === "runeWarding") amount = Math.ceil(amount / 2);
     this.#health = Math.max(0, this.#health - amount);
     if (this.#health <= 0) {
@@ -129,11 +130,7 @@ class Player extends Entity {
     // A short shield after respawning: a guard standing on the spawn point
     // could otherwise drain the fresh life before the player can react
     this.#effectMs = { speed: 0, strength: 0, invincibility: playerSettings.respawnProtectionMs };
-    this.#isHurt = false;
-    if (this.#hurtInterval) {
-      clearInterval(this.#hurtInterval);
-      this.#hurtInterval = null;
-    }
+    this.#hurtMs = 0;
     this.visible = true;
     this.movement = "down";
     this.animator.play("idle", { restart: true, direction: "down" });
@@ -347,6 +344,9 @@ class Player extends Entity {
     for (const name of Object.keys(this.#effectMs)) {
       this.#effectMs[name] = Math.max(0, this.#effectMs[name] - deltaMs);
     }
+    this.#hurtMs = Math.max(0, this.#hurtMs - deltaMs);
+    // Flicker in 100ms steps while hurt-invulnerable
+    this.visible = this.#hurtMs <= 0 || Math.floor(this.#hurtMs / 100) % 2 === 0;
     this.animator.update(deltaMs);
     this.#syncAnimationState();
   }
@@ -371,25 +371,11 @@ class Player extends Entity {
   }
 
   hurtAnimation() {
-    if (this.#isHurt) return;
+    this.#hurtMs = playerSettings.hurtInvulnerabilityMs;
+  }
 
-    this.#isHurt = true;
-
-    let flickerCount = 0;
-    const maxFlickers = 10;
-    const flickerDuration = 100;
-
-    this.#hurtInterval = setInterval(() => {
-      this.visible = !this.visible;
-      flickerCount++;
-
-      if (flickerCount >= maxFlickers) {
-        clearInterval(this.#hurtInterval);
-        this.#hurtInterval = null;
-        this.#isHurt = false;
-        this.visible = true;
-      }
-    }, flickerDuration);
+  isHurt() {
+    return this.#hurtMs > 0;
   }
 
   draw(ctx) {

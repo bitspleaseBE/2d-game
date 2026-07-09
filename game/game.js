@@ -8,6 +8,7 @@ import {
   bossSettings,
   fogSettings,
   entitySettings,
+  juiceSettings,
 } from "./utils/settings.js";
 import { sfx } from "./utils/sound.js";
 import { playNarration, stopNarration } from "./utils/narration.js";
@@ -107,6 +108,14 @@ export class Game {
     this.deathCount = 0;
     this.runElapsedMs = 0;
     this.touchControls = null;
+    // Game feel: a short freeze when a melee hit lands, a decaying screen
+    // shake, impact particles, and a shove on the player when damage lands.
+    // None of it changes combat outcomes — it only makes them readable.
+    this.hitStopMs = 0;
+    this.shake = null;
+    this.shakeTimeMs = 0;
+    this.particles = [];
+    this.playerKnockback = null;
   }
 
   initializeBoard() {
@@ -456,19 +465,25 @@ export class Game {
     // Damage guards caught in the swing; defeated guards play their death
     // animation before updateGameState removes them. Survivors are knocked
     // back away from the swing and show their health bar for a few seconds.
+    let swingLanded = false;
     this.guards.forEach((guard) => {
       if (guard.isDefeated()) return;
       if (isColliding(attackBox, guard.getHitBox())) {
+        swingLanded = true;
         guard.takeDamage(this.player.attackPower, this.player.movement);
+        const guardCenter = Game.boxCenter(guard.getHitBox());
         if (guard.consumeDefeatAward()) {
           sfx.guardDown();
+          this.spawnParticles(guardCenter.x, guardCenter.y, { color: "#8bc34a", count: 12, speed: 180 });
           this.score += guard.isBoss() ? bossSettings.scoreValue : gameSettings.scoreIncrement;
           this.spawnDrop(guard.getPosition());
         } else {
           sfx.hit();
+          this.spawnParticles(guardCenter.x, guardCenter.y, { color: "#fff59d", count: 6 });
         }
       }
     });
+    if (swingLanded) this.hitStopMs = juiceSettings.hitStopMs;
 
     // Only the axe can chop down obstacles (trees, boulders); a blade that
     // strikes one just bounces off with a reminder of what is needed
@@ -477,7 +492,12 @@ export class Game {
       this.obstacles = this.obstacles.filter((obstacle) => {
         if (isColliding(attackBox, obstacle.getHitBox())) {
           obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
-          return !obstacle.isDestroyed();
+          if (obstacle.isDestroyed()) {
+            const center = Game.boxCenter(obstacle.getHitBox());
+            this.spawnParticles(center.x, center.y, { color: "#a1887f", count: 10, speed: 160 });
+            return false;
+          }
+          return true;
         }
         return true;
       });
@@ -527,7 +547,12 @@ export class Game {
     this.obstacles = this.obstacles.filter((obstacle) => {
       if (isColliding(attackBox, obstacle.getHitBox())) {
         obstacle.takeDamage(weapon.obstacleDamage || this.player.attackPower);
-        return !obstacle.isDestroyed();
+        if (obstacle.isDestroyed()) {
+          const center = Game.boxCenter(obstacle.getHitBox());
+          this.spawnParticles(center.x, center.y, { color: "#a1887f", count: 10, speed: 160 });
+          return false;
+        }
+        return true;
       }
       return true;
     });
@@ -766,15 +791,18 @@ export class Game {
         if (!guard) return;
         guard.takeDamage(projectile.damage, this.player.movement);
         projectile.destroy();
+        const guardCenter = Game.boxCenter(guard.getHitBox());
         if (guard.consumeDefeatAward()) {
           sfx.guardDown();
+          this.spawnParticles(guardCenter.x, guardCenter.y, { color: "#8bc34a", count: 12, speed: 180 });
           this.score += guard.isBoss() ? bossSettings.scoreValue : gameSettings.scoreIncrement;
           this.spawnDrop(guard.getPosition());
         } else {
           sfx.hit();
+          this.spawnParticles(guardCenter.x, guardCenter.y, { color: "#fff59d", count: 6 });
         }
       } else if (isColliding(box, this.player.getHitBox())) {
-        this.damagePlayer(projectile.damage);
+        this.damagePlayer(projectile.damage, box);
         projectile.destroy();
       }
     });
@@ -886,6 +914,14 @@ export class Game {
       this.updateWeaponUnlock(deltaMs);
       return;
     }
+    // Hit-stop: the whole world freezes for a few frames when a melee hit
+    // lands, so the frozen frame is still rendered
+    if (this.hitStopMs > 0) {
+      this.hitStopMs = Math.max(0, this.hitStopMs - deltaMs);
+      return;
+    }
+    this.updateShake(deltaMs);
+    this.updateParticles(deltaMs);
     if (!this.inventoryOpen && !this.isPlayerDown()) {
       this.runElapsedMs += deltaMs;
     }
@@ -896,6 +932,7 @@ export class Game {
       this.updateNotifications(deltaMs);
       return;
     }
+    this.applyPlayerKnockback(deltaMs);
     this.applyMovementInput(deltaMs);
     this.revealAroundPlayer();
     this.checkCollisions();
@@ -990,6 +1027,7 @@ export class Game {
       this.pendingRespawnMs -= deltaMs;
       if (this.pendingRespawnMs <= 0) {
         this.pendingRespawnMs = null;
+        this.playerKnockback = null;
         this.player.respawn(this.playerStart.x, this.playerStart.y);
       }
       return;
@@ -1037,6 +1075,9 @@ export class Game {
       const blast = explosive.consumeBlast();
       if (!blast) return;
       sfx.explosion();
+      this.triggerShake(juiceSettings.explosionShakeMagnitude, juiceSettings.explosionShakeMs);
+      this.spawnParticles(blast.x, blast.y, { color: "#ffb74d", count: 14, speed: 260 });
+      this.spawnParticles(blast.x, blast.y, { color: "#ffd54f", count: 8, speed: 180 });
 
       const inBlast = (box) => {
         const cx = box.x + box.width / 2;
@@ -1045,7 +1086,7 @@ export class Game {
       };
 
       if (inBlast(playerHitBox)) {
-        this.damagePlayer(entitySettings.explosivePlayerDamage);
+        this.damagePlayer(entitySettings.explosivePlayerDamage, { x: blast.x, y: blast.y });
       }
       this.guards.forEach((guard) => {
         if (guard.isDefeated()) return;
@@ -1062,12 +1103,126 @@ export class Game {
     this.explosives = this.explosives.filter((explosive) => !explosive.isDone());
   }
 
-  // Route all player damage through one place so the hurt sound plays
-  // only when damage actually lands (not while invincible or flashing)
-  damagePlayer(amount) {
+  // Route all player damage through one place so the hurt sound and impact
+  // feedback fire only when damage actually lands (not while invincible or
+  // flashing). `source` is the hitbox (or point) the damage came from, used
+  // to shove the player away from it.
+  damagePlayer(amount, source = null) {
     const healthBefore = this.player.getHealth();
     this.player.takeDamage(amount);
-    if (this.player.getHealth() < healthBefore) sfx.hurt();
+    if (this.player.getHealth() >= healthBefore) return;
+    sfx.hurt();
+    this.triggerShake(juiceSettings.damageShakeMagnitude, juiceSettings.damageShakeMs);
+    const center = this.playerCenter();
+    this.spawnParticles(center.x, center.y, { color: "#ff5252", count: 5 });
+    if (source && !this.player.isDefeated()) {
+      const from = Game.boxCenter(source);
+      const dx = center.x - from.x;
+      const dy = center.y - from.y;
+      const length = Math.hypot(dx, dy) || 1;
+      this.playerKnockback = {
+        x: dx / length,
+        y: dy / length,
+        msLeft: combatSettings.playerKnockbackDurationMs,
+      };
+    }
+  }
+
+  static boxCenter(box) {
+    return {
+      x: box.x + (box.width || 0) / 2,
+      y: box.y + (box.height || 0) / 2,
+    };
+  }
+
+  // The shove from damagePlayer: pushed along the same per-axis collision
+  // checks as walking, and cancelled early against a wall
+  applyPlayerKnockback(deltaMs) {
+    if (!this.playerKnockback) return;
+    const distance = combatSettings.playerKnockbackSpeed * (deltaMs / 1000);
+    const current = this.player.getPosition();
+    let blocked = true;
+    const nextX = { x: current.x + this.playerKnockback.x * distance, y: current.y };
+    if (this.playerKnockback.x !== 0 && this.canPlayerMoveTo(nextX)) {
+      this.player.moveBy(this.playerKnockback.x * distance, 0);
+      blocked = false;
+    }
+    const afterX = this.player.getPosition();
+    const nextY = { x: afterX.x, y: afterX.y + this.playerKnockback.y * distance };
+    if (this.playerKnockback.y !== 0 && this.canPlayerMoveTo(nextY)) {
+      this.player.moveBy(0, this.playerKnockback.y * distance);
+      blocked = false;
+    }
+    this.playerKnockback.msLeft -= deltaMs;
+    if (this.playerKnockback.msLeft <= 0 || blocked) this.playerKnockback = null;
+  }
+
+  // A short decaying screen shake; the offset is a deterministic wobble (no
+  // RNG) so seeded test runs stay reproducible
+  triggerShake(magnitude, durationMs) {
+    this.shake = { magnitude, msLeft: durationMs, durationMs };
+  }
+
+  updateShake(deltaMs) {
+    this.shakeTimeMs += deltaMs;
+    if (!this.shake) return;
+    this.shake.msLeft -= deltaMs;
+    if (this.shake.msLeft <= 0) this.shake = null;
+  }
+
+  getShakeOffset() {
+    if (!this.shake) return { x: 0, y: 0 };
+    const strength = this.shake.magnitude * (this.shake.msLeft / this.shake.durationMs);
+    return {
+      x: Math.sin(this.shakeTimeMs * 0.13) * strength,
+      y: Math.cos(this.shakeTimeMs * 0.17) * strength,
+    };
+  }
+
+  // Impact particles: purely cosmetic, so they roll on Math.random instead
+  // of the seeded RNG — spawning them must not shift seeded drop rolls
+  spawnParticles(x, y, { color = "#fff", count = 6, speed = 140 } = {}) {
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const velocity = speed * (0.4 + Math.random() * 0.6);
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * velocity,
+        vy: Math.sin(angle) * velocity,
+        msLeft: juiceSettings.particleLifetimeMs * (0.6 + Math.random() * 0.4),
+        totalMs: juiceSettings.particleLifetimeMs,
+        size: 3 + Math.random() * 3,
+        color,
+      });
+    }
+  }
+
+  updateParticles(deltaMs) {
+    this.particles = this.particles.filter((p) => {
+      p.msLeft -= deltaMs;
+      if (p.msLeft <= 0) return false;
+      p.x += p.vx * (deltaMs / 1000);
+      p.y += p.vy * (deltaMs / 1000);
+      // Slow down over the particle's lifetime so bursts read as impacts
+      // (frame-rate independent exponential damping)
+      const damping = Math.exp(-6 * (deltaMs / 1000));
+      p.vx *= damping;
+      p.vy *= damping;
+      return true;
+    });
+  }
+
+  drawParticles() {
+    if (this.particles.length === 0) return;
+    const ctx = this.context;
+    ctx.save();
+    this.particles.forEach((p) => {
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.msLeft / p.totalMs));
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    });
+    ctx.restore();
   }
 
   checkCollisions() {
@@ -1076,7 +1231,7 @@ export class Game {
     this.guards.forEach((guard) => {
       if (guard.isDefeated()) return;
       if (isColliding(playerPosition, guard.getHitBox())) {
-        this.damagePlayer(guard.damage);
+        this.damagePlayer(guard.damage, guard.getHitBox());
       }
     });
 
@@ -1192,6 +1347,11 @@ export class Game {
     // Clear the canvas
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
+    // The world layer shakes on impacts; the HUD and overlays stay steady
+    const shakeOffset = this.getShakeOffset();
+    this.context.save();
+    this.context.translate(shakeOffset.x, shakeOffset.y);
+
     // Draw the grid
     this.drawGrid();
 
@@ -1216,8 +1376,12 @@ export class Game {
     // Draw the player
     this.player.draw(this.context);
 
+    // Impact particles sit above entities but under the fog
+    this.drawParticles();
+
     // Fog of war covers the world but never the HUD
     this.drawFog();
+    this.context.restore();
     this.drawMinimap();
 
     // Draw the HUD on top of everything
@@ -1708,7 +1872,8 @@ export class Game {
       ? this.context.createPattern(this.themeAssets.floor, "repeat")
       : null;
     this.context.fillStyle = floorPattern || this.themeAssets.floorFallback;
-    this.context.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    // Overdraw past the edges so screen shake never exposes bare canvas
+    this.context.fillRect(-12, -12, this.canvas.width + 24, this.canvas.height + 24);
   }
 
   // Fog of war: unexplored cells are pitch black, explored cells outside
@@ -1810,6 +1975,10 @@ export class Game {
     this.attackCooldownMs = 0;
     this.projectiles = [];
     this.weaponPedestals = [];
+    this.hitStopMs = 0;
+    this.shake = null;
+    this.particles = [];
+    this.playerKnockback = null;
     this.pressedDirections.clear();
     this.lastFrameTime = null;
     if (this.rafId) cancelAnimationFrame(this.rafId);
