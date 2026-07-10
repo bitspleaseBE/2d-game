@@ -54,6 +54,39 @@ export function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu, 
     completedMessage.style.marginBottom = '14px';
     modal.appendChild(completedMessage);
 
+    // Mastery tally: stars plus the time / no-damage bonus breakdown
+    if (levelCompletion.tally) {
+        const tally = levelCompletion.tally;
+
+        const stars = document.createElement('p');
+        stars.textContent = '★★★'.slice(0, tally.stars) + '☆☆☆'.slice(tally.stars);
+        stars.style.fontSize = '34px';
+        stars.style.letterSpacing = '6px';
+        stars.style.color = '#ffd54f';
+        stars.style.margin = '0 0 12px';
+        modal.appendChild(stars);
+
+        const totalSeconds = Math.floor(tally.elapsedMs / 1000);
+        const timeLabel = `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`;
+        const lines = [
+            `Dream time ${timeLabel} — time bonus +${tally.timeBonus}`,
+            tally.noDamageBonus > 0
+                ? `Untouched! +${tally.noDamageBonus}`
+                : 'Theo took a few bumps — no untouched bonus.',
+        ];
+        if (tally.sneakBonus > 0) {
+            lines.push(`Slipped past the Warden! +${tally.sneakBonus}`);
+        }
+        lines.forEach((text) => {
+            const line = document.createElement('p');
+            line.textContent = text;
+            line.style.fontSize = '16px';
+            line.style.opacity = '0.85';
+            line.style.margin = '0 0 6px';
+            modal.appendChild(line);
+        });
+    }
+
     if (levelCompletion.nextLevel) {
         const nextMessage = document.createElement('p');
         nextMessage.textContent = `Next: ${levelCompletion.nextLevel.name} — ${levelCompletion.nextLevel.story}`;

@@ -64,19 +64,44 @@ class Player extends Entity {
     };
   }
 
+  // The swing's shape depends on the readied weapon: the axe sweeps a wide
+  // 180° arc across Theo's front half, the sword thrusts a longer, narrower
+  // line, and everything else (dagger, bow butt) uses the plain front box.
   getAttackBox() {
     const hitBox = this.getHitBox();
-    const reach = this._width * 0.6;
+    const weapon = this.getSelectedWeapon();
+
+    if (weapon.arc === "wide") {
+      const reach = this._width * 0.6;
+      switch (this.movement) {
+        case "up":
+          return { x: hitBox.x - reach, y: hitBox.y - reach, width: hitBox.width + reach * 2, height: reach + hitBox.height / 2 };
+        case "down":
+          return { x: hitBox.x - reach, y: hitBox.y + hitBox.height / 2, width: hitBox.width + reach * 2, height: reach + hitBox.height / 2 };
+        case "left":
+          return { x: hitBox.x - reach, y: hitBox.y - reach, width: reach + hitBox.width / 2, height: hitBox.height + reach * 2 };
+        case "right":
+        default:
+          return { x: hitBox.x + hitBox.width / 2, y: hitBox.y - reach, width: reach + hitBox.width / 2, height: hitBox.height + reach * 2 };
+      }
+    }
+
+    const narrow = weapon.arc === "narrow";
+    const reach = this._width * (narrow ? 0.8 : 0.6);
+    // A narrow thrust covers only the middle of Theo's silhouette
+    const across = narrow ? 0.5 : 1;
+    const insetX = (hitBox.width * (1 - across)) / 2;
+    const insetY = (hitBox.height * (1 - across)) / 2;
     switch (this.movement) {
       case "up":
-        return { x: hitBox.x, y: hitBox.y - reach, width: hitBox.width, height: reach };
+        return { x: hitBox.x + insetX, y: hitBox.y - reach, width: hitBox.width * across, height: reach };
       case "down":
-        return { x: hitBox.x, y: hitBox.y + hitBox.height, width: hitBox.width, height: reach };
+        return { x: hitBox.x + insetX, y: hitBox.y + hitBox.height, width: hitBox.width * across, height: reach };
       case "left":
-        return { x: hitBox.x - reach, y: hitBox.y, width: reach, height: hitBox.height };
+        return { x: hitBox.x - reach, y: hitBox.y + insetY, width: reach, height: hitBox.height * across };
       case "right":
       default:
-        return { x: hitBox.x + hitBox.width, y: hitBox.y, width: reach, height: hitBox.height };
+        return { x: hitBox.x + hitBox.width, y: hitBox.y + insetY, width: reach, height: hitBox.height * across };
     }
   }
 

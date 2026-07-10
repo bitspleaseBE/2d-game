@@ -2,7 +2,7 @@
 
 This document provides an overview of the ten levels in "Wandertrap," including their theme, the entities present, and a brief story for each.
 
-Layout legend: `#` wall · `P` player spawn · `X` exit · `G` guard · `A` archer · `B` boss · `E` hidden explosive trap · `C` powerup crystal · `W` weapon pedestal · `H` Haste rune · `V` Warding rune · `M` Might rune · `D` locked door · `O` boulder · `T` tree
+Layout legend: `#` wall · `P` player spawn · `X` exit · `G` guard · `A` archer · `B` boss · `E` hidden explosive trap · `C` powerup crystal · `W` weapon pedestal · `H` Haste rune · `V` Warding rune · `M` Might rune · `D` locked door · `O` boulder · `T` tree · `R` cracked wall (breaks to an axe swing and hides a stash — two secrets per act)
 
 ## Level 1: Easy — The Glade
 
@@ -42,17 +42,25 @@ The Quarry rumbles with buried traps, but every broken stone brings Theo closer 
 
 ### Entities
 
-Player, walls, boulders, 5 guards, powerups, Haste rune, 1 explosive trap, exit.
+Player, walls, boulders, 5 guards, powerups, Haste rune, 4 explosive traps, exit.
+
+### Twist
+
+Defuse objective: a HUD counter tracks the buried traps, and disarming all four with the pick (`p`) pays a +300 bonus.
 
 ## Level 5: Medium — The Warden
 
 ### Story
 
-The first Warden waits in the sand, sworn to keep the Orc King's nightmare alive.
+The first Warden waits in the sand, sworn to keep the Orc King's nightmare alive. Slip past it, or bring it down — the dream rewards both.
 
 ### Entities
 
 Player, walls, 1 guard, 1 archer, 1 boss, powerups, exit.
+
+### Twist
+
+Sneak-or-fight: reaching the exit with the Warden still alive pays a +250 sneak bonus; felling it pays the +500 boss score instead.
 
 ## Level 6: Hard — Twin Halls
 
@@ -73,6 +81,10 @@ The Serpent coils through darkness, and Theo can only trust the small light arou
 ### Entities
 
 Player, walls, trees, a boulder, 4 guards, 1 archer, Warding rune, powerups, 1 explosive trap, fog of war, exit.
+
+### Twist
+
+Dawn timer: 75 seconds to reach the exit. When the timer runs out the dream starts collapsing — periodic damage until Theo escapes. Dying resets the countdown.
 
 ## Level 8: Hard — The Crossroads
 
@@ -103,6 +115,10 @@ On the Throne, the Orc King clutches the final shard between Theo and his own be
 ### Entities
 
 Player, walls, trees, 3 guards, 2 archers, 1 boss, powerups, 1 locked door, 1 explosive trap, fog of war, exit.
+
+### Twist
+
+Sneak-or-fight: the exit sits at the Orc King's back — slipping out with the boss alive pays a +250 sneak bonus. A cracked wall hides a secret entrance into the sanctum for those who spot it.
 
 ## Design notes
 

@@ -10,6 +10,7 @@
 //   'E' explosive     'W' weapon pedestal
 //   'H' Haste rune    'V' Warding rune  'M' Might rune
 //   'D' locked door (a defeated guard drops the key)
+//   'R' cracked wall (breaks to one axe swing and always hides a stash)
 //
 // Every layout is 10 rows of exactly 20 characters. Trees and boulders can
 // only be chopped down with the wooden axe (one swing), so they make soft
@@ -45,6 +46,14 @@ class Level {
         this.weaponReward = options.weaponReward || null;
         // With fog of war on, only explored parts of the map are visible
         this.fogOfWar = Boolean(options.fogOfWar);
+        // Optional twists: 'defuseAll' shows a trap counter and pays a bonus
+        // for disarming every trap; dawnTimerMs collapses the dream when the
+        // countdown runs out; sneakBonus pays for exiting with the boss alive
+        this.objective = options.objective || null;
+        this.dawnTimerMs = options.dawnTimerMs || null;
+        this.sneakBonus = options.sneakBonus || 0;
+        // One dry remark per act from the dream-guide dragon
+        this.guide = options.guide || (storyBeat && storyBeat.guide) || '';
     }
 }
 
@@ -62,7 +71,7 @@ levelData.addLevel(new Level(1, 'easy', parse([
     'TTTTTTTTTTTTTTTTTTTT',
     'T##################T',
     'T#  G #P#     C   #T',
-    'T# ## #W# ####### #T',
+    'T# ## #W# #R##### #T',
     'T#    #O#  C # ## #T',
     'T# ## # ##   #    #T',
     'T#  # #    #   ## #T',
@@ -91,7 +100,7 @@ levelData.addLevel(new Level(3, 'medium', parse([
     '####################',
     '#P  TT   W  TT    C#',
     '#   TT      TT     #',
-    '##T####T######T##T##',
+    '##T####T####R#T##T##',
     '#   G     E    G   #',
     '#C  TT      TT     #',
     '##T####T######T# ###',
@@ -100,20 +109,21 @@ levelData.addLevel(new Level(3, 'medium', parse([
     '####################',
 ]), 'The Orchard', { theme: 'forest', weaponReward: 'steelSword' }));
 
-// 4. The Quarry — boulders plug the wall gaps: every shortcut costs two
-// swings of the axe, every detour risks a patrol
+// 4. The Quarry — boulders plug the wall gaps and the ground itself is
+// mined: four buried traps, and a bonus for defusing every one of them
+// with a well-timed pick ('p')
 levelData.addLevel(new Level(4, 'medium', parse([
     '####################',
     '#P   #  H  O  G   C#',
-    '#    O     #       #',
-    '## ###### ####O### #',
+    '#    O     #  E    #',
+    '## #R#### ####O### #',
     '#  G   #     C   G #',
     '#    O #  E #      #',
     '# #### ##O### ###O##',
-    '#  C      #     G  #',
-    '#    G    O   C   X#',
+    '#  C E    #     G  #',
+    '#    G    O E C   X#',
     '####################',
-]), 'The Quarry', { theme: 'desert' }));
+]), 'The Quarry', { theme: 'desert', objective: 'defuseAll' }));
 
 // 5. The Warden — the first boss guards the open eastern arena. It is slow:
 // keep moving, land a swing, and step away before it closes in.
@@ -124,11 +134,11 @@ levelData.addLevel(new Level(5, 'medium', parse([
     '# A#  #  # #       #',
     '#  ## # ###    B   #',
     '#     #            #',
-    '# ###### ###   ### #',
+    '# #R#### ###   ### #',
     '# C #  G   #       #',
     '#   #      ##  X   #',
     '####################',
-]), 'The Warden', { theme: 'desert' }));
+]), 'The Warden', { theme: 'desert', sneakBonus: 250 }));
 
 // 6. Twin Halls — two halls behind two locked doors: the guards of each
 // hall carry the key to the next
@@ -140,18 +150,19 @@ levelData.addLevel(new Level(6, 'hard', parse([
     '#    D      D  ## X#',
     '#  ###      #      #',
     '#    #  C   #   G  #',
-    '# ## #      # ###  #',
+    '# ## #      # #R#  #',
     '#  G #   G  #  C   #',
     '####################',
 ]), 'Twin Halls', { theme: 'snow', weaponReward: 'dreamBow' }));
 
 // 7. The Serpent — one long winding corridor walked in the dark: fog of
-// war hides what waits beyond the next bend. Gates of trees and boulders
-// plug the wall gaps.
+// war hides what waits beyond the next bend, and the dawn timer collapses
+// the dream on anyone who lingers. Gates of trees and boulders plug the
+// wall gaps.
 levelData.addLevel(new Level(7, 'hard', parse([
     '####################',
     '#P  V      A      G#',
-    '################## #',
+    '##########R####### #',
     '#    G     C      T#',
     '#T##################',
     '# G     E     C    #',
@@ -159,7 +170,7 @@ levelData.addLevel(new Level(7, 'hard', parse([
     '#  G     C    G    #',
     '#X                T#',
     '####################',
-]), 'The Serpent', { theme: 'snow', fogOfWar: true }));
+]), 'The Serpent', { theme: 'snow', fogOfWar: true, dawnTimerMs: 75000 }));
 
 // 8. The Crossroads — four guarded quadrants around a central plaza where
 // a boss patrols the loot
@@ -167,7 +178,7 @@ levelData.addLevel(new Level(8, 'hard', parse([
     '####################',
     '#P   #   C  #     A#',
     '#  G #      #  C   #',
-    '#### ## ## ## # ####',
+    '#### ## R# ## # ####',
     '#      G           #',
     '#  C     B      E  #',
     '#### ## ## ## # ####',
@@ -196,7 +207,7 @@ levelData.addLevel(new Level(9, 'expert', parse([
 levelData.addLevel(new Level(10, 'expert', parse([
     '####################',
     '#P   #     C    A  #',
-    '# G  # ##########  #',
+    '# G  # ##R#######  #',
     '#    # #      X##  #',
     '## # # #  B    ## C#',
     '#  # # #       ##  #',
@@ -204,6 +215,6 @@ levelData.addLevel(new Level(10, 'expert', parse([
     '#E ## G    C     ###',
     '#C     ##     G   T#',
     '####################',
-]), 'The Throne', { theme: 'dungeon', fogOfWar: true }));
+]), 'The Throne', { theme: 'dungeon', fogOfWar: true, sneakBonus: 250 }));
 
 export default levelData;

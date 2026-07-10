@@ -8,6 +8,10 @@ const KEYS = {
   skipLevelIntros: 'wandertrap.skipLevelIntros',
   seenLevelIntros: 'wandertrap.seenLevelIntros',
   campaignComplete: 'wandertrap.campaignComplete',
+  levelStars: 'wandertrap.levelStars',
+  runState: 'wandertrap.runState',
+  furthestLevel: 'wandertrap.furthestLevel',
+  daily: 'wandertrap.daily',
 };
 
 function readJson(key, fallback) {
@@ -88,6 +92,71 @@ export function markLevelIntroSeen(levelNumber) {
 export function shouldShowLevelIntro(levelNumber) {
   if (getSkipLevelIntros()) return false;
   return !hasSeenLevelIntro(levelNumber);
+}
+
+// --- Level stars (end-of-level tally) -------------------------------------
+
+export function getLevelStars() {
+  const stars = readJson(KEYS.levelStars, {});
+  return stars && typeof stars === 'object' ? stars : {};
+}
+
+export function recordLevelStars(levelNumber, stars) {
+  const all = getLevelStars();
+  // Only ever improve: a sloppy replay never downgrades an earned rating
+  if ((all[levelNumber] || 0) >= stars) return;
+  all[levelNumber] = stars;
+  writeJson(KEYS.levelStars, all);
+}
+
+// --- Run persistence (Continue survives a refresh) -------------------------
+
+export function saveRunState(state) {
+  writeJson(KEYS.runState, state);
+}
+
+export function loadRunState() {
+  const state = readJson(KEYS.runState, null);
+  return state && typeof state === 'object' && state.level >= 1 ? state : null;
+}
+
+export function clearRunState() {
+  try {
+    localStorage.removeItem(KEYS.runState);
+  } catch {
+    // best-effort
+  }
+}
+
+// --- Campaign progress ------------------------------------------------------
+
+export function getFurthestLevel() {
+  try {
+    const value = Number(localStorage.getItem(KEYS.furthestLevel));
+    return Number.isFinite(value) && value >= 1 ? value : 1;
+  } catch {
+    return 1;
+  }
+}
+
+export function recordFurthestLevel(levelNumber) {
+  if (levelNumber <= getFurthestLevel()) return;
+  try {
+    localStorage.setItem(KEYS.furthestLevel, String(levelNumber));
+  } catch {
+    // best-effort
+  }
+}
+
+// --- Daily Dream ------------------------------------------------------------
+
+export function getDailyResult(dateKey) {
+  const daily = readJson(KEYS.daily, null);
+  return daily && daily.date === dateKey ? daily : null;
+}
+
+export function recordDailyResult(result) {
+  writeJson(KEYS.daily, result);
 }
 
 export function isCampaignComplete() {
