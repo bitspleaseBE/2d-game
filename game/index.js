@@ -10,6 +10,7 @@ import {
   showLevelCompletedScreen,
   showStoryScreen,
   showSettingsScreen,
+  showDailyIntroScreen,
 } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
 import { setSeed } from './utils/rng.js';
@@ -254,18 +255,24 @@ class GameEngine {
     }
 
     // Start today's Daily Dream: a fresh run on the date-derived seed.
-    // Results are recorded once; the welcome screen turns the button into
-    // a share action after the attempt.
+    // A three-slide explainer runs first, so the one-attempt rule is clear
+    // before it counts. Results are recorded once; the welcome screen turns
+    // the button into a share action after the attempt.
     dailyDream() {
         if (getTodayResult()) return; // already played — welcome handles sharing
         if (this.game && this.game.started) {
             if (!window.confirm("Abandon Theo's current dream for today's Daily Dream?")) return;
             this.game.started = false;
         }
-        setSeed(dailySeed());
-        this.pendingStartLevel = null;
-        this.currentScreen = 'game';
-        this.game.start({ daily: true });
+        showDailyIntroScreen(
+            () => {
+                setSeed(dailySeed());
+                this.pendingStartLevel = null;
+                this.currentScreen = 'game';
+                this.game.start({ daily: true });
+            },
+            () => this.showScreen('welcome')
+        );
     }
 
     recordDailyIfNeeded(won) {
