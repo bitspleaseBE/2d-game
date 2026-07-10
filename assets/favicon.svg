@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" shape-rendering="crispEdges">
+  <rect width="32" height="32" fill="#110914"/>
+  <!-- Dream-shard glow -->
+  <rect x="22" y="3" width="2" height="2" fill="#d4af37"/>
+  <rect x="24" y="5" width="2" height="2" fill="#ffd700"/>
+  <rect x="20" y="7" width="2" height="2" fill="#2e8b57"/>
+  <rect x="22" y="9" width="2" height="2" fill="#3ecf8e"/>
+  <!-- Theo hair -->
+  <rect x="12" y="7" width="8" height="2" fill="#4a3018"/>
+  <rect x="11" y="9" width="10" height="2" fill="#4a3018"/>
+  <!-- Face -->
+  <rect x="12" y="11" width="8" height="4" fill="#f0c4a0"/>
+  <rect x="13" y="13" width="2" height="2" fill="#2b1d14"/>
+  <rect x="17" y="13" width="2" height="2" fill="#2b1d14"/>
+  <!-- Blue pyjama top -->
+  <rect x="10" y="15" width="12" height="6" fill="#2a7bd4"/>
+  <rect x="12" y="17" width="8" height="2" fill="#5fd4ff"/>
+  <!-- Arms -->
+  <rect x="8" y="16" width="2" height="4" fill="#2a7bd4"/>
+  <rect x="22" y="16" width="2" height="4" fill="#2a7bd4"/>
+  <!-- Legs -->
+  <rect x="11" y="21" width="4" height="5" fill="#2a7bd4"/>
+  <rect x="17" y="21" width="4" height="5" fill="#2a7bd4"/>
+  <!-- Shoes -->
+  <rect x="11" y="26" width="4" height="2" fill="#f5f5f5"/>
+  <rect x="17" y="26" width="4" height="2" fill="#f5f5f5"/>
+</svg>

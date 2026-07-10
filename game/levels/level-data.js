@@ -70,8 +70,8 @@ const levelData = new LevelData();
 levelData.addLevel(new Level(1, 'easy', parse([
     'TTTTTTTTTTTTTTTTTTTT',
     'T##################T',
-    'T#  G #PT     C   #T',
-    'T# ## # W #R##### #T',
+    'T#  G #P#     C   #T',
+    'T# ## #W# #R##### #T',
     'T#    #O#  C # ## #T',
     'T# ## # ##   #    #T',
     'T#  # #    #   ## #T',

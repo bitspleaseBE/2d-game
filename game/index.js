@@ -9,6 +9,7 @@ import {
   showHighScoreScreen,
   showLevelCompletedScreen,
   showStoryScreen,
+  showSettingsScreen,
 } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
 import { setSeed } from './utils/rng.js';
@@ -138,10 +139,14 @@ class GameEngine {
                     () => this.highScore(),
                     () => this.story(),
                     () => this.levelSelect(),
-                    () => this.dailyDream()
+                    () => this.dailyDream(),
+                    () => this.settings()
                 );
                 break;
             }
+            case 'settings':
+                showSettingsScreen(() => this.showScreen('welcome'));
+                break;
             case 'levelSelect':
                 showLevelSelectScreen(
                     (levelNumber) => this.startFromLevel(levelNumber),
@@ -203,6 +208,11 @@ class GameEngine {
 
     story() {
         this.currentScreen = 'story';
+        this.showScreen(this.currentScreen);
+    }
+
+    settings() {
+        this.currentScreen = 'settings';
         this.showScreen(this.currentScreen);
     }
 

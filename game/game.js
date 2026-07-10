@@ -2064,11 +2064,18 @@ export class Game {
     ctx.fillStyle = "#aaa";
     ctx.fillText("(i)", 616, 28);
 
+    // Right-side info strip; kept clear of the sound toggle floating in the
+    // corner. It grows to fit the dawn countdown and trap counter on levels
+    // that have them.
+    const infoRows = 2 + (this.dawnTimerMs !== null ? 1 : 0) + (this.trapStats ? 1 : 0);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.fillRect(this.canvas.width - 250, 8, 140, 12 + infoRows * 20);
     ctx.font = "14px monospace";
     ctx.fillStyle = "#bbb";
     ctx.textAlign = "right";
-    ctx.fillText(`Time ${this.formatRunTime(this.runElapsedMs)}`, this.canvas.width - 18, 28);
-    ctx.fillText(`Deaths ${this.deathCount}`, this.canvas.width - 18, 48);
+    ctx.fillText(`Time ${this.formatRunTime(this.runElapsedMs)}`, this.canvas.width - 122, 28);
+    ctx.fillText(`Deaths ${this.deathCount}`, this.canvas.width - 122, 48);
+    let infoY = 70;
 
     // The dawn countdown, turning urgent-red as it runs out
     if (this.dawnTimerMs !== null) {
@@ -2076,10 +2083,11 @@ export class Game {
       ctx.font = "bold 16px monospace";
       ctx.fillStyle = msLeft <= 15000 ? "#ff5252" : "#ffd54f";
       ctx.fillText(
-        msLeft > 0 ? `Dawn ${this.formatRunTime(msLeft)}` : "THE DREAM COLLAPSES",
-        this.canvas.width - 18,
-        70
+        msLeft > 0 ? `Dawn ${this.formatRunTime(msLeft)}` : "COLLAPSING!",
+        this.canvas.width - 122,
+        infoY
       );
+      infoY += 20;
     }
 
     // The defuse-objective counter
@@ -2088,8 +2096,8 @@ export class Game {
       ctx.fillStyle = this.trapStats.disarmed >= this.trapStats.total ? "#8bc34a" : "#80d8ff";
       ctx.fillText(
         `Traps ${this.trapStats.disarmed}/${this.trapStats.total}`,
-        this.canvas.width - 18,
-        this.dawnTimerMs !== null ? 90 : 70
+        this.canvas.width - 122,
+        infoY
       );
     }
     ctx.textAlign = "left";

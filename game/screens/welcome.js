@@ -1,12 +1,8 @@
 import { theme, applyContainerStyles, styleButton } from '../utils/theme.js';
-import { createSoundToggleButton } from '../utils/sound-controls.js';
 import {
-  getSkipLevelIntros,
-  setSkipLevelIntros,
   isCampaignComplete,
   getLevelStars,
   getFurthestLevel,
-  getDailyResult,
 } from '../utils/preferences.js';
 import levelData from '../levels/level-data.js';
 import { getTodayResult, copyShareString, shareString } from '../utils/daily.js';
@@ -75,43 +71,12 @@ export function showLevelSelectScreen(onPickLevel, onBack) {
 // - Display game title
 // - Provide buttons to start the game, view high scores, and adjust sound settings
 
-export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onStory, onLevelSelect, onDailyDream) {
+export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onStory, onLevelSelect, onDailyDream, onSettings) {
   const container = document.getElementById('game-container');
   container.innerHTML = '';
 
   const welcomeScreen = document.createElement('div');
   welcomeScreen.id = 'welcome-screen';
-
-  const settingsBar = document.createElement('div');
-  settingsBar.style.display = 'flex';
-  settingsBar.style.flexWrap = 'wrap';
-  settingsBar.style.gap = '16px';
-  settingsBar.style.alignItems = 'center';
-  settingsBar.style.justifyContent = 'center';
-  settingsBar.style.marginBottom = '24px';
-
-  settingsBar.appendChild(createSoundToggleButton());
-
-  const skipLabel = document.createElement('label');
-  skipLabel.style.display = 'flex';
-  skipLabel.style.alignItems = 'center';
-  skipLabel.style.gap = '8px';
-  skipLabel.style.fontFamily = theme.fonts.subtitle;
-  skipLabel.style.fontSize = '16px';
-  skipLabel.style.cursor = 'pointer';
-
-  const skipCheckbox = document.createElement('input');
-  skipCheckbox.type = 'checkbox';
-  skipCheckbox.checked = getSkipLevelIntros();
-  skipCheckbox.addEventListener('change', () => setSkipLevelIntros(skipCheckbox.checked));
-
-  const skipText = document.createElement('span');
-  skipText.textContent = 'Skip level story cards';
-
-  skipLabel.appendChild(skipCheckbox);
-  skipLabel.appendChild(skipText);
-  settingsBar.appendChild(skipLabel);
-  welcomeScreen.appendChild(settingsBar);
 
   const title = document.createElement('h1');
   title.textContent = 'Welcome to Wandertrap!';
@@ -181,6 +146,11 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   highScoresButton.onclick = onViewHighScores;
   welcomeScreen.appendChild(highScoresButton);
 
+  const settingsButton = document.createElement('button');
+  settingsButton.textContent = 'Settings';
+  settingsButton.onclick = onSettings;
+  welcomeScreen.appendChild(settingsButton);
+
   const controlsHint = document.createElement('p');
   controlsHint.textContent = 'Arrows: move · Space: attack · I: inventory · Esc: menu';
   controlsHint.style.color = theme.colors.text;
@@ -198,4 +168,5 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
 
   styleButton(startButton);
   styleButton(highScoresButton);
+  styleButton(settingsButton);
 }
