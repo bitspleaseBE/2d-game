@@ -1609,6 +1609,16 @@ test('a bookmarked run survives a page refresh via Continue', async ({ page }) =
 test('the Daily Dream runs date-seeded and records a shareable result', async ({ page }) => {
   await openWelcomeScreen(page);
   await page.getByRole('button', { name: 'Daily Dream' }).click();
+
+  // A three-slide explainer runs before the one-attempt run starts
+  await expect(page.locator('#daily-intro-screen')).toBeVisible();
+  await expect(page.getByText('The same dream for everyone')).toBeVisible();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByText('One attempt per day')).toBeVisible();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByText('Share your result')).toBeVisible();
+  await page.getByRole('button', { name: 'Begin the Daily Dream' }).click();
+
   await expect(page.locator('canvas')).toBeVisible();
   await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
   const isDaily = await page.evaluate(() => window.__wandertrap.game.dailyMode);
@@ -1676,3 +1686,73 @@ test('guards without a target wander near their post instead of freezing', async
   expect(result.nearPost).toBe(true); // but leashed to its post
 });
 
+
+// ---------------------------------------------------------------------------
+// Enemy movement: no facing jitter on alignment, and bodies stay centered
+// on paths instead of riding wall edges.
+// ---------------------------------------------------------------------------
+
+test('a chasing guard settles on its target instead of jittering left-right', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    const guard = game.spawnGuard(300, 300);
+    // A fixed point target (zero size, so no attack windup triggers): the
+    // guard should walk there and stop, not overshoot and flip facing
+    const target = { x: 420, y: 336, width: 0, height: 0 };
+    for (let i = 0; i < 300; i++) guard.moveTowards(target, [], 1000 / 60);
+
+    const settledBox = guard.getMoveBox();
+    const before = guard.getPosition();
+    const facings = new Set();
+    for (let i = 0; i < 30; i++) {
+      guard.moveTowards(target, [], 1000 / 60);
+      facings.add(guard.movement);
+    }
+    const after = guard.getPosition();
+    return {
+      centerX: settledBox.x + settledBox.width / 2,
+      centerY: settledBox.y + settledBox.height / 2,
+      drift: Math.hypot(after.x - before.x, after.y - before.y),
+      facingCount: facings.size,
+    };
+  });
+
+  // The guard closes to contact range (half its collision box) and stops
+  expect(Math.abs(result.centerX - 420)).toBeLessThanOrEqual(25);
+  expect(Math.abs(result.centerY - 336)).toBeLessThanOrEqual(25);
+  expect(result.drift).toBeLessThan(1); // and stays put once there
+  expect(result.facingCount).toBe(1); // no left-right-left-right flapping
+});
+
+test('a guard walking into a wall keeps its body out of the wall cell', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    // Open corridor cells (10-12, row 5) on level 1, with a wall at column
+    // 13 (x = 832). Drive the guard rightwards into it.
+    const guard = game.spawnGuard(640, 320);
+    const wallX = 832;
+    const target = { x: 980, y: 355.5, width: 0, height: 0 };
+    for (let i = 0; i < 240; i++) guard.moveTowards(target, game.walls, 1000 / 60);
+
+    const box = guard.getMoveBox();
+    const overlapsAnyWall = game.walls.some((wall) => {
+      const w = wall.getHitBox();
+      return box.x < w.x + w.width && box.x + box.width > w.x &&
+             box.y < w.y + w.height && box.y + box.height > w.y;
+    });
+    return { boxRight: box.x + box.width, wallX, overlapsAnyWall };
+  });
+
+  // The (body-centered) collision box stops flush at the wall instead of
+  // the old corner-anchored box letting the sprite ride deep into it
+  expect(result.boxRight).toBeLessThanOrEqual(result.wallX + 1);
+  expect(result.overlapsAnyWall).toBe(false);
+});

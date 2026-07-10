@@ -139,53 +139,61 @@ class Guard extends Entity {
     this.#setSpriteForAction(this.action);
   }
 
+  // Movement collision box: a corridor-friendly square centered under the
+  // drawn body (sprites render 10px up-left of the position with generous
+  // padding). Centering it keeps the visible orc in the middle of a path
+  // instead of letting its sprite ride along wall edges.
+  getMoveBox(x = this._position.x, y = this._position.y) {
+    const size = canvasSettings.cellWidth * 0.75;
+    const centerX = x + this._width / 2 - 10;
+    const centerY = y + this._height / 2 - 10;
+    return { x: centerX - size / 2, y: centerY - size / 2, width: size, height: size };
+  }
+
   moveTowards(target, walls, deltaMs = 1000 / 60) {
     if (this.isDefeated()) return;
 
-    const dx = target.x - this._position.x;
-    const dy = target.y - this._position.y;
-
-    if (Math.abs(dx) > Math.abs(dy)) {
-      this.movement = dx > 0 ? "right" : "left";
-    } else {
-      this.movement = dy > 0 ? "down" : "up";
-    }
-    this.animator.setDirection(this.movement);
-
-    const distance = this.#speed * (deltaMs / 1000);
-    const nextPosition = {
-      ...this._position,
-      width: canvasSettings.cellWidth / 2,
-      height: canvasSettings.cellHeight / 2
+    const targetCenter = {
+      x: target.x + (target.width || 0) / 2,
+      y: target.y + (target.height || 0) / 2,
     };
-    switch (this.movement) {
-      case "up":
-        nextPosition.y -= distance;
-        break;
-      case "down":
-        nextPosition.y += distance;
-        break;
-      case "left":
-        nextPosition.x -= distance;
-        break;
-      case "right":
-        nextPosition.x += distance;
-        break;
-    }
+    const own = this.getMoveBox();
+    const dx = targetCenter.x - (own.x + own.width / 2);
+    const dy = targetCenter.y - (own.y + own.height / 2);
+    const step = this.#speed * (deltaMs / 1000);
 
-    const willCollideWithWalls = walls.some((wall) =>
-      isColliding(nextPosition, wall.getHitBox())
-    );
+    // Walk the axis with the larger remaining distance first, falling back
+    // to the other axis when a wall blocks the way (so corners don't stall
+    // the chase). The step is clamped to the remaining distance — without
+    // the clamp a nearly-aligned guard overshoots the target every frame
+    // and flips its facing left-right-left-right while going nowhere.
+    const axes = Math.abs(dx) >= Math.abs(dy) ? ["x", "y"] : ["y", "x"];
+    for (const axis of axes) {
+      const remaining = axis === "x" ? dx : dy;
+      if (Math.abs(remaining) < 1) continue; // already aligned on this axis
+      const distance = Math.sign(remaining) * Math.min(step, Math.abs(remaining));
+      const next = axis === "x"
+        ? { x: this._position.x + distance, y: this._position.y }
+        : { x: this._position.x, y: this._position.y + distance };
+      const nextBox = this.getMoveBox(next.x, next.y);
 
-    const willCollideWithPlayer = isColliding(nextPosition, target);
-    if (willCollideWithPlayer) {
-      this.beginWindup();
-    } else if (!willCollideWithWalls) {
-      this._position = { x: nextPosition.x, y: nextPosition.y };
+      this.movement = axis === "x"
+        ? (distance > 0 ? "right" : "left")
+        : (distance > 0 ? "down" : "up");
+      this.animator.setDirection(this.movement);
+
+      if (isColliding(nextBox, target)) {
+        this.beginWindup();
+        return;
+      }
+      if (walls.some((wall) => isColliding(nextBox, wall.getHitBox()))) {
+        continue; // blocked: try the other axis
+      }
+      this._position = next;
       this.walk();
-    } else {
-      this.idle();
+      return;
     }
+    this.idle();
   }
 
   detectPlayer(playerPosition, walls) {
@@ -201,11 +209,9 @@ class Guard extends Entity {
         y: dy / distance,
       };
 
-      let checkPosition = {
-        ...this._position,
-        width: canvasSettings.cellWidth / 2,
-        height: canvasSettings.cellHeight / 2,
-      };
+      // March the guard's (centered) collision box toward the player; any
+      // wall it would cross breaks the line of sight
+      const checkPosition = this.getMoveBox();
       for (let i = 0; i < distance; i += canvasSettings.cellWidth / 2) {
         checkPosition.x += step.x * (canvasSettings.cellWidth / 2);
         checkPosition.y += step.y * (canvasSettings.cellHeight / 2);
@@ -433,39 +439,45 @@ class Guard extends Entity {
         y: this._position.y + step.y * canvasSettings.cellHeight * 10,
       };
     }
-    // Patrolling ambles at 60% speed (scaled via the time slice); a wall
-    // ends the leg early and a new direction is rolled next update
+    // Patrolling ambles at 60% speed (scaled via the time slice). A wall
+    // ends the leg early — the guard then stands for a short beat before
+    // rolling a new direction, instead of re-rolling every frame (which
+    // made boxed-in guards flip their facing rapidly on the spot).
     if (!this.#stepToward(target, walls, deltaMs * 0.6)) {
-      this.#patrolMs = 0;
+      this.#patrolDirection = null;
+      this.#patrolMs = randomInt(400, 900);
       this.idle();
     }
   }
 
   // One movement step toward a point, blocked by walls. Returns false when
-  // the path is blocked. Shared by investigate and patrol.
+  // the path is blocked. Shared by investigate and patrol. The step is
+  // clamped to the remaining distance so arrival never overshoots into a
+  // facing-flipping jitter.
   #stepToward(point, walls, deltaMs) {
     const dx = point.x - this._position.x;
     const dy = point.y - this._position.y;
-    this.movement = Math.abs(dx) > Math.abs(dy)
-      ? (dx > 0 ? "right" : "left")
-      : (dy > 0 ? "down" : "up");
+    const axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+    const remaining = axis === "x" ? dx : dy;
+    if (Math.abs(remaining) < 1) {
+      this.idle();
+      return true; // close enough — treat as arrived rather than blocked
+    }
+
+    this.movement = axis === "x"
+      ? (remaining > 0 ? "right" : "left")
+      : (remaining > 0 ? "down" : "up");
     this.animator.setDirection(this.movement);
 
-    const distance = this.#speed * (deltaMs / 1000);
-    const next = {
-      x: this._position.x,
-      y: this._position.y,
-      width: canvasSettings.cellWidth / 2,
-      height: canvasSettings.cellHeight / 2,
-    };
-    switch (this.movement) {
-      case "up": next.y -= distance; break;
-      case "down": next.y += distance; break;
-      case "left": next.x -= distance; break;
-      case "right": next.x += distance; break;
+    const step = this.#speed * (deltaMs / 1000);
+    const distance = Math.sign(remaining) * Math.min(step, Math.abs(remaining));
+    const next = axis === "x"
+      ? { x: this._position.x + distance, y: this._position.y }
+      : { x: this._position.x, y: this._position.y + distance };
+    if (walls.some((wall) => isColliding(this.getMoveBox(next.x, next.y), wall.getHitBox()))) {
+      return false;
     }
-    if (walls.some((wall) => isColliding(next, wall.getHitBox()))) return false;
-    this._position = { x: next.x, y: next.y };
+    this._position = next;
     this.walk();
     return true;
   }
@@ -521,25 +533,20 @@ class Guard extends Entity {
   #retreatFrom(dx, dy, walls, deltaMs) {
     const distance = this.#speed * (deltaMs / 1000);
     const axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
-    const nextPosition = {
-      x: this._position.x,
-      y: this._position.y,
-      width: canvasSettings.cellWidth / 2,
-      height: canvasSettings.cellHeight / 2,
-    };
+    const next = { x: this._position.x, y: this._position.y };
 
     if (axis === "x") {
-      nextPosition.x += dx > 0 ? -distance : distance;
+      next.x += dx > 0 ? -distance : distance;
       this.movement = dx > 0 ? "left" : "right";
     } else {
-      nextPosition.y += dy > 0 ? -distance : distance;
+      next.y += dy > 0 ? -distance : distance;
       this.movement = dy > 0 ? "up" : "down";
     }
     this.animator.setDirection(this.movement);
 
-    const blocked = walls.some((wall) => isColliding(nextPosition, wall.getHitBox()));
+    const blocked = walls.some((wall) => isColliding(this.getMoveBox(next.x, next.y), wall.getHitBox()));
     if (!blocked) {
-      this._position = { x: nextPosition.x, y: nextPosition.y };
+      this._position = next;
       this.walk();
     } else {
       this.idle();
@@ -548,15 +555,13 @@ class Guard extends Entity {
 
   #applyKnockback(walls, deltaMs) {
     const distance = combatSettings.knockbackSpeed * (this.#knockback.multiplier || 1) * (deltaMs / 1000);
-    const nextPosition = {
+    const next = {
       x: this._position.x + this.#knockback.x * distance,
       y: this._position.y + this.#knockback.y * distance,
-      width: canvasSettings.cellWidth / 2,
-      height: canvasSettings.cellHeight / 2,
     };
-    const blocked = walls.some((wall) => isColliding(nextPosition, wall.getHitBox()));
+    const blocked = walls.some((wall) => isColliding(this.getMoveBox(next.x, next.y), wall.getHitBox()));
     if (!blocked) {
-      this._position = { x: nextPosition.x, y: nextPosition.y };
+      this._position = next;
     }
     this.#knockback.msLeft -= deltaMs;
     if (this.#knockback.msLeft <= 0 || blocked) this.#knockback = null;
