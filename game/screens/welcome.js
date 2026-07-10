@@ -60,7 +60,7 @@ export function showLevelSelectScreen(onPickLevel, onBack) {
 // - Display game title
 // - Provide buttons to start the game, view high scores, and adjust sound settings
 
-export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit, onStory, onLevelSelect, onSettings) {
+export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onStory, onLevelSelect, onSettings) {
   const container = document.getElementById('game-container');
   container.innerHTML = '';
 
@@ -121,11 +121,6 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   settingsButton.onclick = onSettings;
   welcomeScreen.appendChild(settingsButton);
 
-  const exitButton = document.createElement('button');
-  exitButton.textContent = 'Exit';
-  exitButton.onclick = onExit;
-  welcomeScreen.appendChild(exitButton);
-
   const controlsHint = document.createElement('p');
   controlsHint.textContent = 'Arrows: move · Space: attack · I: inventory · Esc: menu';
   controlsHint.style.color = theme.colors.text;
@@ -144,5 +139,4 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   styleButton(startButton);
   styleButton(highScoresButton);
   styleButton(settingsButton);
-  styleButton(exitButton);
 }

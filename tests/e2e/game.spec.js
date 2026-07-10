@@ -188,6 +188,9 @@ test('diagonal movement slides along blockers without clipping through walls', a
 test('pausing via Escape and continuing preserves the run', async ({ page }) => {
   await startNewGame(page);
   await press(page, 'ArrowDown', 5);
+  // Walking down from the level 1 spawn collects the axe pedestal; clear
+  // its unlock card so Escape reaches the pause flow instead
+  await page.evaluate(() => window.__wandertrap.game.dismissWeaponUnlock());
   const before = await gameState(page);
 
   await page.keyboard.press('Escape');
@@ -209,6 +212,9 @@ test('pausing via Escape and continuing preserves the run', async ({ page }) => 
 test('losing all health costs a life, respawns, and eventually ends the game', async ({ page }) => {
   await startNewGame(page);
   await press(page, 'ArrowDown', 5);
+  // Walking down collects the level 1 axe pedestal; clear its unlock card
+  // so the simulation (and thus death handling) keeps running
+  await page.evaluate(() => window.__wandertrap.game.dismissWeaponUnlock());
 
   const damage = () => page.evaluate(() => window.__wandertrap.game.player.takeDamage(100));
   // Respawning grants ~2s of protection; wait it out before the next hit
@@ -416,7 +422,7 @@ test('only the axe can cut trees and break boulders', async ({ page }) => {
   expect(result.afterAxe).toBe(false);
 });
 
-test('bumping into the level 1 tree without the axe shows a hint', async ({ page }) => {
+test('bumping into the level 1 boulder without the axe shows a hint', async ({ page }) => {
   await startNewGame(page);
 
   const result = await page.evaluate(() => {
@@ -424,8 +430,11 @@ test('bumping into the level 1 tree without the axe shows a hint', async ({ page
     game.pause();
     game.guards = [];
     game.notifications = [];
-    // A tree seals the narrow corridor directly right of the level 1 spawn
-    for (let i = 0; i < 30; i++) game.movePlayer('right');
+    // A boulder at (7, 4) seals the spawn corridor below the axe pedestal.
+    // Approach it from the free cell underneath so the pedestal (which
+    // would grant the axe) stays untouched.
+    game.teleportPlayer(448, 320);
+    for (let i = 0; i < 30; i++) game.movePlayer('up');
     game.step(1);
     return {
       hasAxe: game.player.hasWeapon('woodenAxe'),
@@ -435,9 +444,9 @@ test('bumping into the level 1 tree without the axe shows a hint', async ({ page
   });
 
   expect(result.hasAxe).toBe(false); // a fresh run starts with only the dagger
-  expect(result.position.x).toBeLessThan(512); // stopped before the tree cell
+  expect(result.position.y).toBeGreaterThan(256); // stopped before the boulder cell
   expect(result.notifications.some((t) =>
-    t.includes('only an axe can cut it down')
+    t.includes('only an axe can break it')
   )).toBe(true);
 });
 
