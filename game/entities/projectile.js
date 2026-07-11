@@ -9,14 +9,20 @@ class Projectile extends Entity {
   #owner;
   #done = false;
 
-  constructor(x, y, direction, assets, { owner, damage, speed = combatSettings.projectileSpeed } = {}) {
+  constructor(
+    x,
+    y,
+    direction,
+    assets,
+    { owner, damage, speed = combatSettings.projectileSpeed, rangeCells = combatSettings.projectileRangeCells } = {}
+  ) {
     super(x, y, "arrow", assets, 24, 12);
     const length = Math.hypot(direction.x, direction.y) || 1;
     this.#direction = { x: direction.x / length, y: direction.y / length };
     this.#owner = owner;
     this.#damage = damage;
     this.speed = speed;
-    this.#maxDistance = combatSettings.projectileRangeCells * canvasSettings.cellWidth;
+    this.#maxDistance = rangeCells * canvasSettings.cellWidth;
   }
 
   selectSprites(assets) {

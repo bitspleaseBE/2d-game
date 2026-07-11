@@ -2,6 +2,7 @@ import { theme, applyContainerStyles, styleButton } from '../utils/theme.js';
 import { createSoundToggleButton } from '../utils/sound-controls.js';
 import { getSkipLevelIntros, setSkipLevelIntros, isCampaignComplete } from '../utils/preferences.js';
 import levelData from '../levels/level-data.js';
+import { gameSettings } from '../utils/settings.js';
 
 // Pick any unlocked dream after beating the campaign once.
 
@@ -32,7 +33,7 @@ export function showLevelSelectScreen(onPickLevel, onBack) {
   grid.style.maxWidth = '960px';
   grid.style.margin = '0 auto 24px';
 
-  for (let levelNumber = 1; levelNumber <= 10; levelNumber += 1) {
+  for (let levelNumber = 1; levelNumber <= gameSettings.maxLevels; levelNumber += 1) {
     const level = levelData.getLevel(levelNumber);
     const button = document.createElement('button');
     button.textContent = `${levelNumber}. ${level ? level.name : `Level ${levelNumber}`}`;

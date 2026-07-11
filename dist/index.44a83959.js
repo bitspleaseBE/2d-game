@@ -142,7 +142,7 @@
       this[globalName] = mainExports;
     }
   }
-})({"aAwE2":[function(require,module,exports) {
+})({"jkQvP":[function(require,module,exports) {
 var global = arguments[3];
 var HMR_HOST = null;
 var HMR_PORT = null;
@@ -790,6 +790,12 @@ var _wallJs = require("./entities/wall.js");
 var _wallJsDefault = parcelHelpers.interopDefault(_wallJs);
 var _explosiveJs = require("./entities/explosive.js");
 var _explosiveJsDefault = parcelHelpers.interopDefault(_explosiveJs);
+var _spikeTrapJs = require("./entities/spike-trap.js");
+var _spikeTrapJsDefault = parcelHelpers.interopDefault(_spikeTrapJs);
+var _dartShooterJs = require("./entities/dart-shooter.js");
+var _dartShooterJsDefault = parcelHelpers.interopDefault(_dartShooterJs);
+var _crumblingFloorJs = require("./entities/crumbling-floor.js");
+var _crumblingFloorJsDefault = parcelHelpers.interopDefault(_crumblingFloorJs);
 var _guardJs = require("./entities/guard.js");
 var _guardJsDefault = parcelHelpers.interopDefault(_guardJs);
 var _obstacleJs = require("./entities/obstacle.js");
@@ -807,6 +813,27 @@ var _projectileJsDefault = parcelHelpers.interopDefault(_projectileJs);
 var _itemsJs = require("./items.js");
 var _themeManifestJs = require("./assets/theme-manifest.js");
 var _weaponUnlockedJs = require("./screens/weapon-unlocked.js");
+// Dart shooter cells encode their firing direction in the glyph. These cells
+// are also solid walls (see initializeBoard / drawMinimap).
+const DART_DIRECTIONS = {
+    "^": {
+        x: 0,
+        y: -1
+    },
+    v: {
+        x: 0,
+        y: 1
+    },
+    "<": {
+        x: -1,
+        y: 0
+    },
+    ">": {
+        x: 1,
+        y: 0
+    }
+};
+const isDartCell = (cell)=>Object.prototype.hasOwnProperty.call(DART_DIRECTIONS, cell);
 class Game {
     constructor(containerId, canvas, context, assets, callbacks = {}){
         this.container = document.getElementById(containerId);
@@ -826,6 +853,9 @@ class Game {
         this.assets = assets;
         this.themeAssets = (0, _themeManifestJs.resolveThemeAssets)(this.assets.levelAssets);
         this.explosives = [];
+        this.spikeTraps = [];
+        this.dartShooters = [];
+        this.crumblingFloors = [];
         this.guards = [];
         this.obstacles = [];
         this.powerups = [];
@@ -880,7 +910,8 @@ class Game {
             this.explored = level.layout.map((row)=>row.map(()=>false));
             if (this.fogEnabled) this.notify("Fog of war \u2014 explore to reveal the map!");
             for(let y = 0; y < level.layout.length; y++)for(let x = 0; x < level.layout[y].length; x++){
-                if (level.layout[y][x] === "#") this.walls.push(new (0, _wallJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, "normal", this.themeAssets));
+                if (level.layout[y][x] === "#" || isDartCell(level.layout[y][x])) // Dart shooters sit in the wall and are solid like any wall cell
+                this.walls.push(new (0, _wallJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, "normal", this.themeAssets));
                 if (level.layout[y][x] === "D") this.doors.push(new (0, _doorJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, this.assets.itemAssets));
                 if (level.layout[y][x] === "X") this.exit = new (0, _exitJsDefault.default)(x * (0, _settingsJs.canvasSettings).cellWidth, y * (0, _settingsJs.canvasSettings).cellHeight, this.themeAssets);
             }
@@ -1067,7 +1098,9 @@ class Game {
             width: hitBox.width,
             height: hitBox.height
         };
-        return !(next.x < 0 || next.y < 0 || next.x > this.canvas.width - (0, _settingsJs.canvasSettings).cellWidth || next.y > this.canvas.height - (0, _settingsJs.canvasSettings).cellHeight || this.walls.some((wall)=>(0, _gameJs.isColliding)(nextHitBox, wall.getHitBox())) || this.lockedDoors().some((door)=>(0, _gameJs.isColliding)(nextHitBox, door.getHitBox())) || this.obstacles.some((obstacle)=>(0, _gameJs.isColliding)(nextHitBox, obstacle.getHitBox())));
+        return !(next.x < 0 || next.y < 0 || next.x > this.canvas.width - (0, _settingsJs.canvasSettings).cellWidth || next.y > this.canvas.height - (0, _settingsJs.canvasSettings).cellHeight || this.walls.some((wall)=>(0, _gameJs.isColliding)(nextHitBox, wall.getHitBox())) || this.lockedDoors().some((door)=>(0, _gameJs.isColliding)(nextHitBox, door.getHitBox())) || this.obstacles.some((obstacle)=>(0, _gameJs.isColliding)(nextHitBox, obstacle.getHitBox())) || // Collapsed pits block entry only — a player caught standing over a pit
+        // as it forms can always step off, never get sealed in.
+        this.crumblingFloors.some((floor)=>floor.isCollapsed() && (0, _gameJs.isColliding)(nextHitBox, floor.getHitBox()) && !(0, _gameJs.isColliding)(hitBox, floor.getHitBox())));
     }
     // Doors that still block passage (an opened door is a free corridor)
     lockedDoors() {
@@ -1214,6 +1247,9 @@ class Game {
         const level = (0, _levelDataJsDefault.default).getLevel(this.currentLevel);
         if (level) {
             this.explosives = [];
+            this.spikeTraps = [];
+            this.dartShooters = [];
+            this.crumblingFloors = [];
             this.guards = [];
             this.obstacles = [];
             this.powerups = [];
@@ -1221,6 +1257,7 @@ class Game {
             this.projectiles = [];
             this.weaponPedestals = [];
             const healthScale = this.guardHealthScale(level.number);
+            const bossScale = level.number <= 10 ? 1 : Math.min(1.5, 1 + (level.number - 10) * 0.05);
             for(let y = 0; y < level.layout.length; y++)for(let x = 0; x < level.layout[y].length; x++){
                 const cell = level.layout[y][x];
                 const position = {
@@ -1244,9 +1281,11 @@ class Game {
                         }));
                         break;
                     case "B":
-                        // A boss: bigger, tougher and harder-hitting than a guard
+                        // A boss: bigger, tougher and harder-hitting than a guard.
+                        // Bosses only gain health past level 10 (bossScale).
                         this.guards.push(new (0, _guardJsDefault.default)(position.x, position.y, `orc${(0, _rngJs.randomInt)(1, 4)}`, this.assets.guardAssets, {
-                            boss: true
+                            boss: true,
+                            healthScale: bossScale
                         }));
                         break;
                     case "O":
@@ -1277,12 +1316,29 @@ class Game {
                     case "M":
                         this.drops.push(new (0, _dropJsDefault.default)(position.x, position.y, "runeMight", this.assets.itemAssets));
                         break;
+                    case "S":
+                        // Stagger neighbouring spikes so a row does not fire in unison
+                        this.spikeTraps.push(new (0, _spikeTrapJsDefault.default)(position.x, position.y, {
+                            phaseMs: (x + y) * 350
+                        }));
+                        break;
+                    case "F":
+                        this.crumblingFloors.push(new (0, _crumblingFloorJsDefault.default)(position.x, position.y));
+                        break;
+                    case "^":
+                    case "v":
+                    case "<":
+                    case ">":
+                        this.dartShooters.push(new (0, _dartShooterJsDefault.default)(position.x, position.y, DART_DIRECTIONS[cell]));
+                        break;
                 }
             }
         }
     }
     guardHealthScale(levelNumber) {
-        return 1 + Math.floor((levelNumber - 1) / 3) * 0.1;
+        // Same +10% every three levels as before, now capped at 1.6x so the deep
+        // Act 2 levels lean on layout pressure rather than bullet-sponge guards.
+        return Math.min(1.6, 1 + Math.floor((levelNumber - 1) / 3) * 0.1);
     }
     // Something a defeated guard leaves behind on the ground
     spawnDrop({ x, y }) {
@@ -1390,10 +1446,12 @@ class Game {
             y: 0
         };
     }
-    spawnProjectile({ x, y, direction, owner, damage }) {
+    spawnProjectile({ x, y, direction, owner, damage, speed, rangeCells }) {
         const projectile = new (0, _projectileJsDefault.default)(x - 12, y - 6, direction, this.assets.projectileAssets, {
             owner,
-            damage
+            damage,
+            speed,
+            rangeCells
         });
         this.projectiles.push(projectile);
         return projectile;
@@ -1535,10 +1593,13 @@ class Game {
         this.player.update(deltaMs);
         this.updatePlayerShot();
         this.updateExplosives(deltaMs);
-        // Locked doors block guards (and their line of sight) like walls
+        this.updateTraps(deltaMs);
+        // Locked doors block guards (and their line of sight) like walls; a
+        // collapsed pit is impassable to guards too (only the player triggers it)
         const guardBlockers = [
             ...this.walls,
-            ...this.lockedDoors()
+            ...this.lockedDoors(),
+            ...this.collapsedPits()
         ];
         this.guards.forEach((guard)=>{
             const shot = guard.update(this.player.getHitBox(), guardBlockers, deltaMs);
@@ -1669,6 +1730,51 @@ class Game {
         });
         this.explosives = this.explosives.filter((explosive)=>!explosive.isDone());
     }
+    // Collapsed crumbling floors, treated as impassable by guards
+    collapsedPits() {
+        return this.crumblingFloors.filter((floor)=>floor.isCollapsed());
+    }
+    updateTraps(deltaMs) {
+        const playerBox = this.player.getHitBox();
+        const playerCenter = {
+            x: playerBox.x + playerBox.width / 2,
+            y: playerBox.y + playerBox.height / 2
+        };
+        // Spike traps: hurt the player and any guard standing on extended spikes
+        this.spikeTraps.forEach((spike)=>{
+            spike.update(deltaMs);
+            if (!spike.isExtended()) return;
+            const box = spike.getDamageBox();
+            if ((0, _gameJs.isColliding)(playerBox, box)) this.damagePlayer((0, _settingsJs.trapSettings).spikePlayerDamage);
+            this.guards.forEach((guard)=>{
+                if (guard.isDefeated() || !spike.canHurtGuard(guard)) return;
+                if (!(0, _gameJs.isColliding)(box, guard.getHitBox())) return;
+                spike.markGuardHurt(guard);
+                guard.takeDamage((0, _settingsJs.trapSettings).spikeGuardDamage);
+                if (guard.consumeDefeatAward()) {
+                    (0, _soundJs.sfx).guardDown();
+                    this.score += guard.isBoss() ? (0, _settingsJs.bossSettings).scoreValue : (0, _settingsJs.gameSettings).scoreIncrement;
+                    this.spawnDrop(guard.getPosition());
+                }
+            });
+        });
+        // Dart shooters: fire darts (owner "guard") along their facing direction
+        this.dartShooters.forEach((shooter)=>{
+            const shot = shooter.update(playerCenter, deltaMs);
+            if (shot) {
+                this.spawnProjectile({
+                    ...shot,
+                    owner: "guard"
+                });
+                (0, _soundJs.sfx).swing?.();
+            }
+        });
+        // Crumbling floors: collapse under the player, damaging them if still on it
+        this.crumblingFloors.forEach((floor)=>{
+            const collapsedNow = floor.update(playerBox, deltaMs);
+            if (collapsedNow && (0, _gameJs.isColliding)(playerBox, floor.getHitBox())) this.damagePlayer((0, _settingsJs.trapSettings).crumbleCollapseDamage);
+        });
+    }
     // Route all player damage through one place so the hurt sound plays
     // only when damage actually lands (not while invincible or flashing)
     damagePlayer(amount) {
@@ -1787,6 +1893,10 @@ class Game {
         // Draw the walls and doors
         this.walls.forEach((wall)=>wall.draw(this.context));
         this.doors.forEach((door)=>door.draw(this.context));
+        // Floor traps sit under the entities (dart shooters decorate their wall tile)
+        this.crumblingFloors.forEach((floor)=>floor.draw(this.context));
+        this.spikeTraps.forEach((spike)=>spike.draw(this.context));
+        this.dartShooters.forEach((shooter)=>shooter.draw(this.context));
         // Draw the entities
         this.obstacles.forEach((obstacle)=>obstacle.draw(this.context));
         this.powerups.forEach((powerup)=>powerup.draw(this.context));
@@ -2117,7 +2227,7 @@ class Game {
         for(let row = 0; row < rows; row += 1)for(let col = 0; col < cols; col += 1){
             if (!this.explored[row][col]) continue;
             const cell = this.board[row]?.[col];
-            const isWall = cell === "#" || cell === "D";
+            const isWall = cell === "#" || cell === "D" || isDartCell(cell);
             ctx.fillStyle = isWall ? "rgba(120, 120, 140, 0.9)" : "rgba(70, 90, 120, 0.75)";
             ctx.fillRect(mapX + col * cellW, mapY + row * cellH, cellW, cellH);
         }
@@ -2261,6 +2371,9 @@ class Game {
         this.attackCooldownMs = 0;
         this.projectiles = [];
         this.weaponPedestals = [];
+        this.spikeTraps = [];
+        this.dartShooters = [];
+        this.crumblingFloors = [];
         this.pressedDirections.clear();
         this.lastFrameTime = null;
         if (this.rafId) cancelAnimationFrame(this.rafId);
@@ -2328,7 +2441,7 @@ class Game {
 }
 exports.default = Game;
 
-},{"./utils/settings.js":"hBndc","./utils/sound.js":"6QCfZ","./utils/narration.js":"402l2","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/preferences.js":"3e82j","./utils/touch.js":"fsjN9","./utils/sound-controls.js":"fnm3C","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./entities/projectile.js":"g7qsG","./items.js":"8gP9P","./assets/theme-manifest.js":"d5R3E","./screens/weapon-unlocked.js":"5sboX","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hBndc":[function(require,module,exports) {
+},{"./utils/settings.js":"hBndc","./utils/sound.js":"6QCfZ","./utils/narration.js":"402l2","./entities/player.js":"1uqza","./levels/level-data.js":"57eJ8","./utils/canvas.js":"TkAKd","./utils/game.js":"jBBaN","./utils/preferences.js":"3e82j","./utils/touch.js":"fsjN9","./utils/sound-controls.js":"fnm3C","./utils/rng.js":"7uRsi","./entities/wall.js":"d9RxC","./entities/explosive.js":"590U3","./entities/spike-trap.js":"iGdOV","./entities/dart-shooter.js":"fYT1h","./entities/crumbling-floor.js":"iLycP","./entities/guard.js":"bFjVQ","./entities/obstacle.js":"14cf6","./entities/powerup.js":"7DUBa","./entities/exit.js":"lIWLe","./entities/drop.js":"3BhaU","./entities/door.js":"8XUaB","./entities/projectile.js":"g7qsG","./items.js":"8gP9P","./assets/theme-manifest.js":"d5R3E","./screens/weapon-unlocked.js":"5sboX","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"hBndc":[function(require,module,exports) {
 // Game settings and configurations
 // - This file contains global settings and configurations for the game
 // - These settings can be adjusted to change the game's behavior and appearance
@@ -2343,6 +2456,7 @@ parcelHelpers.export(exports, "combatSettings", ()=>combatSettings);
 parcelHelpers.export(exports, "bossSettings", ()=>bossSettings);
 parcelHelpers.export(exports, "fogSettings", ()=>fogSettings);
 parcelHelpers.export(exports, "entitySettings", ()=>entitySettings);
+parcelHelpers.export(exports, "trapSettings", ()=>trapSettings);
 parcelHelpers.export(exports, "soundSettings", ()=>soundSettings);
 parcelHelpers.export(exports, "controlSettings", ()=>controlSettings);
 const canvasSettings = {
@@ -2362,7 +2476,7 @@ const playerSettings = {
 };
 const gameSettings = {
     initialLevel: 1,
-    maxLevels: 10,
+    maxLevels: 20,
     scoreIncrement: 100,
     levelIntroDurationMs: 5200
 };
@@ -2373,6 +2487,7 @@ const powerupSettings = {
     strengthMultiplier: 2,
     strengthDurationMs: 10000,
     invincibilityDurationMs: 10000,
+    maxEffectDurationMs: 30000,
     notificationDurationMs: 4000
 };
 const combatSettings = {
@@ -2418,6 +2533,23 @@ const entitySettings = {
     explosivePlayerDamage: 30,
     explosiveGuardDamage: 100
 };
+const trapSettings = {
+    // Spike trap: retracted -> warning (tips telegraph) -> extended, on a loop
+    spikeRetractedMs: 1400,
+    spikeWarningMs: 500,
+    spikeExtendedMs: 900,
+    spikePlayerDamage: 15,
+    spikeGuardDamage: 30,
+    // Dart shooter: wall-mounted, fires along its facing direction
+    dartCooldownMs: 2200,
+    dartSpeed: 360,
+    dartDamage: 10,
+    dartRangeCells: 6,
+    dartActivationRangeCells: 8,
+    // Crumbling floor: cracks underfoot, then becomes an impassable pit
+    crumbleDelayMs: 800,
+    crumbleCollapseDamage: 20
+};
 const soundSettings = {
     mute: false,
     volume: 0.5
@@ -2434,7 +2566,7 @@ const controlSettings = {
     inventory: "i"
 }; // Add more settings as needed for other aspects of the game
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"gkKU3":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"4dwUO":[function(require,module,exports) {
 exports.interopDefault = function(a) {
     return a && a.__esModule ? a : {
         default: a
@@ -2668,7 +2800,7 @@ const sfx = {
     }
 };
 
-},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"402l2":[function(require,module,exports) {
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"402l2":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "stopNarration", ()=>stopNarration);
@@ -2716,7 +2848,7 @@ function playNarration(audioId, { onEnded, onError } = {}) {
     }
 }
 
-},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"1uqza":[function(require,module,exports) {
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"1uqza":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -2737,6 +2869,12 @@ class Player extends (0, _entityJsDefault.default) {
         strength: 0,
         invincibility: 0
     };
+    // Recent positions sampled while the speed boost is active, for the ghost
+    // trail drawn behind the sprite. Each entry is { x, y, ageMs }.
+    #trail = [];
+    #trailSampleMs = 0;
+    // Offscreen buffer reused to build the ember silhouette for the strength tint
+    #tintCanvas = null;
     constructor(x, y, assets){
         super(x, y, "player", assets);
         this.#health = 100;
@@ -3061,20 +3199,47 @@ class Player extends (0, _entityJsDefault.default) {
                 this.#health = Math.min(100, this.#health + (0, _settingsJs.powerupSettings).healAmount);
                 break;
             case "speed":
-                this.#effectMs.speed = (0, _settingsJs.powerupSettings).speedDurationMs;
+                this.#addEffect("speed", (0, _settingsJs.powerupSettings).speedDurationMs);
                 break;
             case "strength":
-                this.#effectMs.strength = (0, _settingsJs.powerupSettings).strengthDurationMs;
+                this.#addEffect("strength", (0, _settingsJs.powerupSettings).strengthDurationMs);
                 break;
             case "invincibility":
-                this.#effectMs.invincibility = (0, _settingsJs.powerupSettings).invincibilityDurationMs;
+                this.#addEffect("invincibility", (0, _settingsJs.powerupSettings).invincibilityDurationMs);
                 break;
         }
     }
+    // Re-collecting a crystal of the same type stacks its DURATION (not its
+    // effect), capped so a level cannot be trivialised by hoarding crystals.
+    #addEffect(name, durationMs) {
+        this.#effectMs[name] = Math.min((0, _settingsJs.powerupSettings).maxEffectDurationMs, this.#effectMs[name] + durationMs);
+    }
     update(deltaMs = 1000 / 60) {
         for (const name of Object.keys(this.#effectMs))this.#effectMs[name] = Math.max(0, this.#effectMs[name] - deltaMs);
+        this.#updateTrail(deltaMs);
         this.animator.update(deltaMs);
         this.#syncAnimationState();
+    }
+    // Sample the sprite position ~every 40ms while the speed boost is active and
+    // keep the last handful of samples (dropping ones older than ~200ms) for the
+    // afterimage trail. The trail clears itself once the boost ends.
+    #updateTrail(deltaMs) {
+        if (this.#effectMs.speed <= 0) {
+            if (this.#trail.length) this.#trail = [];
+            return;
+        }
+        this.#trail.forEach((sample)=>sample.ageMs += deltaMs);
+        this.#trail = this.#trail.filter((sample)=>sample.ageMs < 200);
+        this.#trailSampleMs += deltaMs;
+        if (this.#trailSampleMs >= 40) {
+            this.#trailSampleMs = 0;
+            this.#trail.push({
+                x: this._position.x,
+                y: this._position.y,
+                ageMs: 0
+            });
+            if (this.#trail.length > 4) this.#trail.shift();
+        }
     }
     checkCollision(direction, distance = this.getSpeed() / 60) {
         const nextPosition = {
@@ -3114,19 +3279,128 @@ class Player extends (0, _entityJsDefault.default) {
         }, flickerDuration);
     }
     draw(ctx) {
+        // The aura is drawn even while the hurt flicker hides the sprite, so an
+        // active powerup keeps reading clearly through the flashing.
+        this.#drawAura(ctx);
         if (!this.visible) return;
         const frame = this.animator.getFrame(this.movement);
-        const spriteSheet = this._sprites[frame.sheet];
+        if (this.hasEffect("speed")) this.#drawAfterimages(ctx, frame);
+        this.#blitFrame(ctx, frame, this._position.x, this._position.y, 1);
+        if (this.hasEffect("strength")) this.#drawStrengthTint(ctx, frame);
+        if (this.hasEffect("invincibility")) this.#drawWardRing(ctx);
+    }
+    // Where a frame lands inside its cell: small sprites are scaled up and
+    // centred, cell-sized sprites are drawn 1:1.
+    #frameGeometry(frame) {
         const pixelScale = frame.frameWidth >= (0, _settingsJs.canvasSettings).cellWidth ? 1 : (0, _settingsJs.canvasSettings).cellWidth / 32;
         const destWidth = frame.frameWidth * pixelScale;
         const destHeight = frame.frameHeight * pixelScale;
-        const offsetX = ((0, _settingsJs.canvasSettings).cellWidth - destWidth) / 2;
-        const offsetY = ((0, _settingsJs.canvasSettings).cellHeight - destHeight) / 2;
+        return {
+            destWidth,
+            destHeight,
+            offsetX: ((0, _settingsJs.canvasSettings).cellWidth - destWidth) / 2,
+            offsetY: ((0, _settingsJs.canvasSettings).cellHeight - destHeight) / 2
+        };
+    }
+    // Draw one animation frame with the cell at (x, y), honouring the flip flag
+    // and an optional alpha (used for the speed ghost trail).
+    #blitFrame(ctx, frame, x, y, alpha = 1) {
+        const spriteSheet = this._sprites[frame.sheet];
+        const { destWidth, destHeight, offsetX, offsetY } = this.#frameGeometry(frame);
         ctx.save();
+        if (alpha !== 1) ctx.globalAlpha = alpha;
         if (frame.flip) {
             ctx.scale(-1, 1);
-            ctx.drawImage(spriteSheet, frame.sourceX, frame.sourceY, frame.frameWidth, frame.frameHeight, -(this._position.x + offsetX) - destWidth, this._position.y + offsetY, destWidth, destHeight);
-        } else ctx.drawImage(spriteSheet, frame.sourceX, frame.sourceY, frame.frameWidth, frame.frameHeight, this._position.x + offsetX, this._position.y + offsetY, destWidth, destHeight);
+            ctx.drawImage(spriteSheet, frame.sourceX, frame.sourceY, frame.frameWidth, frame.frameHeight, -(x + offsetX) - destWidth, y + offsetY, destWidth, destHeight);
+        } else ctx.drawImage(spriteSheet, frame.sourceX, frame.sourceY, frame.frameWidth, frame.frameHeight, x + offsetX, y + offsetY, destWidth, destHeight);
+        ctx.restore();
+    }
+    // Faint copies of the current frame trailing behind a sprinting hero.
+    #drawAfterimages(ctx, frame) {
+        const alphas = [
+            0.08,
+            0.14,
+            0.2,
+            0.26
+        ]; // oldest faintest -> newest strongest
+        this.#trail.forEach((sample, i)=>{
+            this.#blitFrame(ctx, frame, sample.x, sample.y, alphas[Math.min(i, alphas.length - 1)]);
+        });
+    }
+    // A pulsing colour-coded glow at the hero's feet, one ellipse per active
+    // effect, fading out over the effect's final second.
+    #drawAura(ctx) {
+        const colors = {
+            speed: "80, 216, 255",
+            strength: "255, 112, 67",
+            invincibility: "255, 213, 79"
+        };
+        const active = Object.entries(this.#effectMs).filter(([name, ms])=>ms > 0 && colors[name]);
+        if (!active.length) return;
+        const cx = this._position.x + this._width / 2;
+        const cy = this._position.y + this._height * 0.78;
+        const pulse = 0.75 + 0.25 * Math.sin(performance.now() / 180);
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        active.forEach(([name, ms], i)=>{
+            const fade = Math.min(1, ms / 1000);
+            const radius = (26 + i * 6) * pulse;
+            const gradient = ctx.createRadialGradient(cx, cy, 4, cx, cy, radius);
+            gradient.addColorStop(0, `rgba(${colors[name]}, ${0.45 * fade})`);
+            gradient.addColorStop(1, `rgba(${colors[name]}, 0)`);
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, radius, radius * 0.45, 0, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.restore();
+    }
+    // Ember tint painted only over the sprite's body pixels (source-atop on an
+    // offscreen buffer), then added over the hero so strength reads as heat.
+    #drawStrengthTint(ctx, frame) {
+        const spriteSheet = this._sprites[frame.sheet];
+        const { destWidth, destHeight, offsetX, offsetY } = this.#frameGeometry(frame);
+        if (!this.#tintCanvas) this.#tintCanvas = document.createElement("canvas");
+        const buffer = this.#tintCanvas;
+        buffer.width = Math.ceil(destWidth);
+        buffer.height = Math.ceil(destHeight);
+        const bctx = buffer.getContext("2d");
+        bctx.clearRect(0, 0, buffer.width, buffer.height);
+        bctx.globalCompositeOperation = "source-over";
+        bctx.drawImage(spriteSheet, frame.sourceX, frame.sourceY, frame.frameWidth, frame.frameHeight, 0, 0, destWidth, destHeight);
+        bctx.globalCompositeOperation = "source-atop";
+        bctx.fillStyle = "rgba(255, 90, 40, 0.35)";
+        bctx.fillRect(0, 0, buffer.width, buffer.height);
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        if (frame.flip) {
+            ctx.scale(-1, 1);
+            ctx.drawImage(buffer, -(this._position.x + offsetX) - destWidth, this._position.y + offsetY, destWidth, destHeight);
+        } else ctx.drawImage(buffer, this._position.x + offsetX, this._position.y + offsetY, destWidth, destHeight);
+        ctx.restore();
+    }
+    // Golden ward ring with three orbiting motes, marking invincibility (and,
+    // for free, the short respawn-protection window that reuses the same effect).
+    #drawWardRing(ctx) {
+        const cx = this._position.x + this._width / 2;
+        const cy = this._position.y + this._height / 2;
+        const now = performance.now();
+        const pulse = 0.5 + 0.5 * Math.sin(now / 160);
+        const fade = Math.min(1, this.#effectMs.invincibility / 1000);
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.strokeStyle = `rgba(255, 213, 79, ${(0.35 + 0.25 * pulse) * fade})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 34, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = `rgba(255, 235, 150, ${0.8 * fade})`;
+        for(let k = 0; k < 3; k += 1){
+            const angle = now / 400 + k * Math.PI * 2 / 3;
+            ctx.beginPath();
+            ctx.arc(cx + Math.cos(angle) * 34, cy + Math.sin(angle) * 34, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
         ctx.restore();
     }
     #syncAnimationState() {
@@ -3136,7 +3410,7 @@ class Player extends (0, _entityJsDefault.default) {
 }
 exports.default = Player;
 
-},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","./animator.js":"hma7Y","../assets/sprite-manifest.js":"kdgDE","../items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"4kBdl":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","./animator.js":"hma7Y","../assets/sprite-manifest.js":"kdgDE","../items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"4kBdl":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _settingsJs = require("../utils/settings.js");
@@ -3191,7 +3465,7 @@ class Entity {
 }
 exports.default = Entity;
 
-},{"../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"hma7Y":[function(require,module,exports) {
+},{"../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"hma7Y":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 class Animator {
@@ -3271,7 +3545,7 @@ class Animator {
 }
 exports.default = Animator;
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"kdgDE":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"kdgDE":[function(require,module,exports) {
 // Sprite sheet metadata. Keep animation layout here so adding a new hero
 // weapon or generated sheet does not require rewriting entity draw code.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -3520,7 +3794,7 @@ const guardSpriteManifest = {
     }
 };
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"8gP9P":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"8gP9P":[function(require,module,exports) {
 // Item catalog
 // - Single source of truth for every item that can live in the player's
 //   inventory: pickups, guard drops, weapons and runes
@@ -3724,7 +3998,7 @@ const lateGuardDropPool = [
     }
 ];
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"57eJ8":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"57eJ8":[function(require,module,exports) {
 // Level data
 // - Define the structure of each level (layout of the labyrinth)
 // - Specify positions of obstacles, powerups, explosives, guards
@@ -3737,6 +4011,8 @@ const lateGuardDropPool = [
 //   'E' explosive     'W' weapon pedestal
 //   'H' Haste rune    'V' Warding rune  'M' Might rune
 //   'D' locked door (a defeated guard drops the key)
+//   'S' spike trap (telegraphed floor spikes)  'F' crumbling floor (collapses to a pit)
+//   '^' 'v' '<' '>' dart shooter (solid wall that fires darts the way it points)
 //
 // Every layout is 10 rows of exactly 20 characters. Trees and boulders can
 // only be chopped down with the wooden axe (one swing), so they make soft
@@ -3782,8 +4058,8 @@ const levelData = new LevelData();
 levelData.addLevel(new Level(1, "easy", parse([
     "TTTTTTTTTTTTTTTTTTTT",
     "T##################T",
-    "T#  G #PT     C   #T",
-    "T# ## # W ####### #T",
+    "T#  G #P#     C   #T",
+    "T# ## #W# ####### #T",
     "T#    #O#  C # ## #T",
     "T# ## # ##   #    #T",
     "T#  # #    #   ## #T",
@@ -3865,7 +4141,7 @@ levelData.addLevel(new Level(6, "hard", parse([
     "#P   #  A   #  W  G#",
     "#  C #      #      #",
     "# G  #  E   #  ##  #",
-    "#    D      D  ## X#",
+    "#   SD     SD  ## X#",
     "#  ###      #      #",
     "#    #  C   #   G  #",
     "# ## #      # ###  #",
@@ -3884,7 +4160,7 @@ levelData.addLevel(new Level(7, "hard", parse([
     "################## #",
     "#    G     C      T#",
     "#T##################",
-    "# G     E     C    #",
+    "# G     E     C    <",
     "##################O#",
     "#  G     C    G    #",
     "#X                T#",
@@ -3899,10 +4175,10 @@ levelData.addLevel(new Level(8, "hard", parse([
     "####################",
     "#P   #   C  #     A#",
     "#  G #      #  C   #",
-    "#### ## ## ## # ####",
+    "#### ##S##S## # ####",
     "#      G           #",
     "#  C     B      E  #",
-    "#### ## ## ## # ####",
+    "#### ##S##S## # ####",
     "#  G #      #   G  #",
     "#    # C    #    X #",
     "####################"
@@ -3915,9 +4191,9 @@ levelData.addLevel(new Level(9, "expert", parse([
     "####################",
     "#P  #W  A#   G# M  #",
     "#   #    #    #    #",
-    "# A D  G D  E D  A #",
+    "# A D  G D  E D  A <",
     "#   #    #    #    #",
-    "## ## ## # ## ## ###",
+    "## ##S## # ##S## ###",
     "#C  #  G #  G #   G#",
     "#   #    #    #  ###",
     "# G #  C #  C #  X##",
@@ -3935,18 +4211,193 @@ levelData.addLevel(new Level(10, "expert", parse([
     "# G  # ##########  #",
     "#    # #      X##  #",
     "## # # #  B    ## C#",
-    "#  # # #       ##  #",
+    "#  # # #  F    ##  #",
     "#  #   ####D##### A#",
-    "#E ## G    C     ###",
+    "#E ## G   SC     ###",
     "#C     ##     G   T#",
     "####################"
 ]), "The Throne", {
     theme: "dungeon",
     fogOfWar: true
 }));
+// ===========================================================================
+// Act 2 — the Undermaze. The dream beneath the dream, where the floor itself
+// turns against the dreamer. No new weapons here (the arsenal completes at
+// level 9); the challenge comes from layered traps, enemy density and fog.
+// ===========================================================================
+// 11. The Spike Cellar — spike-trap tutorial. Four halls stacked north to
+// south; every passage between them is a spike gate, so you learn the
+// retract/extend rhythm before anything else is asked of you.
+levelData.addLevel(new Level(11, "hard", parse([
+    "####################",
+    "#P  C     G     C  #",
+    "#####S########S#####",
+    "#  G      C      G #",
+    "#########S##########",
+    "#C   G        S   C#",
+    "####S###########S###",
+    "#  G    #     G    #",
+    "#C      #  S      X#",
+    "####################"
+]), "The Spike Cellar", {
+    theme: "dungeon"
+}));
+// 12. The Dart Gallery — dart-shooter tutorial. Three galleries swept by
+// wall-mounted shooters; the gaps between them fall under a dart's line, so
+// crossing is a matter of timing. A Haste rune waits at the far east.
+levelData.addLevel(new Level(12, "hard", parse([
+    "####################",
+    "#P   G        C    #",
+    "########v# #########",
+    "#  A     C      G  <",
+    "######## ###########",
+    ">  C      G       H#",
+    "# ########v####### #",
+    "# G   S     C   A  #",
+    "#         G       X#",
+    "####################"
+]), "The Dart Gallery", {
+    theme: "dungeon"
+}));
+// 13. The Hollow Bridge — the first Act 2 boss, fought over a lattice of
+// crumbling floors. Every step you take collapses the arena a little more,
+// so kite the boss without stranding yourself on a shrinking island.
+levelData.addLevel(new Level(13, "expert", parse([
+    "####################",
+    "#P    C      C     #",
+    "#                  #",
+    "#   F  F   F  F    #",
+    "#     F  B  F      #",
+    "#   F  F   F  F    #",
+    "#                  #",
+    "#C          C    X #",
+    "#                  #",
+    "####################"
+]), "The Hollow Bridge", {
+    theme: "snow"
+}));
+// 14. The Frozen Larder — fog of war over a pantry of spikes, with boulders
+// plugging the shortcuts. Lure the guards onto the spikes and let the traps
+// do the work.
+levelData.addLevel(new Level(14, "expert", parse([
+    "####################",
+    "#P   #  G  #  C    #",
+    "# S  #     # ##  # #",
+    "#    #  C  #  O    #",
+    "## S###### ###S### #",
+    "#   G   O     G    #",
+    "# ######## ####### #",
+    "#C  S    G    C  S #",
+    "#       X          #",
+    "####################"
+]), "The Frozen Larder", {
+    theme: "snow",
+    fogOfWar: true
+}));
+// 15. The Sandtrap — dart crossfire across the top, spikes below and archers
+// throughout. A Warding rune sits at the end of a spiked eastern detour.
+levelData.addLevel(new Level(15, "expert", parse([
+    "####################",
+    ">  A    C     A    <",
+    "#  ###### ######## #",
+    "#P   S        S   V#",
+    "#### ###  S ### ####",
+    "#  C    G     C    #",
+    "# ## ###### ### ## #",
+    "#   S   A    S  G  #",
+    "#          X       #",
+    "####################"
+]), "The Sandtrap", {
+    theme: "desert"
+}));
+// 16. The Mirage Court — a boss arena overlooked by two dart shooters, with
+// an inner court sealed behind a locked door. Down a courtyard guard for the
+// key, then decide whether to fight the boss or slip past it.
+levelData.addLevel(new Level(16, "expert", parse([
+    "####################",
+    "#P    C  A    C    #",
+    "# ####### ######## #",
+    "#      D       G   #",
+    "# ## v######v ##   #",
+    "#  C    B     C    #",
+    "# ## ######## ##   #",
+    "#   G     A    G   #",
+    "#C     X           #",
+    "####################"
+]), "The Mirage Court", {
+    theme: "desert"
+}));
+// 17. The Rootways — fog, tree gates that only the axe opens, and crumbling
+// shortcuts that seal behind you. A Might rune rewards the brave route.
+levelData.addLevel(new Level(17, "expert", parse([
+    "####################",
+    "#P  T   C   T   M  #",
+    "# TT ### F ### TT  #",
+    "#    T  G  T   F   #",
+    "### F ##### ## ### #",
+    "#  C   T  G   T  C #",
+    "# ## F ### F ###  ##",
+    "#   T   G    T  F  #",
+    "#T  F      X    T  #",
+    "####################"
+]), "The Rootways", {
+    theme: "forest",
+    fogOfWar: true
+}));
+// 18. The Choking Garden — a boss and archers among spiked flowerbeds, with
+// two chained locked doors to open on the way through.
+levelData.addLevel(new Level(18, "nightmare", parse([
+    "####################",
+    "#P   S  A  S    C  #",
+    "# ####### D ###### #",
+    "#   C    S     A   #",
+    "## S ##### ### S  ##",
+    "#      B       C   #",
+    "## # ### D ##### S #",
+    "#  A   S     G  A  #",
+    "#C        X        #",
+    "####################"
+]), "The Choking Garden", {
+    theme: "forest"
+}));
+// 19. The Long Dark — an endurance run: all three traps and roaming archers
+// under fog, with crystals kept deliberately scarce. No boss; just survival.
+levelData.addLevel(new Level(19, "nightmare", parse([
+    "####################",
+    ">  A   S   F   A   <",
+    "# ### ##### ### ## #",
+    "#P  S   G   F   S  #",
+    "## #### F ##### ## #",
+    "#   F   A   S   G  #",
+    "# ## ### F ### ##  #",
+    "#  S   G   F   S A #",
+    "#         X    C   #",
+    "####################"
+]), "The Long Dark", {
+    theme: "dungeon",
+    fogOfWar: true
+}));
+// 20. The Nightmare King — the finale. A dart-swept ring corridor surrounds a
+// locked keep; ring guards carry the key. Inside, the king waits before the
+// exit nook, flanked by spikes, with crumbling floors on the northern route.
+levelData.addLevel(new Level(20, "nightmare", parse([
+    "####################",
+    "#P    S      C   G #",
+    "# ################ #",
+    "# #C   F     F  C# #",
+    "# #    ##X##     # #",
+    "# #  S   B    S  # #",
+    "# #F    C     G F# #",
+    "# ########D####### #",
+    "#  G    C     S  G #",
+    "#^################^#"
+]), "The Nightmare King", {
+    theme: "dungeon",
+    fogOfWar: true
+}));
 exports.default = levelData;
 
-},{"../story-content.js":"2sig9","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2sig9":[function(require,module,exports) {
+},{"../story-content.js":"2sig9","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"2sig9":[function(require,module,exports) {
 // Shared narrative content for Wandertrap.
 // Keeping the words in one place keeps screens, level cards and narration aligned.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -4036,7 +4487,57 @@ const levelStoryBeats = [
     {
         level: 10,
         audioId: "level-10-throne",
-        story: "On the Throne, the Orc King clutches the final shard between Theo and his own bed."
+        story: "On the Throne, the Orc King clutches a shard \u2014 but as he falls, the seat splits open onto a stair winding down into the Undermaze."
+    },
+    {
+        level: 11,
+        audioId: "level-11-spike-cellar",
+        story: "Below the throne the dream keeps dreaming, and in the Spike Cellar the very floor bares its teeth."
+    },
+    {
+        level: 12,
+        audioId: "level-12-dart-gallery",
+        story: "The Dart Gallery hums with hidden ports; Theo learns to read the rhythm before he crosses."
+    },
+    {
+        level: 13,
+        audioId: "level-13-hollow-bridge",
+        story: "On the Hollow Bridge a Warden of the deep waits, and the ground crumbles a little with every step."
+    },
+    {
+        level: 14,
+        audioId: "level-14-frozen-larder",
+        story: "Fog fills the Frozen Larder, where spikes hide in the cold and the guards can be turned against them."
+    },
+    {
+        level: 15,
+        audioId: "level-15-sandtrap",
+        story: "The Sandtrap crosses its darts overhead while spikes wait below, guarding a rune worth the risk."
+    },
+    {
+        level: 16,
+        audioId: "level-16-mirage-court",
+        story: "Two silent shooters watch the Mirage Court, and a locked gate keeps its Warden from the light."
+    },
+    {
+        level: 17,
+        audioId: "level-17-rootways",
+        story: "In the misty Rootways the paths close behind Theo as the crumbling floor gives way."
+    },
+    {
+        level: 18,
+        audioId: "level-18-choking-garden",
+        story: "The Choking Garden blooms with spikes; its Warden lurks among the beds behind chained doors."
+    },
+    {
+        level: 19,
+        audioId: "level-19-long-dark",
+        story: "The Long Dark asks only that Theo endure \u2014 every trap at once, and precious little light."
+    },
+    {
+        level: 20,
+        audioId: "level-20-nightmare-king",
+        story: "At the heart of the Undermaze the Nightmare King guards the last shard, and dawn hangs on this final fight."
     }
 ];
 const endingStoryBeat = {
@@ -4049,7 +4550,7 @@ function getLevelStoryBeat(levelNumber) {
     return levelStoryBeats.find((beat)=>beat.level === levelNumber) || null;
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"TkAKd":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"TkAKd":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // helper functions for the canvas
@@ -4125,7 +4626,7 @@ function removeGameOverlays(container) {
     container.querySelector("#in-game-sound-toggle")?.remove();
 }
 
-},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"jBBaN":[function(require,module,exports) {
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"jBBaN":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "isColliding", ()=>isColliding);
@@ -4133,7 +4634,7 @@ function isColliding(rect1, rect2) {
     return rect1.x < rect2.x + rect2.width && rect1.x + rect1.width > rect2.x && rect1.y < rect2.y + rect2.height && rect1.y + rect1.height > rect2.y;
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"3e82j":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"3e82j":[function(require,module,exports) {
 // Player preferences and light campaign progress in localStorage.
 // Every accessor is wrapped so blocked storage never crashes the game.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -4241,7 +4742,7 @@ function setCampaignComplete() {
     }
 }
 
-},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"fsjN9":[function(require,module,exports) {
+},{"./settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"fsjN9":[function(require,module,exports) {
 // On-screen touch controls: a D-pad on the left, action buttons on the right.
 // Shown on touch-capable devices in landscape (or with ?touch=1 in the URL).
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -4375,7 +4876,7 @@ function installTouchControlVisibilityListener(overlay) {
     update();
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"fnm3C":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"fnm3C":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Small mute/unmute control reused on menu screens and during gameplay.
@@ -4418,7 +4919,7 @@ function createSoundToggleButton({ compact = false } = {}) {
     return button;
 }
 
-},{"./theme.js":"6OzmZ","./preferences.js":"3e82j","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"6OzmZ":[function(require,module,exports) {
+},{"./theme.js":"6OzmZ","./preferences.js":"3e82j","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"6OzmZ":[function(require,module,exports) {
 // Theme configuration for the game
 // This file contains styles and colors used across different screens
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -4485,7 +4986,7 @@ function styleButton(button, color = theme.colors.primary) {
     });
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"7uRsi":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"7uRsi":[function(require,module,exports) {
 // Seedable random number generator (mulberry32)
 // - Drop-in replacement for Math.random so game runs can be reproduced
 // - Pass ?seed=123 in the URL (used by automated tests) for deterministic runs
@@ -4523,7 +5024,7 @@ function initialSeed() {
 }
 setSeed(initialSeed());
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d9RxC":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"d9RxC":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -4554,7 +5055,7 @@ class Wall extends (0, _entityJsDefault.default) {
 }
 exports.default = Wall;
 
-},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"590U3":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"590U3":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -4678,7 +5179,279 @@ class Explosive extends (0, _entityJsDefault.default) {
 }
 exports.default = Explosive;
 
-},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"bFjVQ":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"iGdOV":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+var _entityJs = require("./entity.js");
+var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
+var _settingsJs = require("../utils/settings.js");
+// Spike trap ('S') — a telegraphed floor hazard.
+// - Cycles retracted -> warning -> extended on a loop.
+// - While extended it damages the player and any guard standing on it; a guard
+//   is hurt at most once per extension cycle (tracked in #hurtGuards).
+// - Always visible: the danger is in the timing, not in hiding.
+// - Drawn procedurally, no sprite needed.
+const CYCLE_MS = (0, _settingsJs.trapSettings).spikeRetractedMs + (0, _settingsJs.trapSettings).spikeWarningMs + (0, _settingsJs.trapSettings).spikeExtendedMs;
+class SpikeTrap extends (0, _entityJsDefault.default) {
+    #elapsedMs;
+    #hurtGuards = new Set();
+    #wasExtended = false;
+    // A phase offset staggers neighbouring spikes so a row does not fire in unison
+    constructor(x, y, { phaseMs = 0 } = {}){
+        super(x, y, "spike");
+        this.#elapsedMs = (phaseMs % CYCLE_MS + CYCLE_MS) % CYCLE_MS;
+    }
+    #phase() {
+        const t = this.#elapsedMs % CYCLE_MS;
+        if (t < (0, _settingsJs.trapSettings).spikeRetractedMs) return "retracted";
+        if (t < (0, _settingsJs.trapSettings).spikeRetractedMs + (0, _settingsJs.trapSettings).spikeWarningMs) return "warning";
+        return "extended";
+    }
+    isExtended() {
+        return this.#phase() === "extended";
+    }
+    // Inset so grazing a tile corner does not count as standing on the spikes
+    getDamageBox() {
+        return {
+            x: this._position.x + 12,
+            y: this._position.y + 12,
+            width: this._width - 24,
+            height: this._height - 24
+        };
+    }
+    canHurtGuard(guard) {
+        return !this.#hurtGuards.has(guard);
+    }
+    markGuardHurt(guard) {
+        this.#hurtGuards.add(guard);
+    }
+    update(deltaMs = 1000 / 60) {
+        this.#elapsedMs += deltaMs;
+        const extended = this.isExtended();
+        if (extended && !this.#wasExtended) this.#hurtGuards.clear(); // a fresh cycle began
+        this.#wasExtended = extended;
+    }
+    draw(ctx) {
+        const phase = this.#phase();
+        const { x, y } = this._position;
+        const w = this._width;
+        const h = this._height;
+        ctx.save();
+        // Base plate with four slots the spikes rise from
+        ctx.fillStyle = "rgba(20, 22, 28, 0.55)";
+        const slotW = w * 0.12;
+        for(let i = 0; i < 4; i += 1)ctx.fillRect(x + w * (0.18 + i * 0.2), y + h * 0.3, slotW, h * 0.4);
+        if (phase === "warning") {
+            const t = this.#elapsedMs % CYCLE_MS - (0, _settingsJs.trapSettings).spikeRetractedMs;
+            const grow = Math.min(1, t / (0, _settingsJs.trapSettings).spikeWarningMs);
+            this.#drawSpikes(ctx, x, y, w, h, 0.2 + grow * 0.2);
+        } else if (phase === "extended") this.#drawSpikes(ctx, x, y, w, h, 0.7);
+        ctx.restore();
+    }
+    #drawSpikes(ctx, x, y, w, h, heightFrac) {
+        const spikeW = w * 0.16;
+        const spikeH = h * heightFrac;
+        const baseY = y + h * 0.72;
+        for(let i = 0; i < 4; i += 1){
+            const cx = x + w * (0.2 + i * 0.2);
+            ctx.fillStyle = "#b0bec5";
+            ctx.beginPath();
+            ctx.moveTo(cx - spikeW / 2, baseY);
+            ctx.lineTo(cx, baseY - spikeH);
+            ctx.lineTo(cx + spikeW / 2, baseY);
+            ctx.closePath();
+            ctx.fill();
+            // Shaded right face for a little depth
+            ctx.fillStyle = "rgba(120, 144, 156, 0.8)";
+            ctx.beginPath();
+            ctx.moveTo(cx, baseY - spikeH);
+            ctx.lineTo(cx + spikeW / 2, baseY);
+            ctx.lineTo(cx, baseY);
+            ctx.closePath();
+            ctx.fill();
+        }
+    }
+}
+exports.default = SpikeTrap;
+
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"fYT1h":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+var _entityJs = require("./entity.js");
+var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
+var _settingsJs = require("../utils/settings.js");
+// Dart shooter ('^ v < >') — a wall-mounted launcher.
+// - Fires a dart along its facing direction on a cooldown, but only while the
+//   player is within activation range (so idle rooms stay quiet).
+// - The cell itself is a solid wall (added in Game.initializeBoard); this
+//   entity only draws the port and returns a shot descriptor to spawn a dart.
+// - Darts reuse the projectile system with owner "guard": they hit only the
+//   player and are stopped by walls/doors/obstacles, all for free.
+const MUZZLE_FLASH_MS = 120;
+class DartShooter extends (0, _entityJsDefault.default) {
+    #direction;
+    #cooldownMs = 0;
+    #flashMs = 0;
+    constructor(x, y, direction){
+        super(x, y, "dart-shooter");
+        this.#direction = direction;
+    }
+    getCenter() {
+        return {
+            x: this._position.x + this._width / 2,
+            y: this._position.y + this._height / 2
+        };
+    }
+    // Returns a shot descriptor on the frame it fires, else null.
+    update(playerCenter, deltaMs = 1000 / 60) {
+        this.#cooldownMs = Math.max(0, this.#cooldownMs - deltaMs);
+        this.#flashMs = Math.max(0, this.#flashMs - deltaMs);
+        if (!playerCenter || this.#cooldownMs > 0) return null;
+        const center = this.getCenter();
+        const distance = Math.hypot(playerCenter.x - center.x, playerCenter.y - center.y);
+        if (distance > (0, _settingsJs.trapSettings).dartActivationRangeCells * (0, _settingsJs.canvasSettings).cellWidth) return null;
+        this.#cooldownMs = (0, _settingsJs.trapSettings).dartCooldownMs;
+        this.#flashMs = MUZZLE_FLASH_MS;
+        // Spawn fully outside our own wall hitbox, else the dart would collide with
+        // this very wall on its first frame and be destroyed immediately. The
+        // projectile's hitbox is 24x12 and never rotates, so clear the widest half
+        // (12px) plus the half-cell wall (32px) with margin to spare.
+        const offset = (0, _settingsJs.canvasSettings).cellWidth * 0.8;
+        return {
+            x: center.x + this.#direction.x * offset,
+            y: center.y + this.#direction.y * offset,
+            direction: {
+                ...this.#direction
+            },
+            damage: (0, _settingsJs.trapSettings).dartDamage,
+            speed: (0, _settingsJs.trapSettings).dartSpeed,
+            rangeCells: (0, _settingsJs.trapSettings).dartRangeCells
+        };
+    }
+    draw(ctx) {
+        const center = this.getCenter();
+        ctx.save();
+        // Dark port set into the wall tile
+        ctx.fillStyle = "#1c1c1c";
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(90, 90, 100, 0.9)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // A notch pointing the way it fires
+        ctx.strokeStyle = "#3a3a3a";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(center.x, center.y);
+        ctx.lineTo(center.x + this.#direction.x * 12, center.y + this.#direction.y * 12);
+        ctx.stroke();
+        // Brief muzzle flash just after firing
+        if (this.#flashMs > 0) {
+            const alpha = this.#flashMs / MUZZLE_FLASH_MS;
+            ctx.fillStyle = `rgba(255, 200, 90, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(center.x + this.#direction.x * 14, center.y + this.#direction.y * 14, 6, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+exports.default = DartShooter;
+
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"iLycP":[function(require,module,exports) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+var _entityJs = require("./entity.js");
+var _entityJsDefault = parcelHelpers.interopDefault(_entityJs);
+var _settingsJs = require("../utils/settings.js");
+// Crumbling floor ('F') — cracks when the player steps on it, then collapses
+// into an impassable pit.
+// - Only the player triggers it (guards path around a finished pit).
+// - The blocking rule lives in Game.canPlayerMoveTo and is "enter-only", so a
+//   player standing over the tile at the moment it collapses can always step
+//   off it — never sealed in.
+// - Drawn procedurally, no sprite needed.
+class CrumblingFloor extends (0, _entityJsDefault.default) {
+    #state = "intact";
+    #crackMs = (0, _settingsJs.trapSettings).crumbleDelayMs;
+    constructor(x, y){
+        super(x, y, "crumbling-floor");
+    }
+    isCollapsed() {
+        return this.#state === "collapsed";
+    }
+    // Trigger on the player's centre, not mere overlap, so brushing an edge tile
+    // while running past does not start the collapse.
+    #playerOnTile(playerHitBox) {
+        const cx = playerHitBox.x + playerHitBox.width / 2;
+        const cy = playerHitBox.y + playerHitBox.height / 2;
+        return cx >= this._position.x && cx < this._position.x + this._width && cy >= this._position.y && cy < this._position.y + this._height;
+    }
+    // Returns true on the exact frame it collapses, so the game can deal collapse
+    // damage if the player is still standing on the tile.
+    update(playerHitBox, deltaMs = 1000 / 60) {
+        switch(this.#state){
+            case "intact":
+                if (playerHitBox && this.#playerOnTile(playerHitBox)) this.#state = "cracking";
+                break;
+            case "cracking":
+                this.#crackMs -= deltaMs;
+                if (this.#crackMs <= 0) {
+                    this.#state = "collapsed";
+                    return true;
+                }
+                break;
+        }
+        return false;
+    }
+    draw(ctx) {
+        const { x, y } = this._position;
+        const w = this._width;
+        const h = this._height;
+        ctx.save();
+        if (this.#state === "collapsed") {
+            const cx = x + w / 2;
+            const cy = y + h / 2;
+            const gradient = ctx.createRadialGradient(cx, cy, 4, cx, cy, w / 2);
+            gradient.addColorStop(0, "#05050a");
+            gradient.addColorStop(1, "#161622");
+            ctx.fillStyle = gradient;
+            ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
+            ctx.strokeStyle = "rgba(90, 90, 110, 0.6)";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x + 3, y + 3, w - 6, h - 6);
+            ctx.restore();
+            return;
+        }
+        // Shake while cracking
+        if (this.#state === "cracking") {
+            const flip = Math.floor(this.#crackMs / 50) % 2 === 0 ? 1 : -1;
+            ctx.translate(2 * flip, -2 * flip);
+        }
+        const dense = this.#state === "cracking";
+        ctx.strokeStyle = dense ? "rgba(20, 18, 24, 0.85)" : "rgba(40, 38, 46, 0.5)";
+        ctx.lineWidth = dense ? 2 : 1;
+        const cx = x + w / 2;
+        const cy = y + h / 2;
+        const arms = dense ? 7 : 4;
+        for(let i = 0; i < arms; i += 1){
+            const angle = i / arms * Math.PI * 2 + i % 2 * 0.4;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + Math.cos(angle) * w * 0.45, cy + Math.sin(angle) * h * 0.45);
+            ctx.stroke();
+        }
+        if (dense) {
+            ctx.fillStyle = "rgba(120, 110, 100, 0.4)";
+            for(let i = 0; i < 5; i += 1)ctx.fillRect(x + i * 37 % w, y + i * 53 % h, 2, 2);
+        }
+        ctx.restore();
+    }
+}
+exports.default = CrumblingFloor;
+
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"bFjVQ":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -4718,7 +5491,7 @@ class Guard extends (0, _entityJsDefault.default) {
         this.animator.setDirection(this.movement);
         this.action = "idle";
         this.damage = boss ? (0, _settingsJs.bossSettings).damage : this.#ranged ? (0, _settingsJs.combatSettings).archerDamage : 10;
-        this.#maxHealth = boss ? (0, _settingsJs.bossSettings).health : Math.round((this.#ranged ? (0, _settingsJs.combatSettings).archerHealth : 100) * healthScale);
+        this.#maxHealth = boss ? Math.round((0, _settingsJs.bossSettings).health * healthScale) : Math.round((this.#ranged ? (0, _settingsJs.combatSettings).archerHealth : 100) * healthScale);
         this.#health = this.#maxHealth;
         this.#speed = boss ? (0, _settingsJs.bossSettings).speed : this.#ranged ? 70 : 60; // pixels per second
         this.#detectionRange = (boss ? (0, _settingsJs.bossSettings).detectionRangeCells : this.#ranged ? (0, _settingsJs.combatSettings).archerRangeCells : 5) * (0, _settingsJs.canvasSettings).cellWidth;
@@ -5083,7 +5856,7 @@ class Guard extends (0, _entityJsDefault.default) {
 }
 exports.default = Guard;
 
-},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","../utils/game.js":"jBBaN","../utils/rng.js":"7uRsi","./animator.js":"hma7Y","../assets/sprite-manifest.js":"kdgDE","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"14cf6":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","../utils/game.js":"jBBaN","../utils/rng.js":"7uRsi","./animator.js":"hma7Y","../assets/sprite-manifest.js":"kdgDE","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"14cf6":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -5132,7 +5905,7 @@ class Obstacle extends (0, _entityJsDefault.default) {
 }
 exports.default = Obstacle;
 
-},{"./entity.js":"4kBdl","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"7DUBa":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"7DUBa":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "powerupDescriptions", ()=>powerupDescriptions);
@@ -5195,7 +5968,7 @@ class Powerup extends (0, _entityJsDefault.default) {
 }
 exports.default = Powerup;
 
-},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"lIWLe":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"lIWLe":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -5251,7 +6024,7 @@ class Exit extends (0, _entityJsDefault.default) {
 }
 exports.default = Exit;
 
-},{"./entity.js":"4kBdl","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"3BhaU":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/rng.js":"7uRsi","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"3BhaU":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -5283,7 +6056,7 @@ class Drop extends (0, _entityJsDefault.default) {
 }
 exports.default = Drop;
 
-},{"./entity.js":"4kBdl","../items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"8XUaB":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"8XUaB":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -5330,7 +6103,7 @@ class Door extends (0, _entityJsDefault.default) {
 }
 exports.default = Door;
 
-},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"g7qsG":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"g7qsG":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 var _entityJs = require("./entity.js");
@@ -5343,7 +6116,7 @@ class Projectile extends (0, _entityJsDefault.default) {
     #damage;
     #owner;
     #done = false;
-    constructor(x, y, direction, assets, { owner, damage, speed = (0, _settingsJs.combatSettings).projectileSpeed } = {}){
+    constructor(x, y, direction, assets, { owner, damage, speed = (0, _settingsJs.combatSettings).projectileSpeed, rangeCells = (0, _settingsJs.combatSettings).projectileRangeCells } = {}){
         super(x, y, "arrow", assets, 24, 12);
         const length = Math.hypot(direction.x, direction.y) || 1;
         this.#direction = {
@@ -5353,7 +6126,7 @@ class Projectile extends (0, _entityJsDefault.default) {
         this.#owner = owner;
         this.#damage = damage;
         this.speed = speed;
-        this.#maxDistance = (0, _settingsJs.combatSettings).projectileRangeCells * (0, _settingsJs.canvasSettings).cellWidth;
+        this.#maxDistance = rangeCells * (0, _settingsJs.canvasSettings).cellWidth;
     }
     selectSprites(assets) {
         return {
@@ -5394,7 +6167,7 @@ class Projectile extends (0, _entityJsDefault.default) {
 }
 exports.default = Projectile;
 
-},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"d5R3E":[function(require,module,exports) {
+},{"./entity.js":"4kBdl","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"d5R3E":[function(require,module,exports) {
 // Per-level visual theme registry.
 // Theme entries point at keys in the loaded level-assets object.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
@@ -5474,7 +6247,7 @@ function resolveThemeAssets(levelAssets, themeId = DEFAULT_THEME) {
     };
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"5sboX":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"5sboX":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "getWeaponUnlockCopy", ()=>getWeaponUnlockCopy);
@@ -5497,7 +6270,7 @@ function getWeaponUnlockCopy(itemId) {
     };
 }
 
-},{"../items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2MtDO":[function(require,module,exports) {
+},{"../items.js":"8gP9P","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"2MtDO":[function(require,module,exports) {
 // handle the assets
 // Load player sprite sheets
 // Load enemy sprite sheets
@@ -5505,12 +6278,6 @@ function getWeaponUnlockCopy(itemId) {
 // Load explosive sprite sheets
 // Load guard sprite sheets
 // Load obstacle images
-// NOTE: asset URLs must be written inline as `new URL('literal', import.meta.url)`.
-// Parcel only bundles the referenced file when the first argument is a string
-// literal at the call site. Wrapping it in a helper (variable argument) defeats
-// static analysis, leaving an unbundled `file://` path that the browser blocks.
-// Storing the resulting URL objects in the maps below is fine: the literal is
-// still at the `new URL(...)` call site.
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Total number of images the splash screen progress bar should expect.
@@ -5527,6 +6294,13 @@ parcelHelpers.export(exports, "loadPowerUpsAssets", ()=>loadPowerUpsAssets);
 parcelHelpers.export(exports, "loadProjectileAssets", ()=>loadProjectileAssets);
 parcelHelpers.export(exports, "loadStoryAssetsInBackground", ()=>loadStoryAssetsInBackground);
 parcelHelpers.export(exports, "getStoryAssets", ()=>getStoryAssets);
+var _imageFormatJs = require("./utils/image-format.js");
+// NOTE: asset URLs must be written inline as `new URL('literal', import.meta.url)`.
+// Parcel only bundles the referenced file when the first argument is a string
+// literal at the call site. Wrapping it in a helper (variable argument) defeats
+// static analysis, leaving an unbundled `file://` path that the browser blocks.
+// Storing the resulting URL objects in the maps below is fine: the literal is
+// still at the `new URL(...)` call site.
 const PLAYER_ASSET_URLS = {
     playerMovement: new URL(require("93fa132a23469ad3")),
     playerActions: new URL(require("24d061bc9070758b")),
@@ -5632,13 +6406,31 @@ const POWERUP_ASSET_URLS = {
     blueCrystal: new URL(require("426b380674b42f96")),
     yellowCrystal: new URL(require("9ae2d2d58e4ae0ee"))
 };
-const STORY_ASSET_URLS = {
-    introBedroom: new URL(require("1f377051fc3892e5")),
-    introDoorway: new URL(require("53b51ee34dc2d754")),
-    introOrcs: new URL(require("f1ccbf89b198689f")),
-    introThrone: new URL(require("50fdaf1136bf476b")),
-    introStepForward: new URL(require("fa3619661867ba9b")),
-    endingDawn: new URL(require("c8b406679ab87f82"))
+const STORY_ASSET_SOURCES = {
+    introBedroom: {
+        webp: new URL(require("cbbe4c19b137833b")),
+        png: new URL(require("1f377051fc3892e5"))
+    },
+    introDoorway: {
+        webp: new URL(require("259ccb8e95c4200d")),
+        png: new URL(require("53b51ee34dc2d754"))
+    },
+    introOrcs: {
+        webp: new URL(require("fc3aaee7b62bde16")),
+        png: new URL(require("f1ccbf89b198689f"))
+    },
+    introThrone: {
+        webp: new URL(require("e387b1ef62107e1d")),
+        png: new URL(require("50fdaf1136bf476b"))
+    },
+    introStepForward: {
+        webp: new URL(require("ed5d05f0b8b410b1")),
+        png: new URL(require("fa3619661867ba9b"))
+    },
+    endingDawn: {
+        webp: new URL(require("d112da9a87c1d58b")),
+        png: new URL(require("c8b406679ab87f82"))
+    }
 };
 const PROJECTILE_ASSET_URLS = {
     arrow: new URL(require("5977c7c4bb6708ee"))
@@ -5706,17 +6498,33 @@ async function loadProjectileAssets(onProgress) {
     console.log("Loading projectile assets...");
     return loadImages(PROJECTILE_ASSET_URLS, onProgress);
 }
-// Story cinematics are by far the heaviest assets (~15 MB) but are only
-// shown on the story and game-won screens, so they load lazily in the
-// background instead of blocking the splash screen. The returned map is
-// shared and fills in progressively; screens fall back to a gradient for
-// any image that hasn't arrived yet.
+// Story cinematics load lazily in the background after the game is playable.
+// WebP is preferred in supporting browsers; PNG fallbacks keep older clients
+// working without downloading both formats.
 const storyAssets = {};
 let storyAssetsPromise = null;
+async function loadStoryImage(name, sources, preferWebp, onProgress) {
+    const primary = preferWebp ? sources.webp : sources.png;
+    const fallback = preferWebp ? sources.png : null;
+    try {
+        return await loadImage(primary.href, onProgress);
+    } catch (primaryError) {
+        if (!fallback) throw primaryError;
+        console.warn(`Falling back to PNG for story asset "${name}"`);
+        return loadImage(fallback.href, onProgress);
+    }
+}
+async function loadStoryImages(sourceMap, onProgress, target = {}) {
+    const preferWebp = await (0, _imageFormatJs.supportsWebP)();
+    await Promise.all(Object.entries(sourceMap).map(async ([name, sources])=>{
+        target[name] = await loadStoryImage(name, sources, preferWebp, onProgress);
+    }));
+    return target;
+}
 function loadStoryAssetsInBackground() {
     if (!storyAssetsPromise) {
         console.log("Loading story assets in the background...");
-        storyAssetsPromise = loadImages(STORY_ASSET_URLS, null, storyAssets).catch((error)=>{
+        storyAssetsPromise = loadStoryImages(STORY_ASSET_SOURCES, null, storyAssets).catch((error)=>{
             // Non-fatal: screens render a gradient fallback without these images.
             console.error("Error loading story assets:", error);
             return storyAssets;
@@ -5728,10 +6536,27 @@ function getStoryAssets() {
     return storyAssets;
 }
 
-},{"93fa132a23469ad3":"b9nou","24d061bc9070758b":"kYVSU","3832bd2522ea840f":"Ce1lZ","da839ad1c17fe6f0":"fncWE","898fb160ea64be84":"4ZLXL","e0bc205cb3c5c0bf":"2LeDo","9fcd0329138ebc13":"aZY6N","fff618a47255eb1a":"4gAdv","9f26a3e4a159b554":"2cwK4","2222dfe21f9016a6":"knb3E","37fab219c2e3438d":"eGy9D","297e02e827843629":"54hki","6c2f82508ca9a3bb":"d6fML","37feb728f1d13a47":"6hcNA","47ee9c0f63ff8828":"cquXn","4b946ae5fc174647":"4rHea","301431c8769f658":"8MUvf","f462afe302c8f41b":"lTjNI","cd1068d2a2c15560":"jY0H7","37ea3b9efefea7e6":"aWofU","f524f9f30597b7c3":"afDNE","4af006d8495d5804":"he3z7","52bec872ae20d5b1":"3pTtO","4bfabeb171e83a78":"9fl4N","a88858287bda9b00":"dNbts","8aa376bb259420aa":"i9DT0","f060f8a5fdaac71f":"fG8bj","1926d3b5d1463658":"5MSBS","798831562a8c99b4":"fzXLE","d7a60630e255c457":"bMo3R","90e65dbd57ec3767":"NHO4l","b03deaaf9e9826a2":"9GntM","a1d2262c6b94caa1":"iR9wY","10c432a4f44dfea1":"3Sp0K","659e0d16ab1d5659":"5xasI","ec60246b8166a591":"ffckV","e8adfee72ce6ea0e":"9ZZyQ","94ad01c9957574a8":"2t70W","1d5dcd0f193cb1ce":"26Zo6","e544f926ea4eae58":"iF5hM","c7cde1bd730e6a2":"cXfG8","1090cc123f927509":"3Ukfr","3f5ed577d5909e0d":"iXpK1","58ff784648728cf8":"cwnaC","6d9a56da4d55f52c":"jXnPG","cf0bb9cdce36df0b":"bG74D","af258d76c374145f":"74YJz","80e7c00fdd98ae89":"lQQEY","a7b3d39a650d1b88":"jkJ9x","4b942e3d0fe21af6":"d9SAV","a2dc87d21fe801f":"etmZ3","fb766fed36809546":"4asaW","bf43b78db4cdb63f":"7HsG7","d5a9fbbce5525c52":"iXTG0","7ed8f93c79bf2794":"7iEqo","27b96fa82ff320fc":"ajtWG","ef04bc5083c079cc":"7mv1Z","6878513b9faf2986":"8K5FP","bc79d6f290e43a80":"iGkio","3cb4e84e63f16db9":"lDsOK","b7e208cdba694b64":"djXHd","79f3a39fe9166a77":"kktpJ","74aef0ff01d35eed":"iw4jJ","bcb8f883f78c181d":"eX1hi","cc85696959d39ebe":"b6nPp","8a9de24e04381f43":"fsLCy","fa5a6a619bb370b5":"4K8XV","bc748784e8c30387":"cs4tf","4c85499cec1fe247":"6xGJQ","30dc4b9275317af2":"7tpoG","9473da643103b312":"7coCV","ddf8915e74bf87b9":"byxh4","2ee19a9caa29b665":"enjv0","5cab7d9201f88a17":"5AKUg","a5ba75c51d5504f7":"04CyO","d14d64b10e5d3b17":"iTkbG","900784a7c2730965":"kr7ve","3d27847b46809984":"kAqHG","5977c7c4bb6708ee":"lfTOF","96b8bd0c21cec6c8":"bZCaF","1151ba85fd7a4a86":"imXnd","d570f7b0415d629f":"jPYxu","865739fa4646a4a3":"5X7zw","fb58bc3bec541d12":"gFt5D","b4b968b0b026b42e":"lkXLI","8c995fa55a1ef06d":"1ToI4","2a8d51d362a28a5a":"9J8Br","426b380674b42f96":"iwGdJ","9ae2d2d58e4ae0ee":"9uNQt","1f377051fc3892e5":"eTuGn","53b51ee34dc2d754":"hURqq","f1ccbf89b198689f":"13KtF","50fdaf1136bf476b":"afz4T","fa3619661867ba9b":"b5PuT","c8b406679ab87f82":"2r2jP","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"b9nou":[function(require,module,exports) {
-module.exports = require("59afba6ea444a216").getBundleURL("aAnGP") + "Player.89df9642.png" + "?" + Date.now();
+},{"./utils/image-format.js":"8EJEl","93fa132a23469ad3":"k27s0","24d061bc9070758b":"4Lz5B","3832bd2522ea840f":"6DOfB","da839ad1c17fe6f0":"kNibX","898fb160ea64be84":"5beC3","e0bc205cb3c5c0bf":"lPyQ1","9fcd0329138ebc13":"1Mtq2","fff618a47255eb1a":"EW53u","9f26a3e4a159b554":"eq8mR","2222dfe21f9016a6":"5ei1j","37fab219c2e3438d":"Afzz4","297e02e827843629":"aFsQZ","6c2f82508ca9a3bb":"bS8Up","37feb728f1d13a47":"jMr7x","47ee9c0f63ff8828":"eTXHS","4b946ae5fc174647":"jrzCs","301431c8769f658":"aFsVR","f462afe302c8f41b":"9I1B2","cd1068d2a2c15560":"cFTRZ","37ea3b9efefea7e6":"4l7kk","f524f9f30597b7c3":"dmQTt","4af006d8495d5804":"egIvb","52bec872ae20d5b1":"47Is2","4bfabeb171e83a78":"4SEY6","a88858287bda9b00":"bpHVz","8aa376bb259420aa":"1btrF","f060f8a5fdaac71f":"ipnYa","1926d3b5d1463658":"i8p49","798831562a8c99b4":"iVxtY","d7a60630e255c457":"NKTIS","90e65dbd57ec3767":"egwf3","b03deaaf9e9826a2":"f6yhb","a1d2262c6b94caa1":"86l94","10c432a4f44dfea1":"c0oxU","659e0d16ab1d5659":"rJrVu","ec60246b8166a591":"1au0u","e8adfee72ce6ea0e":"sUNOH","94ad01c9957574a8":"l5cjr","1d5dcd0f193cb1ce":"8XXL2","e544f926ea4eae58":"V4Ytn","c7cde1bd730e6a2":"fwVPK","1090cc123f927509":"hhrQO","3f5ed577d5909e0d":"hewes","58ff784648728cf8":"fZQIz","6d9a56da4d55f52c":"dKrqi","cf0bb9cdce36df0b":"7WoGP","af258d76c374145f":"gTa8T","80e7c00fdd98ae89":"1kziE","a7b3d39a650d1b88":"ipFZe","4b942e3d0fe21af6":"qoRXB","a2dc87d21fe801f":"bCHJV","fb766fed36809546":"9edng","bf43b78db4cdb63f":"j48H7","d5a9fbbce5525c52":"4rqo4","7ed8f93c79bf2794":"d4j5r","27b96fa82ff320fc":"2X45t","ef04bc5083c079cc":"f4koE","6878513b9faf2986":"3GGze","bc79d6f290e43a80":"jnZ8W","3cb4e84e63f16db9":"7BFNh","b7e208cdba694b64":"lCK3o","79f3a39fe9166a77":"UhaCH","74aef0ff01d35eed":"dID7Z","bcb8f883f78c181d":"2cFYF","cc85696959d39ebe":"d4c6I","8a9de24e04381f43":"jw3PH","fa5a6a619bb370b5":"02ess","bc748784e8c30387":"k7txN","4c85499cec1fe247":"4T0lI","30dc4b9275317af2":"cqOLK","9473da643103b312":"bZJB7","ddf8915e74bf87b9":"7b9FH","2ee19a9caa29b665":"krTZV","5cab7d9201f88a17":"22bOl","a5ba75c51d5504f7":"cwuJI","d14d64b10e5d3b17":"8i5Ae","900784a7c2730965":"nxcCV","3d27847b46809984":"25sZE","5977c7c4bb6708ee":"5enHm","96b8bd0c21cec6c8":"iaHBU","1151ba85fd7a4a86":"lWNpo","d570f7b0415d629f":"bH6HX","865739fa4646a4a3":"8igml","fb58bc3bec541d12":"2HfWS","b4b968b0b026b42e":"jGrog","8c995fa55a1ef06d":"7G8A3","2a8d51d362a28a5a":"htQ4S","426b380674b42f96":"czrRX","9ae2d2d58e4ae0ee":"bReyy","cbbe4c19b137833b":"94eZo","1f377051fc3892e5":"cLP9Q","259ccb8e95c4200d":"d9NWG","53b51ee34dc2d754":"MQm95","fc3aaee7b62bde16":"8ObHO","f1ccbf89b198689f":"fKc91","e387b1ef62107e1d":"afHkN","50fdaf1136bf476b":"abuVQ","ed5d05f0b8b410b1":"l1FcK","fa3619661867ba9b":"3IkVX","d112da9a87c1d58b":"b7xrw","c8b406679ab87f82":"6d8sv","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"8EJEl":[function(require,module,exports) {
+// Detect WebP support once per session so story cinematics can load the
+// smaller format in modern browsers while keeping PNG fallbacks elsewhere.
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "supportsWebP", ()=>supportsWebP);
+let webpSupportPromise = null;
+function supportsWebP() {
+    if (!webpSupportPromise) webpSupportPromise = new Promise((resolve)=>{
+        const image = new Image();
+        image.onload = ()=>resolve(image.width > 0 && image.height > 0);
+        image.onerror = ()=>resolve(false);
+        image.src = "data:image/webp;base64,UklGRjoAAABXRUJQVlA4IC4AAACyAgCdASoCAAIALmk0mk0iIiIiIgBoSygAAEcmAAATgAAA";
+    });
+    return webpSupportPromise;
+}
 
-},{"59afba6ea444a216":"lgJ39"}],"lgJ39":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"k27s0":[function(require,module,exports) {
+module.exports = require("70d07920bee156aa").getBundleURL("aAnGP") + "Player.89df9642.png" + "?" + Date.now();
+
+},{"70d07920bee156aa":"4MYVS"}],"4MYVS":[function(require,module,exports) {
 "use strict";
 var bundleURL = {};
 function getBundleURLCached(id) {
@@ -5766,289 +6591,307 @@ exports.getBundleURL = getBundleURLCached;
 exports.getBaseURL = getBaseURL;
 exports.getOrigin = getOrigin;
 
-},{}],"kYVSU":[function(require,module,exports) {
-module.exports = require("b530c5f1e0795902").getBundleURL("aAnGP") + "Player_Actions.640ec72d.png" + "?" + Date.now();
+},{}],"4Lz5B":[function(require,module,exports) {
+module.exports = require("dc4411544a7ab07").getBundleURL("aAnGP") + "Player_Actions.640ec72d.png" + "?" + Date.now();
 
-},{"b530c5f1e0795902":"lgJ39"}],"Ce1lZ":[function(require,module,exports) {
-module.exports = require("839d16620b71cd0").getBundleURL("aAnGP") + "Player_Bow.eabd8cb9.png" + "?" + Date.now();
+},{"dc4411544a7ab07":"4MYVS"}],"6DOfB":[function(require,module,exports) {
+module.exports = require("6f41554d08b2daa7").getBundleURL("aAnGP") + "Player_Bow.eabd8cb9.png" + "?" + Date.now();
 
-},{"839d16620b71cd0":"lgJ39"}],"fncWE":[function(require,module,exports) {
-module.exports = require("7bebed16121566e2").getBundleURL("aAnGP") + "orc1_attack_full.34377da9.png" + "?" + Date.now();
+},{"6f41554d08b2daa7":"4MYVS"}],"kNibX":[function(require,module,exports) {
+module.exports = require("adc169139ff51af8").getBundleURL("aAnGP") + "orc1_attack_full.34377da9.png" + "?" + Date.now();
 
-},{"7bebed16121566e2":"lgJ39"}],"4ZLXL":[function(require,module,exports) {
-module.exports = require("c14da4a2feb330af").getBundleURL("aAnGP") + "orc1_bow_attack_full.e4f1b15d.png" + "?" + Date.now();
+},{"adc169139ff51af8":"4MYVS"}],"5beC3":[function(require,module,exports) {
+module.exports = require("486856f7b2b5d968").getBundleURL("aAnGP") + "orc1_bow_attack_full.e4f1b15d.png" + "?" + Date.now();
 
-},{"c14da4a2feb330af":"lgJ39"}],"2LeDo":[function(require,module,exports) {
-module.exports = require("84fb28ca811647f").getBundleURL("aAnGP") + "orc1_death_full.416a7e96.png" + "?" + Date.now();
+},{"486856f7b2b5d968":"4MYVS"}],"lPyQ1":[function(require,module,exports) {
+module.exports = require("4fc2e224d7a564e6").getBundleURL("aAnGP") + "orc1_death_full.416a7e96.png" + "?" + Date.now();
 
-},{"84fb28ca811647f":"lgJ39"}],"aZY6N":[function(require,module,exports) {
-module.exports = require("5a1772f193e9e94e").getBundleURL("aAnGP") + "orc1_hurt_full.07b11101.png" + "?" + Date.now();
+},{"4fc2e224d7a564e6":"4MYVS"}],"1Mtq2":[function(require,module,exports) {
+module.exports = require("1fa2806c76dc950d").getBundleURL("aAnGP") + "orc1_hurt_full.07b11101.png" + "?" + Date.now();
 
-},{"5a1772f193e9e94e":"lgJ39"}],"4gAdv":[function(require,module,exports) {
-module.exports = require("8916b60356e9f109").getBundleURL("aAnGP") + "orc1_idle_full.1e8cad53.png" + "?" + Date.now();
+},{"1fa2806c76dc950d":"4MYVS"}],"EW53u":[function(require,module,exports) {
+module.exports = require("5cd15bc7ea463d0f").getBundleURL("aAnGP") + "orc1_idle_full.1e8cad53.png" + "?" + Date.now();
 
-},{"8916b60356e9f109":"lgJ39"}],"2cwK4":[function(require,module,exports) {
-module.exports = require("2a7a5848b1fbd23c").getBundleURL("aAnGP") + "orc1_run_full.3ed1c471.png" + "?" + Date.now();
+},{"5cd15bc7ea463d0f":"4MYVS"}],"eq8mR":[function(require,module,exports) {
+module.exports = require("d179c22b45b55361").getBundleURL("aAnGP") + "orc1_run_full.3ed1c471.png" + "?" + Date.now();
 
-},{"2a7a5848b1fbd23c":"lgJ39"}],"knb3E":[function(require,module,exports) {
-module.exports = require("fc3c84290219b322").getBundleURL("aAnGP") + "orc1_run_attack_front_full.637aaa3d.png" + "?" + Date.now();
+},{"d179c22b45b55361":"4MYVS"}],"5ei1j":[function(require,module,exports) {
+module.exports = require("74775a73dde2c86f").getBundleURL("aAnGP") + "orc1_run_attack_front_full.637aaa3d.png" + "?" + Date.now();
 
-},{"fc3c84290219b322":"lgJ39"}],"eGy9D":[function(require,module,exports) {
-module.exports = require("23fb3b55dc999612").getBundleURL("aAnGP") + "orc1_walk_full.7327abd8.png" + "?" + Date.now();
+},{"74775a73dde2c86f":"4MYVS"}],"Afzz4":[function(require,module,exports) {
+module.exports = require("7f8b9e061f2db0cb").getBundleURL("aAnGP") + "orc1_walk_full.7327abd8.png" + "?" + Date.now();
 
-},{"23fb3b55dc999612":"lgJ39"}],"54hki":[function(require,module,exports) {
-module.exports = require("c37c4d0419d8c36e").getBundleURL("aAnGP") + "orc1_walk_attack_front_full.26d7ffca.png" + "?" + Date.now();
+},{"7f8b9e061f2db0cb":"4MYVS"}],"aFsQZ":[function(require,module,exports) {
+module.exports = require("1e2a5dbb03b80310").getBundleURL("aAnGP") + "orc1_walk_attack_front_full.26d7ffca.png" + "?" + Date.now();
 
-},{"c37c4d0419d8c36e":"lgJ39"}],"d6fML":[function(require,module,exports) {
-module.exports = require("997aed43d61de1c4").getBundleURL("aAnGP") + "orc2_attack_full.5d55d5be.png" + "?" + Date.now();
+},{"1e2a5dbb03b80310":"4MYVS"}],"bS8Up":[function(require,module,exports) {
+module.exports = require("f0fb1023e1304261").getBundleURL("aAnGP") + "orc2_attack_full.5d55d5be.png" + "?" + Date.now();
 
-},{"997aed43d61de1c4":"lgJ39"}],"6hcNA":[function(require,module,exports) {
-module.exports = require("4d8423f68569643f").getBundleURL("aAnGP") + "orc2_bow_attack_full.6598a9d9.png" + "?" + Date.now();
+},{"f0fb1023e1304261":"4MYVS"}],"jMr7x":[function(require,module,exports) {
+module.exports = require("21d5629b762ccf3f").getBundleURL("aAnGP") + "orc2_bow_attack_full.6598a9d9.png" + "?" + Date.now();
 
-},{"4d8423f68569643f":"lgJ39"}],"cquXn":[function(require,module,exports) {
-module.exports = require("f3f94ed1f1dda05").getBundleURL("aAnGP") + "orc2_death_full.71c106fc.png" + "?" + Date.now();
+},{"21d5629b762ccf3f":"4MYVS"}],"eTXHS":[function(require,module,exports) {
+module.exports = require("b83aeaaf22726fdd").getBundleURL("aAnGP") + "orc2_death_full.71c106fc.png" + "?" + Date.now();
 
-},{"f3f94ed1f1dda05":"lgJ39"}],"4rHea":[function(require,module,exports) {
-module.exports = require("63366ed6b54d4861").getBundleURL("aAnGP") + "orc2_hurt_full.6883191c.png" + "?" + Date.now();
+},{"b83aeaaf22726fdd":"4MYVS"}],"jrzCs":[function(require,module,exports) {
+module.exports = require("de31682ca8e19137").getBundleURL("aAnGP") + "orc2_hurt_full.6883191c.png" + "?" + Date.now();
 
-},{"63366ed6b54d4861":"lgJ39"}],"8MUvf":[function(require,module,exports) {
-module.exports = require("41a871a655c7d0e5").getBundleURL("aAnGP") + "orc2_idle_full.10649502.png" + "?" + Date.now();
+},{"de31682ca8e19137":"4MYVS"}],"aFsVR":[function(require,module,exports) {
+module.exports = require("a6b83f65e5c9886c").getBundleURL("aAnGP") + "orc2_idle_full.10649502.png" + "?" + Date.now();
 
-},{"41a871a655c7d0e5":"lgJ39"}],"lTjNI":[function(require,module,exports) {
-module.exports = require("308fd37f428b7bb9").getBundleURL("aAnGP") + "orc2_run_full.d549ca5a.png" + "?" + Date.now();
+},{"a6b83f65e5c9886c":"4MYVS"}],"9I1B2":[function(require,module,exports) {
+module.exports = require("bb16c87cd11d0704").getBundleURL("aAnGP") + "orc2_run_full.d549ca5a.png" + "?" + Date.now();
 
-},{"308fd37f428b7bb9":"lgJ39"}],"jY0H7":[function(require,module,exports) {
-module.exports = require("bbef9922df28b32a").getBundleURL("aAnGP") + "orc2_run_attack_full.adf2fe89.png" + "?" + Date.now();
+},{"bb16c87cd11d0704":"4MYVS"}],"cFTRZ":[function(require,module,exports) {
+module.exports = require("d3172d91f7dda06a").getBundleURL("aAnGP") + "orc2_run_attack_full.adf2fe89.png" + "?" + Date.now();
 
-},{"bbef9922df28b32a":"lgJ39"}],"aWofU":[function(require,module,exports) {
-module.exports = require("f5d6110a9506bb61").getBundleURL("aAnGP") + "orc2_walk_full.5b172897.png" + "?" + Date.now();
+},{"d3172d91f7dda06a":"4MYVS"}],"4l7kk":[function(require,module,exports) {
+module.exports = require("8c3fe2201264fefd").getBundleURL("aAnGP") + "orc2_walk_full.5b172897.png" + "?" + Date.now();
 
-},{"f5d6110a9506bb61":"lgJ39"}],"afDNE":[function(require,module,exports) {
-module.exports = require("ea7aa875f42242d4").getBundleURL("aAnGP") + "orc2_walk_attack_full.32a7b7fd.png" + "?" + Date.now();
+},{"8c3fe2201264fefd":"4MYVS"}],"dmQTt":[function(require,module,exports) {
+module.exports = require("3ddfd4357bd6c2dc").getBundleURL("aAnGP") + "orc2_walk_attack_full.32a7b7fd.png" + "?" + Date.now();
 
-},{"ea7aa875f42242d4":"lgJ39"}],"he3z7":[function(require,module,exports) {
-module.exports = require("e5e14d289bfdabd0").getBundleURL("aAnGP") + "orc3_attack_full.3880e5cd.png" + "?" + Date.now();
+},{"3ddfd4357bd6c2dc":"4MYVS"}],"egIvb":[function(require,module,exports) {
+module.exports = require("1e3f35b004195348").getBundleURL("aAnGP") + "orc3_attack_full.3880e5cd.png" + "?" + Date.now();
 
-},{"e5e14d289bfdabd0":"lgJ39"}],"3pTtO":[function(require,module,exports) {
-module.exports = require("1ddf3b0b65dd8135").getBundleURL("aAnGP") + "orc3_bow_attack_full.90d80b26.png" + "?" + Date.now();
+},{"1e3f35b004195348":"4MYVS"}],"47Is2":[function(require,module,exports) {
+module.exports = require("b06f34deb118b3e3").getBundleURL("aAnGP") + "orc3_bow_attack_full.90d80b26.png" + "?" + Date.now();
 
-},{"1ddf3b0b65dd8135":"lgJ39"}],"9fl4N":[function(require,module,exports) {
-module.exports = require("f3fe2338f0fce651").getBundleURL("aAnGP") + "orc3_death_full.8891ac64.png" + "?" + Date.now();
+},{"b06f34deb118b3e3":"4MYVS"}],"4SEY6":[function(require,module,exports) {
+module.exports = require("ef856a69de3395e7").getBundleURL("aAnGP") + "orc3_death_full.8891ac64.png" + "?" + Date.now();
 
-},{"f3fe2338f0fce651":"lgJ39"}],"dNbts":[function(require,module,exports) {
-module.exports = require("17e5c844da74082").getBundleURL("aAnGP") + "orc3_hurt_full.b0d56607.png" + "?" + Date.now();
+},{"ef856a69de3395e7":"4MYVS"}],"bpHVz":[function(require,module,exports) {
+module.exports = require("dcc997529b1f8128").getBundleURL("aAnGP") + "orc3_hurt_full.b0d56607.png" + "?" + Date.now();
 
-},{"17e5c844da74082":"lgJ39"}],"i9DT0":[function(require,module,exports) {
-module.exports = require("cf8aece6cc75c3ed").getBundleURL("aAnGP") + "orc3_idle_full.a7d1fdf6.png" + "?" + Date.now();
+},{"dcc997529b1f8128":"4MYVS"}],"1btrF":[function(require,module,exports) {
+module.exports = require("215d6b91319fbbdc").getBundleURL("aAnGP") + "orc3_idle_full.a7d1fdf6.png" + "?" + Date.now();
 
-},{"cf8aece6cc75c3ed":"lgJ39"}],"fG8bj":[function(require,module,exports) {
-module.exports = require("b4f1024050032737").getBundleURL("aAnGP") + "orc3_run_full.5d7f6900.png" + "?" + Date.now();
+},{"215d6b91319fbbdc":"4MYVS"}],"ipnYa":[function(require,module,exports) {
+module.exports = require("25453c14b2ee15aa").getBundleURL("aAnGP") + "orc3_run_full.5d7f6900.png" + "?" + Date.now();
 
-},{"b4f1024050032737":"lgJ39"}],"5MSBS":[function(require,module,exports) {
-module.exports = require("cd2d46b823c9fc2b").getBundleURL("aAnGP") + "orc3_run_attack_full.86d6c3fa.png" + "?" + Date.now();
+},{"25453c14b2ee15aa":"4MYVS"}],"i8p49":[function(require,module,exports) {
+module.exports = require("55be29e89112c21").getBundleURL("aAnGP") + "orc3_run_attack_full.86d6c3fa.png" + "?" + Date.now();
 
-},{"cd2d46b823c9fc2b":"lgJ39"}],"fzXLE":[function(require,module,exports) {
-module.exports = require("35425eb199dd73d6").getBundleURL("aAnGP") + "orc3_walk_full.3e4b1c96.png" + "?" + Date.now();
+},{"55be29e89112c21":"4MYVS"}],"iVxtY":[function(require,module,exports) {
+module.exports = require("65a98a63226e88b4").getBundleURL("aAnGP") + "orc3_walk_full.3e4b1c96.png" + "?" + Date.now();
 
-},{"35425eb199dd73d6":"lgJ39"}],"bMo3R":[function(require,module,exports) {
-module.exports = require("4789fa1a7eb3f7ec").getBundleURL("aAnGP") + "orc3_walk_attack_full.46776ad5.png" + "?" + Date.now();
+},{"65a98a63226e88b4":"4MYVS"}],"NKTIS":[function(require,module,exports) {
+module.exports = require("e8e5ec245d25dbbe").getBundleURL("aAnGP") + "orc3_walk_attack_full.46776ad5.png" + "?" + Date.now();
 
-},{"4789fa1a7eb3f7ec":"lgJ39"}],"NHO4l":[function(require,module,exports) {
-module.exports = require("b6365e465366a86b").getBundleURL("aAnGP") + "orc4_attack_full.b8b34079.png" + "?" + Date.now();
+},{"e8e5ec245d25dbbe":"4MYVS"}],"egwf3":[function(require,module,exports) {
+module.exports = require("2ac4e7638e3576f6").getBundleURL("aAnGP") + "orc4_attack_full.b8b34079.png" + "?" + Date.now();
 
-},{"b6365e465366a86b":"lgJ39"}],"9GntM":[function(require,module,exports) {
-module.exports = require("7ad01e84a9092fa").getBundleURL("aAnGP") + "orc4_death_full.2e98996a.png" + "?" + Date.now();
+},{"2ac4e7638e3576f6":"4MYVS"}],"f6yhb":[function(require,module,exports) {
+module.exports = require("645b9b6c33226f31").getBundleURL("aAnGP") + "orc4_death_full.2e98996a.png" + "?" + Date.now();
 
-},{"7ad01e84a9092fa":"lgJ39"}],"iR9wY":[function(require,module,exports) {
-module.exports = require("35837f3dece0ce7b").getBundleURL("aAnGP") + "orc4_hurt_full.c5a61480.png" + "?" + Date.now();
+},{"645b9b6c33226f31":"4MYVS"}],"86l94":[function(require,module,exports) {
+module.exports = require("3aa37801eb0142bc").getBundleURL("aAnGP") + "orc4_hurt_full.c5a61480.png" + "?" + Date.now();
 
-},{"35837f3dece0ce7b":"lgJ39"}],"3Sp0K":[function(require,module,exports) {
-module.exports = require("84de8b99200f26fc").getBundleURL("aAnGP") + "orc4_idle_full.238866e0.png" + "?" + Date.now();
+},{"3aa37801eb0142bc":"4MYVS"}],"c0oxU":[function(require,module,exports) {
+module.exports = require("7a94eb1aef722aa7").getBundleURL("aAnGP") + "orc4_idle_full.238866e0.png" + "?" + Date.now();
 
-},{"84de8b99200f26fc":"lgJ39"}],"5xasI":[function(require,module,exports) {
-module.exports = require("6b5a7e23889e6f9e").getBundleURL("aAnGP") + "orc4_run_full.547a3efe.png" + "?" + Date.now();
+},{"7a94eb1aef722aa7":"4MYVS"}],"rJrVu":[function(require,module,exports) {
+module.exports = require("9503710b39defa84").getBundleURL("aAnGP") + "orc4_run_full.547a3efe.png" + "?" + Date.now();
 
-},{"6b5a7e23889e6f9e":"lgJ39"}],"ffckV":[function(require,module,exports) {
-module.exports = require("8b3edfb47ad9e15d").getBundleURL("aAnGP") + "orc4_run_attack_full.1ad9cf1f.png" + "?" + Date.now();
+},{"9503710b39defa84":"4MYVS"}],"1au0u":[function(require,module,exports) {
+module.exports = require("c9fc899797c5c598").getBundleURL("aAnGP") + "orc4_run_attack_full.1ad9cf1f.png" + "?" + Date.now();
 
-},{"8b3edfb47ad9e15d":"lgJ39"}],"9ZZyQ":[function(require,module,exports) {
-module.exports = require("90367d596c3bc352").getBundleURL("aAnGP") + "orc4_walk_full.3a1dddfb.png" + "?" + Date.now();
+},{"c9fc899797c5c598":"4MYVS"}],"sUNOH":[function(require,module,exports) {
+module.exports = require("b539626695affc7e").getBundleURL("aAnGP") + "orc4_walk_full.3a1dddfb.png" + "?" + Date.now();
 
-},{"90367d596c3bc352":"lgJ39"}],"2t70W":[function(require,module,exports) {
-module.exports = require("36d1b025708e9af6").getBundleURL("aAnGP") + "orc4_walk_attack_full.4b64a2e7.png" + "?" + Date.now();
+},{"b539626695affc7e":"4MYVS"}],"l5cjr":[function(require,module,exports) {
+module.exports = require("fc29cb202fc1e513").getBundleURL("aAnGP") + "orc4_walk_attack_full.4b64a2e7.png" + "?" + Date.now();
 
-},{"36d1b025708e9af6":"lgJ39"}],"26Zo6":[function(require,module,exports) {
-module.exports = require("2675bf9f17f4deff").getBundleURL("aAnGP") + "grass_tile.63710fbe.png" + "?" + Date.now();
+},{"fc29cb202fc1e513":"4MYVS"}],"8XXL2":[function(require,module,exports) {
+module.exports = require("99617954d1422455").getBundleURL("aAnGP") + "grass_tile.63710fbe.png" + "?" + Date.now();
 
-},{"2675bf9f17f4deff":"lgJ39"}],"iF5hM":[function(require,module,exports) {
-module.exports = require("59658cf52c7beaa3").getBundleURL("aAnGP") + "stone_wall.3b737783.png" + "?" + Date.now();
+},{"99617954d1422455":"4MYVS"}],"V4Ytn":[function(require,module,exports) {
+module.exports = require("dbd5348c66cafcfd").getBundleURL("aAnGP") + "stone_wall.3b737783.png" + "?" + Date.now();
 
-},{"59658cf52c7beaa3":"lgJ39"}],"cXfG8":[function(require,module,exports) {
-module.exports = require("6c935de5cb20817").getBundleURL("aAnGP") + "boulder.6af06052.png" + "?" + Date.now();
+},{"dbd5348c66cafcfd":"4MYVS"}],"fwVPK":[function(require,module,exports) {
+module.exports = require("2b3e9bfd5d2d225a").getBundleURL("aAnGP") + "boulder.6af06052.png" + "?" + Date.now();
 
-},{"6c935de5cb20817":"lgJ39"}],"3Ukfr":[function(require,module,exports) {
-module.exports = require("b5aa8aaf9302a118").getBundleURL("aAnGP") + "Rock6_1.7bba883a.png" + "?" + Date.now();
+},{"2b3e9bfd5d2d225a":"4MYVS"}],"hhrQO":[function(require,module,exports) {
+module.exports = require("6be4111e8c19424a").getBundleURL("aAnGP") + "Rock6_1.7bba883a.png" + "?" + Date.now();
 
-},{"b5aa8aaf9302a118":"lgJ39"}],"iXpK1":[function(require,module,exports) {
-module.exports = require("25a52dc75a382c0e").getBundleURL("aAnGP") + "Tree1.e05f2c99.png" + "?" + Date.now();
+},{"6be4111e8c19424a":"4MYVS"}],"hewes":[function(require,module,exports) {
+module.exports = require("da9b3814c2b71563").getBundleURL("aAnGP") + "Tree1.e05f2c99.png" + "?" + Date.now();
 
-},{"25a52dc75a382c0e":"lgJ39"}],"cwnaC":[function(require,module,exports) {
-module.exports = require("4b73380b0412dfef").getBundleURL("aAnGP") + "Tree2.a46fb43d.png" + "?" + Date.now();
+},{"da9b3814c2b71563":"4MYVS"}],"fZQIz":[function(require,module,exports) {
+module.exports = require("379808bb72e1533").getBundleURL("aAnGP") + "Tree2.a46fb43d.png" + "?" + Date.now();
 
-},{"4b73380b0412dfef":"lgJ39"}],"jXnPG":[function(require,module,exports) {
-module.exports = require("83da82ef92c92fbc").getBundleURL("aAnGP") + "Tree3.826af1fd.png" + "?" + Date.now();
+},{"379808bb72e1533":"4MYVS"}],"dKrqi":[function(require,module,exports) {
+module.exports = require("a2a3097812a9b24a").getBundleURL("aAnGP") + "Tree3.826af1fd.png" + "?" + Date.now();
 
-},{"83da82ef92c92fbc":"lgJ39"}],"bG74D":[function(require,module,exports) {
-module.exports = require("8be36100caa17a17").getBundleURL("aAnGP") + "palm_a.1270a151.png" + "?" + Date.now();
+},{"a2a3097812a9b24a":"4MYVS"}],"7WoGP":[function(require,module,exports) {
+module.exports = require("7a307e18c70ec5ec").getBundleURL("aAnGP") + "palm_a.1270a151.png" + "?" + Date.now();
 
-},{"8be36100caa17a17":"lgJ39"}],"74YJz":[function(require,module,exports) {
-module.exports = require("2158a225651f3dc2").getBundleURL("aAnGP") + "palm_b.3ae9328a.png" + "?" + Date.now();
+},{"7a307e18c70ec5ec":"4MYVS"}],"gTa8T":[function(require,module,exports) {
+module.exports = require("ea4e330d4773144b").getBundleURL("aAnGP") + "palm_b.3ae9328a.png" + "?" + Date.now();
 
-},{"2158a225651f3dc2":"lgJ39"}],"lQQEY":[function(require,module,exports) {
-module.exports = require("5a2d54e811bdc200").getBundleURL("aAnGP") + "Sand_ruins3.1f0a3c59.png" + "?" + Date.now();
+},{"ea4e330d4773144b":"4MYVS"}],"1kziE":[function(require,module,exports) {
+module.exports = require("c334bcdd68d7ab0d").getBundleURL("aAnGP") + "Sand_ruins3.1f0a3c59.png" + "?" + Date.now();
 
-},{"5a2d54e811bdc200":"lgJ39"}],"jkJ9x":[function(require,module,exports) {
-module.exports = require("d7584db4a4d9b947").getBundleURL("aAnGP") + "Snow_ruins3.0b4f0802.png" + "?" + Date.now();
+},{"c334bcdd68d7ab0d":"4MYVS"}],"ipFZe":[function(require,module,exports) {
+module.exports = require("46511305a8e2582b").getBundleURL("aAnGP") + "Snow_ruins3.0b4f0802.png" + "?" + Date.now();
 
-},{"d7584db4a4d9b947":"lgJ39"}],"d9SAV":[function(require,module,exports) {
-module.exports = require("f6fe50e58e8fedab").getBundleURL("aAnGP") + "exit_ruin.0d420dd3.png" + "?" + Date.now();
+},{"46511305a8e2582b":"4MYVS"}],"qoRXB":[function(require,module,exports) {
+module.exports = require("406653224a8dad8f").getBundleURL("aAnGP") + "exit_ruin.0d420dd3.png" + "?" + Date.now();
 
-},{"f6fe50e58e8fedab":"lgJ39"}],"etmZ3":[function(require,module,exports) {
-module.exports = require("639b269ef5b9f2a6").getBundleURL("aAnGP") + "floor.a437ade2.png" + "?" + Date.now();
+},{"406653224a8dad8f":"4MYVS"}],"bCHJV":[function(require,module,exports) {
+module.exports = require("52c70433038833d5").getBundleURL("aAnGP") + "floor.a437ade2.png" + "?" + Date.now();
 
-},{"639b269ef5b9f2a6":"lgJ39"}],"4asaW":[function(require,module,exports) {
-module.exports = require("6ea9afae9b79280a").getBundleURL("aAnGP") + "wall.8c8b4932.png" + "?" + Date.now();
+},{"52c70433038833d5":"4MYVS"}],"9edng":[function(require,module,exports) {
+module.exports = require("9575be8f97d9fa95").getBundleURL("aAnGP") + "wall.8c8b4932.png" + "?" + Date.now();
 
-},{"6ea9afae9b79280a":"lgJ39"}],"7HsG7":[function(require,module,exports) {
-module.exports = require("2ba762bb49d3d69c").getBundleURL("aAnGP") + "tree_1.976973aa.png" + "?" + Date.now();
+},{"9575be8f97d9fa95":"4MYVS"}],"j48H7":[function(require,module,exports) {
+module.exports = require("145474ab4624fbe9").getBundleURL("aAnGP") + "tree_1.976973aa.png" + "?" + Date.now();
 
-},{"2ba762bb49d3d69c":"lgJ39"}],"iXTG0":[function(require,module,exports) {
-module.exports = require("d7721b4f77aa6f18").getBundleURL("aAnGP") + "tree_2.5c0e112d.png" + "?" + Date.now();
+},{"145474ab4624fbe9":"4MYVS"}],"4rqo4":[function(require,module,exports) {
+module.exports = require("1922685c4017c639").getBundleURL("aAnGP") + "tree_2.5c0e112d.png" + "?" + Date.now();
 
-},{"d7721b4f77aa6f18":"lgJ39"}],"7iEqo":[function(require,module,exports) {
-module.exports = require("f8a309e496047679").getBundleURL("aAnGP") + "boulder.016017bd.png" + "?" + Date.now();
+},{"1922685c4017c639":"4MYVS"}],"d4j5r":[function(require,module,exports) {
+module.exports = require("93139625c2fd7a").getBundleURL("aAnGP") + "boulder.016017bd.png" + "?" + Date.now();
 
-},{"f8a309e496047679":"lgJ39"}],"ajtWG":[function(require,module,exports) {
-module.exports = require("4fca6330cc7ab136").getBundleURL("aAnGP") + "exit.43e9fb8f.png" + "?" + Date.now();
+},{"93139625c2fd7a":"4MYVS"}],"2X45t":[function(require,module,exports) {
+module.exports = require("aba3d4bfaf4f1393").getBundleURL("aAnGP") + "exit.43e9fb8f.png" + "?" + Date.now();
 
-},{"4fca6330cc7ab136":"lgJ39"}],"7mv1Z":[function(require,module,exports) {
-module.exports = require("54635e7b2ca4709c").getBundleURL("aAnGP") + "floor.0bbfb544.png" + "?" + Date.now();
+},{"aba3d4bfaf4f1393":"4MYVS"}],"f4koE":[function(require,module,exports) {
+module.exports = require("66fae72689ee9592").getBundleURL("aAnGP") + "floor.0bbfb544.png" + "?" + Date.now();
 
-},{"54635e7b2ca4709c":"lgJ39"}],"8K5FP":[function(require,module,exports) {
-module.exports = require("818c8e26a0fa5fae").getBundleURL("aAnGP") + "wall.5d494604.png" + "?" + Date.now();
+},{"66fae72689ee9592":"4MYVS"}],"3GGze":[function(require,module,exports) {
+module.exports = require("4d8478a7191279b1").getBundleURL("aAnGP") + "wall.5d494604.png" + "?" + Date.now();
 
-},{"818c8e26a0fa5fae":"lgJ39"}],"iGkio":[function(require,module,exports) {
-module.exports = require("3c7ece1fedb824df").getBundleURL("aAnGP") + "tree_1.2b56d562.png" + "?" + Date.now();
+},{"4d8478a7191279b1":"4MYVS"}],"jnZ8W":[function(require,module,exports) {
+module.exports = require("fc7021093403f3e3").getBundleURL("aAnGP") + "tree_1.2b56d562.png" + "?" + Date.now();
 
-},{"3c7ece1fedb824df":"lgJ39"}],"lDsOK":[function(require,module,exports) {
-module.exports = require("ea7c360192673a66").getBundleURL("aAnGP") + "tree_2.9f85f3ac.png" + "?" + Date.now();
+},{"fc7021093403f3e3":"4MYVS"}],"7BFNh":[function(require,module,exports) {
+module.exports = require("75adf03e9e9dd97").getBundleURL("aAnGP") + "tree_2.9f85f3ac.png" + "?" + Date.now();
 
-},{"ea7c360192673a66":"lgJ39"}],"djXHd":[function(require,module,exports) {
-module.exports = require("5941717143b58257").getBundleURL("aAnGP") + "boulder.bc7f1f8f.png" + "?" + Date.now();
+},{"75adf03e9e9dd97":"4MYVS"}],"lCK3o":[function(require,module,exports) {
+module.exports = require("689c0fa8f581916a").getBundleURL("aAnGP") + "boulder.bc7f1f8f.png" + "?" + Date.now();
 
-},{"5941717143b58257":"lgJ39"}],"kktpJ":[function(require,module,exports) {
-module.exports = require("4f95cb931fd497f5").getBundleURL("aAnGP") + "exit.6fa79a1d.png" + "?" + Date.now();
+},{"689c0fa8f581916a":"4MYVS"}],"UhaCH":[function(require,module,exports) {
+module.exports = require("c629b93914ba34f1").getBundleURL("aAnGP") + "exit.6fa79a1d.png" + "?" + Date.now();
 
-},{"4f95cb931fd497f5":"lgJ39"}],"iw4jJ":[function(require,module,exports) {
-module.exports = require("a35e1ea0c3f52980").getBundleURL("aAnGP") + "floor.f95b6eb2.png" + "?" + Date.now();
+},{"c629b93914ba34f1":"4MYVS"}],"dID7Z":[function(require,module,exports) {
+module.exports = require("372ee0c3700ca54f").getBundleURL("aAnGP") + "floor.f95b6eb2.png" + "?" + Date.now();
 
-},{"a35e1ea0c3f52980":"lgJ39"}],"eX1hi":[function(require,module,exports) {
-module.exports = require("e612b16897774314").getBundleURL("aAnGP") + "wall.09499add.png" + "?" + Date.now();
+},{"372ee0c3700ca54f":"4MYVS"}],"2cFYF":[function(require,module,exports) {
+module.exports = require("41d461355806b21").getBundleURL("aAnGP") + "wall.09499add.png" + "?" + Date.now();
 
-},{"e612b16897774314":"lgJ39"}],"b6nPp":[function(require,module,exports) {
-module.exports = require("93e722e26d2ff862").getBundleURL("aAnGP") + "tree_1.3b30e16c.png" + "?" + Date.now();
+},{"41d461355806b21":"4MYVS"}],"d4c6I":[function(require,module,exports) {
+module.exports = require("6f1b6a15292a4304").getBundleURL("aAnGP") + "tree_1.3b30e16c.png" + "?" + Date.now();
 
-},{"93e722e26d2ff862":"lgJ39"}],"fsLCy":[function(require,module,exports) {
-module.exports = require("857c90d8cb0d4669").getBundleURL("aAnGP") + "tree_2.d6782b0f.png" + "?" + Date.now();
+},{"6f1b6a15292a4304":"4MYVS"}],"jw3PH":[function(require,module,exports) {
+module.exports = require("354039bc57349472").getBundleURL("aAnGP") + "tree_2.d6782b0f.png" + "?" + Date.now();
 
-},{"857c90d8cb0d4669":"lgJ39"}],"4K8XV":[function(require,module,exports) {
-module.exports = require("db4fa505026ca621").getBundleURL("aAnGP") + "boulder.42ffddab.png" + "?" + Date.now();
+},{"354039bc57349472":"4MYVS"}],"02ess":[function(require,module,exports) {
+module.exports = require("69dd9836c507df5f").getBundleURL("aAnGP") + "boulder.42ffddab.png" + "?" + Date.now();
 
-},{"db4fa505026ca621":"lgJ39"}],"cs4tf":[function(require,module,exports) {
-module.exports = require("b46007950dc04b13").getBundleURL("aAnGP") + "exit.65a3bbe8.png" + "?" + Date.now();
+},{"69dd9836c507df5f":"4MYVS"}],"k7txN":[function(require,module,exports) {
+module.exports = require("b7fecdd32e70881a").getBundleURL("aAnGP") + "exit.65a3bbe8.png" + "?" + Date.now();
 
-},{"b46007950dc04b13":"lgJ39"}],"6xGJQ":[function(require,module,exports) {
-module.exports = require("e6fb4abff87f0665").getBundleURL("aAnGP") + "floor.57ec2539.png" + "?" + Date.now();
+},{"b7fecdd32e70881a":"4MYVS"}],"4T0lI":[function(require,module,exports) {
+module.exports = require("4edfb7dd0bfed3d8").getBundleURL("aAnGP") + "floor.57ec2539.png" + "?" + Date.now();
 
-},{"e6fb4abff87f0665":"lgJ39"}],"7tpoG":[function(require,module,exports) {
-module.exports = require("add0643a5e7fa982").getBundleURL("aAnGP") + "wall.32004326.png" + "?" + Date.now();
+},{"4edfb7dd0bfed3d8":"4MYVS"}],"cqOLK":[function(require,module,exports) {
+module.exports = require("2c45fcf994c95acd").getBundleURL("aAnGP") + "wall.32004326.png" + "?" + Date.now();
 
-},{"add0643a5e7fa982":"lgJ39"}],"7coCV":[function(require,module,exports) {
-module.exports = require("a49b8f9ad48e4b82").getBundleURL("aAnGP") + "obstacle_1.603daa90.png" + "?" + Date.now();
+},{"2c45fcf994c95acd":"4MYVS"}],"bZJB7":[function(require,module,exports) {
+module.exports = require("25bd944de29d0d29").getBundleURL("aAnGP") + "obstacle_1.603daa90.png" + "?" + Date.now();
 
-},{"a49b8f9ad48e4b82":"lgJ39"}],"byxh4":[function(require,module,exports) {
-module.exports = require("89844af4c58a45fb").getBundleURL("aAnGP") + "obstacle_2.552e8bc9.png" + "?" + Date.now();
+},{"25bd944de29d0d29":"4MYVS"}],"7b9FH":[function(require,module,exports) {
+module.exports = require("5794bdbdeaa95ff7").getBundleURL("aAnGP") + "obstacle_2.552e8bc9.png" + "?" + Date.now();
 
-},{"89844af4c58a45fb":"lgJ39"}],"enjv0":[function(require,module,exports) {
-module.exports = require("9ae66daa07eb04f").getBundleURL("aAnGP") + "boulder.773484af.png" + "?" + Date.now();
+},{"5794bdbdeaa95ff7":"4MYVS"}],"krTZV":[function(require,module,exports) {
+module.exports = require("46a871eb76336463").getBundleURL("aAnGP") + "boulder.773484af.png" + "?" + Date.now();
 
-},{"9ae66daa07eb04f":"lgJ39"}],"5AKUg":[function(require,module,exports) {
-module.exports = require("398d64d2fd3c60ad").getBundleURL("aAnGP") + "exit.e1114455.png" + "?" + Date.now();
+},{"46a871eb76336463":"4MYVS"}],"22bOl":[function(require,module,exports) {
+module.exports = require("496c3fa5b63f7787").getBundleURL("aAnGP") + "exit.e1114455.png" + "?" + Date.now();
 
-},{"398d64d2fd3c60ad":"lgJ39"}],"04CyO":[function(require,module,exports) {
-module.exports = require("6db897c9d2656c50").getBundleURL("aAnGP") + "key.843913e9.png" + "?" + Date.now();
+},{"496c3fa5b63f7787":"4MYVS"}],"cwuJI":[function(require,module,exports) {
+module.exports = require("b14897cb18817fab").getBundleURL("aAnGP") + "key.843913e9.png" + "?" + Date.now();
 
-},{"6db897c9d2656c50":"lgJ39"}],"iTkbG":[function(require,module,exports) {
-module.exports = require("f59b545bc58552b1").getBundleURL("aAnGP") + "potion.75bf7793.png" + "?" + Date.now();
+},{"b14897cb18817fab":"4MYVS"}],"8i5Ae":[function(require,module,exports) {
+module.exports = require("a73564ff7cc83361").getBundleURL("aAnGP") + "potion.75bf7793.png" + "?" + Date.now();
 
-},{"f59b545bc58552b1":"lgJ39"}],"kr7ve":[function(require,module,exports) {
-module.exports = require("6e6b6af1a7a9e5e3").getBundleURL("aAnGP") + "explosive.6e1a6b86.png" + "?" + Date.now();
+},{"a73564ff7cc83361":"4MYVS"}],"nxcCV":[function(require,module,exports) {
+module.exports = require("a9bf3dcfb134fedc").getBundleURL("aAnGP") + "explosive.6e1a6b86.png" + "?" + Date.now();
 
-},{"6e6b6af1a7a9e5e3":"lgJ39"}],"kAqHG":[function(require,module,exports) {
-module.exports = require("f6b1d88be3588622").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
+},{"a9bf3dcfb134fedc":"4MYVS"}],"25sZE":[function(require,module,exports) {
+module.exports = require("5459e122144dfdbb").getBundleURL("aAnGP") + "Green_crystal2.18620c22.png" + "?" + Date.now();
 
-},{"f6b1d88be3588622":"lgJ39"}],"lfTOF":[function(require,module,exports) {
-module.exports = require("bc84e7cbbf3476a4").getBundleURL("aAnGP") + "arrow.1378276b.png" + "?" + Date.now();
+},{"5459e122144dfdbb":"4MYVS"}],"5enHm":[function(require,module,exports) {
+module.exports = require("850759b6fc119608").getBundleURL("aAnGP") + "arrow.1378276b.png" + "?" + Date.now();
 
-},{"bc84e7cbbf3476a4":"lgJ39"}],"bZCaF":[function(require,module,exports) {
-module.exports = require("109c261fd4210d6d").getBundleURL("aAnGP") + "sword_dagger.a68f4caa.png" + "?" + Date.now();
+},{"850759b6fc119608":"4MYVS"}],"iaHBU":[function(require,module,exports) {
+module.exports = require("96a9dda4c405dc8e").getBundleURL("aAnGP") + "sword_dagger.a68f4caa.png" + "?" + Date.now();
 
-},{"109c261fd4210d6d":"lgJ39"}],"imXnd":[function(require,module,exports) {
-module.exports = require("11d54df61439d3a4").getBundleURL("aAnGP") + "sword_steel.a6a16a95.png" + "?" + Date.now();
+},{"96a9dda4c405dc8e":"4MYVS"}],"lWNpo":[function(require,module,exports) {
+module.exports = require("a972d842b87bc902").getBundleURL("aAnGP") + "sword_steel.a6a16a95.png" + "?" + Date.now();
 
-},{"11d54df61439d3a4":"lgJ39"}],"jPYxu":[function(require,module,exports) {
-module.exports = require("8a526e99c9864b94").getBundleURL("aAnGP") + "axe_war.4354af3b.png" + "?" + Date.now();
+},{"a972d842b87bc902":"4MYVS"}],"bH6HX":[function(require,module,exports) {
+module.exports = require("8ab62d67d9e4af57").getBundleURL("aAnGP") + "axe_war.4354af3b.png" + "?" + Date.now();
 
-},{"8a526e99c9864b94":"lgJ39"}],"5X7zw":[function(require,module,exports) {
-module.exports = require("fffd45939eeb7415").getBundleURL("aAnGP") + "rune_haste.804dfb4c.png" + "?" + Date.now();
+},{"8ab62d67d9e4af57":"4MYVS"}],"8igml":[function(require,module,exports) {
+module.exports = require("2dddda8412f6bd77").getBundleURL("aAnGP") + "rune_haste.804dfb4c.png" + "?" + Date.now();
 
-},{"fffd45939eeb7415":"lgJ39"}],"gFt5D":[function(require,module,exports) {
-module.exports = require("569da5a8d93cb4c2").getBundleURL("aAnGP") + "rune_might.53f59920.png" + "?" + Date.now();
+},{"2dddda8412f6bd77":"4MYVS"}],"2HfWS":[function(require,module,exports) {
+module.exports = require("bc0a71103a244c9e").getBundleURL("aAnGP") + "rune_might.53f59920.png" + "?" + Date.now();
 
-},{"569da5a8d93cb4c2":"lgJ39"}],"lkXLI":[function(require,module,exports) {
-module.exports = require("e2acc41bb21edb48").getBundleURL("aAnGP") + "rune_warding.532f8ad3.png" + "?" + Date.now();
+},{"bc0a71103a244c9e":"4MYVS"}],"jGrog":[function(require,module,exports) {
+module.exports = require("b319325b7e1c760c").getBundleURL("aAnGP") + "rune_warding.532f8ad3.png" + "?" + Date.now();
 
-},{"e2acc41bb21edb48":"lgJ39"}],"1ToI4":[function(require,module,exports) {
-module.exports = require("d034bf1a557e1fec").getBundleURL("aAnGP") + "door.07133bdd.png" + "?" + Date.now();
+},{"b319325b7e1c760c":"4MYVS"}],"7G8A3":[function(require,module,exports) {
+module.exports = require("dfb3aef298b840b0").getBundleURL("aAnGP") + "door.07133bdd.png" + "?" + Date.now();
 
-},{"d034bf1a557e1fec":"lgJ39"}],"9J8Br":[function(require,module,exports) {
-module.exports = require("2797bb0f8cdaa3cb").getBundleURL("aAnGP") + "health_crystal.0d30a58e.png" + "?" + Date.now();
+},{"dfb3aef298b840b0":"4MYVS"}],"htQ4S":[function(require,module,exports) {
+module.exports = require("55a4029917d298f3").getBundleURL("aAnGP") + "health_crystal.0d30a58e.png" + "?" + Date.now();
 
-},{"2797bb0f8cdaa3cb":"lgJ39"}],"iwGdJ":[function(require,module,exports) {
-module.exports = require("ddb42533b60a1ac4").getBundleURL("aAnGP") + "mana_crystal.65e68033.png" + "?" + Date.now();
+},{"55a4029917d298f3":"4MYVS"}],"czrRX":[function(require,module,exports) {
+module.exports = require("16f254eccdde17fd").getBundleURL("aAnGP") + "mana_crystal.65e68033.png" + "?" + Date.now();
 
-},{"ddb42533b60a1ac4":"lgJ39"}],"9uNQt":[function(require,module,exports) {
-module.exports = require("b88e1a35592b6077").getBundleURL("aAnGP") + "Yellow_crystal2.0ed15310.png" + "?" + Date.now();
+},{"16f254eccdde17fd":"4MYVS"}],"bReyy":[function(require,module,exports) {
+module.exports = require("a93f7e1e664846c6").getBundleURL("aAnGP") + "Yellow_crystal2.0ed15310.png" + "?" + Date.now();
 
-},{"b88e1a35592b6077":"lgJ39"}],"eTuGn":[function(require,module,exports) {
-module.exports = require("b762609b6a990988").getBundleURL("aAnGP") + "intro_bedroom.46827e8e.png" + "?" + Date.now();
+},{"a93f7e1e664846c6":"4MYVS"}],"94eZo":[function(require,module,exports) {
+module.exports = require("ac44420935f507f2").getBundleURL("aAnGP") + "intro_bedroom.0433a765.webp" + "?" + Date.now();
 
-},{"b762609b6a990988":"lgJ39"}],"hURqq":[function(require,module,exports) {
-module.exports = require("af441841773093b2").getBundleURL("aAnGP") + "intro_doorway.70a3ce28.png" + "?" + Date.now();
+},{"ac44420935f507f2":"4MYVS"}],"cLP9Q":[function(require,module,exports) {
+module.exports = require("9dadb31605624782").getBundleURL("aAnGP") + "intro_bedroom.46827e8e.png" + "?" + Date.now();
 
-},{"af441841773093b2":"lgJ39"}],"13KtF":[function(require,module,exports) {
-module.exports = require("a3a55e0326b096cd").getBundleURL("aAnGP") + "intro_orcs.882638e9.png" + "?" + Date.now();
+},{"9dadb31605624782":"4MYVS"}],"d9NWG":[function(require,module,exports) {
+module.exports = require("f79e4c9001dc3a37").getBundleURL("aAnGP") + "intro_doorway.892b612e.webp" + "?" + Date.now();
 
-},{"a3a55e0326b096cd":"lgJ39"}],"afz4T":[function(require,module,exports) {
-module.exports = require("4bb5f2b5e635d8bf").getBundleURL("aAnGP") + "intro_throne.935105a0.png" + "?" + Date.now();
+},{"f79e4c9001dc3a37":"4MYVS"}],"MQm95":[function(require,module,exports) {
+module.exports = require("a26ca5aee279da8a").getBundleURL("aAnGP") + "intro_doorway.70a3ce28.png" + "?" + Date.now();
 
-},{"4bb5f2b5e635d8bf":"lgJ39"}],"b5PuT":[function(require,module,exports) {
-module.exports = require("8a2f7f1dd78739f2").getBundleURL("aAnGP") + "intro_step_forward.3ed386ca.png" + "?" + Date.now();
+},{"a26ca5aee279da8a":"4MYVS"}],"8ObHO":[function(require,module,exports) {
+module.exports = require("121832bc65d3c19c").getBundleURL("aAnGP") + "intro_orcs.a73beb2d.webp" + "?" + Date.now();
 
-},{"8a2f7f1dd78739f2":"lgJ39"}],"2r2jP":[function(require,module,exports) {
-module.exports = require("565a29e2cc853f4c").getBundleURL("aAnGP") + "ending_dawn.301611b5.png" + "?" + Date.now();
+},{"121832bc65d3c19c":"4MYVS"}],"fKc91":[function(require,module,exports) {
+module.exports = require("9cfa3d0505e7ebb5").getBundleURL("aAnGP") + "intro_orcs.882638e9.png" + "?" + Date.now();
 
-},{"565a29e2cc853f4c":"lgJ39"}],"kNfRL":[function(require,module,exports) {
+},{"9cfa3d0505e7ebb5":"4MYVS"}],"afHkN":[function(require,module,exports) {
+module.exports = require("902b1642c5f7cd6").getBundleURL("aAnGP") + "intro_throne.6fe30086.webp" + "?" + Date.now();
+
+},{"902b1642c5f7cd6":"4MYVS"}],"abuVQ":[function(require,module,exports) {
+module.exports = require("aae5b5388893625c").getBundleURL("aAnGP") + "intro_throne.935105a0.png" + "?" + Date.now();
+
+},{"aae5b5388893625c":"4MYVS"}],"l1FcK":[function(require,module,exports) {
+module.exports = require("e4f864cfaf0f13b6").getBundleURL("aAnGP") + "intro_step_forward.2fd494cb.webp" + "?" + Date.now();
+
+},{"e4f864cfaf0f13b6":"4MYVS"}],"3IkVX":[function(require,module,exports) {
+module.exports = require("999e0499dca7bb32").getBundleURL("aAnGP") + "intro_step_forward.3ed386ca.png" + "?" + Date.now();
+
+},{"999e0499dca7bb32":"4MYVS"}],"b7xrw":[function(require,module,exports) {
+module.exports = require("69e2faa57204ea73").getBundleURL("aAnGP") + "ending_dawn.8920b685.webp" + "?" + Date.now();
+
+},{"69e2faa57204ea73":"4MYVS"}],"6d8sv":[function(require,module,exports) {
+module.exports = require("c1e9012dad8b587").getBundleURL("aAnGP") + "ending_dawn.301611b5.png" + "?" + Date.now();
+
+},{"c1e9012dad8b587":"4MYVS"}],"kNfRL":[function(require,module,exports) {
 // Splash screen
 // - Display game logo or animation
 // - Briefly show before transitioning to the welcome screen
@@ -6087,7 +6930,7 @@ function updateSplashScreenProgress(progress) {
     if (splashScreen) splashScreen.innerText = `Loading... ${progress}%`;
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2Rkrn":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"2Rkrn":[function(require,module,exports) {
 // handle the screens
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
@@ -6105,7 +6948,7 @@ var _highScoreJs = require("./high-score.js");
 var _levelCompletedJs = require("./level-completed.js");
 var _storyJs = require("./story.js");
 
-},{"./welcome.js":"cZkQX","./game-over.js":"92Yef","./game-won.js":"12l5K","./high-score.js":"4usRq","./level-completed.js":"9FY8c","./story.js":"2HIwu","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"cZkQX":[function(require,module,exports) {
+},{"./welcome.js":"cZkQX","./game-over.js":"92Yef","./game-won.js":"12l5K","./high-score.js":"4usRq","./level-completed.js":"9FY8c","./story.js":"2HIwu","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"cZkQX":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Pick any unlocked dream after beating the campaign once.
@@ -6119,6 +6962,7 @@ var _soundControlsJs = require("../utils/sound-controls.js");
 var _preferencesJs = require("../utils/preferences.js");
 var _levelDataJs = require("../levels/level-data.js");
 var _levelDataJsDefault = parcelHelpers.interopDefault(_levelDataJs);
+var _settingsJs = require("../utils/settings.js");
 function showLevelSelectScreen(onPickLevel, onBack) {
     const container = document.getElementById("game-container");
     container.innerHTML = "";
@@ -6141,7 +6985,7 @@ function showLevelSelectScreen(onPickLevel, onBack) {
     grid.style.gap = "12px";
     grid.style.maxWidth = "960px";
     grid.style.margin = "0 auto 24px";
-    for(let levelNumber = 1; levelNumber <= 10; levelNumber += 1){
+    for(let levelNumber = 1; levelNumber <= (0, _settingsJs.gameSettings).maxLevels; levelNumber += 1){
         const level = (0, _levelDataJsDefault.default).getLevel(levelNumber);
         const button = document.createElement("button");
         button.textContent = `${levelNumber}. ${level ? level.name : `Level ${levelNumber}`}`;
@@ -6255,7 +7099,7 @@ function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit
     (0, _themeJs.styleButton)(exitButton);
 }
 
-},{"../utils/theme.js":"6OzmZ","../utils/sound-controls.js":"fnm3C","../utils/preferences.js":"3e82j","../levels/level-data.js":"57eJ8","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"92Yef":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","../utils/sound-controls.js":"fnm3C","../utils/preferences.js":"3e82j","../levels/level-data.js":"57eJ8","../utils/settings.js":"hBndc","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"92Yef":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Game Over screen
@@ -6302,7 +7146,7 @@ function showGameOverScreen(finalScore, onTryAgain, onMainMenu) {
     (0, _themeJs.styleButton)(mainMenuButton, (0, _themeJs.theme).colors.secondary);
 }
 
-},{"../utils/theme.js":"6OzmZ","./score-entry.js":"con8N","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"con8N":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","./score-entry.js":"con8N","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"con8N":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Shared "save your score" widget for the game-over and game-won screens.
@@ -6347,7 +7191,7 @@ function appendScoreEntry(parent, score) {
     parent.appendChild(wrapper);
 }
 
-},{"../utils/theme.js":"6OzmZ","../utils/storage.js":"a8FLS","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"a8FLS":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","../utils/storage.js":"a8FLS","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"a8FLS":[function(require,module,exports) {
 // Persistent high scores, stored in localStorage.
 // Every accessor is wrapped so a blocked/absent localStorage (private
 // browsing, storage quota) degrades to an empty list instead of crashing.
@@ -6391,7 +7235,7 @@ function addHighScore(name, score) {
     return top;
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"12l5K":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"12l5K":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Game Won screen
@@ -6459,7 +7303,7 @@ function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAssets = {}
     }
 }
 
-},{"../utils/theme.js":"6OzmZ","./score-entry.js":"con8N","../story-content.js":"2sig9","../utils/narration.js":"402l2","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"4usRq":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","./score-entry.js":"con8N","../story-content.js":"2sig9","../utils/narration.js":"402l2","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"4usRq":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // High Score screen
@@ -6554,7 +7398,7 @@ function showHighScoreScreen(onBack) {
     (0, _themeJs.styleButton)(backButton, (0, _themeJs.theme).colors.primary);
 }
 
-},{"../utils/theme.js":"6OzmZ","../utils/date.js":"5EBGj","../utils/storage.js":"a8FLS","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"5EBGj":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","../utils/date.js":"5EBGj","../utils/storage.js":"a8FLS","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"5EBGj":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "timeAgo", ()=>timeAgo);
@@ -6599,7 +7443,7 @@ function timeAgo(timestamp) {
     return "just now";
 }
 
-},{"@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"9FY8c":[function(require,module,exports) {
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"9FY8c":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "showLevelCompletedScreen", ()=>showLevelCompletedScreen);
@@ -6681,7 +7525,7 @@ function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu, levelCo
     container.appendChild(overlay);
 }
 
-},{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"2HIwu":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"2HIwu":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 // Story screen
@@ -6807,7 +7651,7 @@ function styleStoryScreen(storyScreen, textContainer) {
     textContainer.style.lineHeight = "1.35";
 }
 
-},{"../utils/theme.js":"6OzmZ","../story-content.js":"2sig9","../utils/narration.js":"402l2","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}],"bcQ3D":[function(require,module,exports) {
+},{"../utils/theme.js":"6OzmZ","../story-content.js":"2sig9","../utils/narration.js":"402l2","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}],"bcQ3D":[function(require,module,exports) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "installOrientationGuard", ()=>installOrientationGuard);
@@ -6855,6 +7699,6 @@ function installOrientationGuard() {
     update();
 }
 
-},{"./touch.js":"fsjN9","@parcel/transformer-js/src/esmodule-helpers.js":"gkKU3"}]},["aAwE2","6JHOc"], "6JHOc", "parcelRequire6d7b")
+},{"./touch.js":"fsjN9","@parcel/transformer-js/src/esmodule-helpers.js":"4dwUO"}]},["jkQvP","6JHOc"], "6JHOc", "parcelRequire6d7b")
 
 //# sourceMappingURL=index.44a83959.js.map

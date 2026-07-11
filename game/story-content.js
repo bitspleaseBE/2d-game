@@ -83,7 +83,57 @@ export const levelStoryBeats = [
   {
     level: 10,
     audioId: 'level-10-throne',
-    story: 'On the Throne, the Orc King clutches the final shard between Theo and his own bed.',
+    story: 'On the Throne, the Orc King clutches a shard — but as he falls, the seat splits open onto a stair winding down into the Undermaze.',
+  },
+  {
+    level: 11,
+    audioId: 'level-11-spike-cellar',
+    story: 'Below the throne the dream keeps dreaming, and in the Spike Cellar the very floor bares its teeth.',
+  },
+  {
+    level: 12,
+    audioId: 'level-12-dart-gallery',
+    story: 'The Dart Gallery hums with hidden ports; Theo learns to read the rhythm before he crosses.',
+  },
+  {
+    level: 13,
+    audioId: 'level-13-hollow-bridge',
+    story: 'On the Hollow Bridge a Warden of the deep waits, and the ground crumbles a little with every step.',
+  },
+  {
+    level: 14,
+    audioId: 'level-14-frozen-larder',
+    story: 'Fog fills the Frozen Larder, where spikes hide in the cold and the guards can be turned against them.',
+  },
+  {
+    level: 15,
+    audioId: 'level-15-sandtrap',
+    story: 'The Sandtrap crosses its darts overhead while spikes wait below, guarding a rune worth the risk.',
+  },
+  {
+    level: 16,
+    audioId: 'level-16-mirage-court',
+    story: 'Two silent shooters watch the Mirage Court, and a locked gate keeps its Warden from the light.',
+  },
+  {
+    level: 17,
+    audioId: 'level-17-rootways',
+    story: 'In the misty Rootways the paths close behind Theo as the crumbling floor gives way.',
+  },
+  {
+    level: 18,
+    audioId: 'level-18-choking-garden',
+    story: 'The Choking Garden blooms with spikes; its Warden lurks among the beds behind chained doors.',
+  },
+  {
+    level: 19,
+    audioId: 'level-19-long-dark',
+    story: 'The Long Dark asks only that Theo endure — every trap at once, and precious little light.',
+  },
+  {
+    level: 20,
+    audioId: 'level-20-nightmare-king',
+    story: 'At the heart of the Undermaze the Nightmare King guards the last shard, and dawn hangs on this final fight.',
   },
 ];
 

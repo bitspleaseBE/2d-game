@@ -643,7 +643,7 @@ test('fog of war is off on easy levels and on for the harder ones', async ({ pag
     const game = window.__wandertrap.game;
     game.pause();
     const fogByLevel = {};
-    for (const n of [1, 2, 7, 9, 10]) {
+    for (const n of [1, 2, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) {
       game.startAtLevel(n);
       fogByLevel[n] = game.fogEnabled;
     }
@@ -655,6 +655,17 @@ test('fog of war is off on easy levels and on for the harder ones', async ({ pag
   expect(result[7]).toBe(true);
   expect(result[9]).toBe(true);
   expect(result[10]).toBe(true);
+  // Act 2: fog on for 14, 17, 19, 20; off for the rest
+  expect(result[11]).toBe(false);
+  expect(result[12]).toBe(false);
+  expect(result[13]).toBe(false);
+  expect(result[14]).toBe(true);
+  expect(result[15]).toBe(false);
+  expect(result[16]).toBe(false);
+  expect(result[17]).toBe(true);
+  expect(result[18]).toBe(false);
+  expect(result[19]).toBe(true);
+  expect(result[20]).toBe(true);
 });
 
 test('fog of war reveals cells around the player and remembers explored ground', async ({ page }) => {
@@ -686,14 +697,14 @@ test('fog of war reveals cells around the player and remembers explored ground',
   expect(result.spawnStillExplored).toBe(true);
 });
 
-test('all 10 levels are defined and each has a spawn and an exit', async ({ page }) => {
+test('all 20 levels are defined and each has a spawn and an exit', async ({ page }) => {
   await startNewGame(page);
 
   const result = await page.evaluate(() => {
     const game = window.__wandertrap.game;
     game.pause();
     const summary = [];
-    for (let n = 1; n <= 10; n++) {
+    for (let n = 1; n <= 20; n++) {
       game.startAtLevel(n);
       summary.push({
         level: n,
@@ -706,7 +717,7 @@ test('all 10 levels are defined and each has a spawn and an exit', async ({ page
     return summary;
   });
 
-  expect(result).toHaveLength(10);
+  expect(result).toHaveLength(20);
   for (const level of result) {
     expect(level.hasPlayer).toBe(true);
     expect(level.hasExit).toBe(true);
@@ -716,6 +727,10 @@ test('all 10 levels are defined and each has a spawn and an exit', async ({ page
   expect(result[4].bosses).toBe(1); // level 5: The Warden
   expect(result[7].bosses).toBe(1); // level 8: The Crossroads
   expect(result[9].bosses).toBe(1); // level 10: The Throne
+  expect(result[12].bosses).toBe(1); // level 13: The Hollow Bridge
+  expect(result[15].bosses).toBe(1); // level 16: The Mirage Court
+  expect(result[17].bosses).toBe(1); // level 18: The Choking Garden
+  expect(result[19].bosses).toBe(1); // level 20: The Nightmare King
 });
 
 test('defeated guards are inert until their death animation is removed', async ({ page }) => {
@@ -1249,7 +1264,7 @@ test('winning the final level asks for a high score name and saves it', async ({
   await page.evaluate(() => {
     const game = window.__wandertrap.game;
     game.pause();
-    game.startAtLevel(10);
+    game.startAtLevel(20); // The Nightmare King — the final level
     game.score = 1234;
     const exit = game.exit.getPosition();
     game.teleportPlayer(exit.x, exit.y);
@@ -1311,4 +1326,62 @@ test('touch controls appear in landscape when forced with ?touch=1', async ({ pa
   await expect(page.locator('#touch-btn-attack')).toBeVisible();
   await expect(page.locator('#touch-btn-inventory')).toBeVisible();
   await expect(page.locator('#touch-btn-pick')).toHaveCount(0);
+});
+
+test('spike traps hurt the player while extended', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.startAtLevel(11); // The Spike Cellar
+    game.guards = []; // isolate the spike so nothing else deals damage
+    const spike = game.spikeTraps[0];
+    const pos = spike.getPosition();
+    game.teleportPlayer(pos.x, pos.y);
+    const before = game.player.getHealth();
+    game.step(220); // more than one full retract/warn/extend cycle
+    return { count: game.spikeTraps.length, before, after: game.player.getHealth() };
+  });
+
+  expect(result.count).toBeGreaterThan(0);
+  expect(result.after).toBeLessThan(result.before);
+});
+
+test('dart shooters fire at the player within range', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.startAtLevel(12); // The Dart Gallery
+    const shooter = game.dartShooters[0];
+    const center = shooter.getCenter();
+    const shot = shooter.update(center, 1000 / 60); // player right in front, off cooldown
+    return { count: game.dartShooters.length, fired: Boolean(shot), speed: shot && shot.speed };
+  });
+
+  expect(result.count).toBeGreaterThan(0);
+  expect(result.fired).toBe(true);
+  expect(result.speed).toBeGreaterThan(0);
+});
+
+test('re-collecting a crystal stacks its duration and caps at 30s', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    const player = game.player;
+    const speedLeft = () => player.getActiveEffects().find((e) => e.name === 'speed').msLeft;
+    player.applyPowerup('speed');
+    const afterOne = speedLeft();
+    player.applyPowerup('speed');
+    const afterTwo = speedLeft();
+    for (let i = 0; i < 10; i += 1) player.applyPowerup('speed');
+    return { afterOne, afterTwo, capped: speedLeft() };
+  });
+
+  expect(result.afterTwo).toBeGreaterThan(result.afterOne); // stacked, not reset
+  expect(result.capped).toBe(30000); // capped at maxEffectDurationMs
 });

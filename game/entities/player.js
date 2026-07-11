@@ -11,6 +11,12 @@ class Player extends Entity {
   #isHurt = false;
   #hurtInterval = null;
   #effectMs = { speed: 0, strength: 0, invincibility: 0 };
+  // Recent positions sampled while the speed boost is active, for the ghost
+  // trail drawn behind the sprite. Each entry is { x, y, ageMs }.
+  #trail = [];
+  #trailSampleMs = 0;
+  // Offscreen buffer reused to build the ember silhouette for the strength tint
+  #tintCanvas = null;
 
   constructor(x, y, assets) {
     super(x, y, 'player', assets);
@@ -332,23 +338,51 @@ class Player extends Entity {
         this.#health = Math.min(100, this.#health + powerupSettings.healAmount);
         break;
       case "speed":
-        this.#effectMs.speed = powerupSettings.speedDurationMs;
+        this.#addEffect("speed", powerupSettings.speedDurationMs);
         break;
       case "strength":
-        this.#effectMs.strength = powerupSettings.strengthDurationMs;
+        this.#addEffect("strength", powerupSettings.strengthDurationMs);
         break;
       case "invincibility":
-        this.#effectMs.invincibility = powerupSettings.invincibilityDurationMs;
+        this.#addEffect("invincibility", powerupSettings.invincibilityDurationMs);
         break;
     }
+  }
+
+  // Re-collecting a crystal of the same type stacks its DURATION (not its
+  // effect), capped so a level cannot be trivialised by hoarding crystals.
+  #addEffect(name, durationMs) {
+    this.#effectMs[name] = Math.min(
+      powerupSettings.maxEffectDurationMs,
+      this.#effectMs[name] + durationMs
+    );
   }
 
   update(deltaMs = 1000 / 60) {
     for (const name of Object.keys(this.#effectMs)) {
       this.#effectMs[name] = Math.max(0, this.#effectMs[name] - deltaMs);
     }
+    this.#updateTrail(deltaMs);
     this.animator.update(deltaMs);
     this.#syncAnimationState();
+  }
+
+  // Sample the sprite position ~every 40ms while the speed boost is active and
+  // keep the last handful of samples (dropping ones older than ~200ms) for the
+  // afterimage trail. The trail clears itself once the boost ends.
+  #updateTrail(deltaMs) {
+    if (this.#effectMs.speed <= 0) {
+      if (this.#trail.length) this.#trail = [];
+      return;
+    }
+    this.#trail.forEach((sample) => (sample.ageMs += deltaMs));
+    this.#trail = this.#trail.filter((sample) => sample.ageMs < 200);
+    this.#trailSampleMs += deltaMs;
+    if (this.#trailSampleMs >= 40) {
+      this.#trailSampleMs = 0;
+      this.#trail.push({ x: this._position.x, y: this._position.y, ageMs: 0 });
+      if (this.#trail.length > 4) this.#trail.shift();
+    }
   }
 
   checkCollision(direction, distance = this.getSpeed() / 60) {
@@ -393,19 +427,42 @@ class Player extends Entity {
   }
 
   draw(ctx) {
+    // The aura is drawn even while the hurt flicker hides the sprite, so an
+    // active powerup keeps reading clearly through the flashing.
+    this.#drawAura(ctx);
     if (!this.visible) return;
 
     const frame = this.animator.getFrame(this.movement);
-    const spriteSheet = this._sprites[frame.sheet];
+    if (this.hasEffect("speed")) this.#drawAfterimages(ctx, frame);
+    this.#blitFrame(ctx, frame, this._position.x, this._position.y, 1);
+    if (this.hasEffect("strength")) this.#drawStrengthTint(ctx, frame);
+    if (this.hasEffect("invincibility")) this.#drawWardRing(ctx);
+  }
+
+  // Where a frame lands inside its cell: small sprites are scaled up and
+  // centred, cell-sized sprites are drawn 1:1.
+  #frameGeometry(frame) {
     const pixelScale = frame.frameWidth >= canvasSettings.cellWidth
       ? 1
       : canvasSettings.cellWidth / 32;
     const destWidth = frame.frameWidth * pixelScale;
     const destHeight = frame.frameHeight * pixelScale;
-    const offsetX = (canvasSettings.cellWidth - destWidth) / 2;
-    const offsetY = (canvasSettings.cellHeight - destHeight) / 2;
+    return {
+      destWidth,
+      destHeight,
+      offsetX: (canvasSettings.cellWidth - destWidth) / 2,
+      offsetY: (canvasSettings.cellHeight - destHeight) / 2,
+    };
+  }
+
+  // Draw one animation frame with the cell at (x, y), honouring the flip flag
+  // and an optional alpha (used for the speed ghost trail).
+  #blitFrame(ctx, frame, x, y, alpha = 1) {
+    const spriteSheet = this._sprites[frame.sheet];
+    const { destWidth, destHeight, offsetX, offsetY } = this.#frameGeometry(frame);
 
     ctx.save();
+    if (alpha !== 1) ctx.globalAlpha = alpha;
     if (frame.flip) {
       ctx.scale(-1, 1);
       ctx.drawImage(
@@ -414,8 +471,8 @@ class Player extends Entity {
         frame.sourceY,
         frame.frameWidth,
         frame.frameHeight,
-        -(this._position.x + offsetX) - destWidth,
-        this._position.y + offsetY,
+        -(x + offsetX) - destWidth,
+        y + offsetY,
         destWidth,
         destHeight
       );
@@ -426,11 +483,113 @@ class Player extends Entity {
         frame.sourceY,
         frame.frameWidth,
         frame.frameHeight,
-        this._position.x + offsetX,
-        this._position.y + offsetY,
+        x + offsetX,
+        y + offsetY,
         destWidth,
         destHeight
       );
+    }
+    ctx.restore();
+  }
+
+  // Faint copies of the current frame trailing behind a sprinting hero.
+  #drawAfterimages(ctx, frame) {
+    const alphas = [0.08, 0.14, 0.2, 0.26]; // oldest faintest -> newest strongest
+    this.#trail.forEach((sample, i) => {
+      this.#blitFrame(ctx, frame, sample.x, sample.y, alphas[Math.min(i, alphas.length - 1)]);
+    });
+  }
+
+  // A pulsing colour-coded glow at the hero's feet, one ellipse per active
+  // effect, fading out over the effect's final second.
+  #drawAura(ctx) {
+    const colors = {
+      speed: "80, 216, 255",
+      strength: "255, 112, 67",
+      invincibility: "255, 213, 79",
+    };
+    const active = Object.entries(this.#effectMs).filter(([name, ms]) => ms > 0 && colors[name]);
+    if (!active.length) return;
+    const cx = this._position.x + this._width / 2;
+    const cy = this._position.y + this._height * 0.78;
+    const pulse = 0.75 + 0.25 * Math.sin(performance.now() / 180);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    active.forEach(([name, ms], i) => {
+      const fade = Math.min(1, ms / 1000);
+      const radius = (26 + i * 6) * pulse;
+      const gradient = ctx.createRadialGradient(cx, cy, 4, cx, cy, radius);
+      gradient.addColorStop(0, `rgba(${colors[name]}, ${0.45 * fade})`);
+      gradient.addColorStop(1, `rgba(${colors[name]}, 0)`);
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, radius, radius * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  // Ember tint painted only over the sprite's body pixels (source-atop on an
+  // offscreen buffer), then added over the hero so strength reads as heat.
+  #drawStrengthTint(ctx, frame) {
+    const spriteSheet = this._sprites[frame.sheet];
+    const { destWidth, destHeight, offsetX, offsetY } = this.#frameGeometry(frame);
+    if (!this.#tintCanvas) this.#tintCanvas = document.createElement("canvas");
+    const buffer = this.#tintCanvas;
+    buffer.width = Math.ceil(destWidth);
+    buffer.height = Math.ceil(destHeight);
+    const bctx = buffer.getContext("2d");
+    bctx.clearRect(0, 0, buffer.width, buffer.height);
+    bctx.globalCompositeOperation = "source-over";
+    bctx.drawImage(
+      spriteSheet,
+      frame.sourceX,
+      frame.sourceY,
+      frame.frameWidth,
+      frame.frameHeight,
+      0,
+      0,
+      destWidth,
+      destHeight
+    );
+    bctx.globalCompositeOperation = "source-atop";
+    bctx.fillStyle = "rgba(255, 90, 40, 0.35)";
+    bctx.fillRect(0, 0, buffer.width, buffer.height);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    if (frame.flip) {
+      ctx.scale(-1, 1);
+      ctx.drawImage(buffer, -(this._position.x + offsetX) - destWidth, this._position.y + offsetY, destWidth, destHeight);
+    } else {
+      ctx.drawImage(buffer, this._position.x + offsetX, this._position.y + offsetY, destWidth, destHeight);
+    }
+    ctx.restore();
+  }
+
+  // Golden ward ring with three orbiting motes, marking invincibility (and,
+  // for free, the short respawn-protection window that reuses the same effect).
+  #drawWardRing(ctx) {
+    const cx = this._position.x + this._width / 2;
+    const cy = this._position.y + this._height / 2;
+    const now = performance.now();
+    const pulse = 0.5 + 0.5 * Math.sin(now / 160);
+    const fade = Math.min(1, this.#effectMs.invincibility / 1000);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = `rgba(255, 213, 79, ${(0.35 + 0.25 * pulse) * fade})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 34, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = `rgba(255, 235, 150, ${0.8 * fade})`;
+    for (let k = 0; k < 3; k += 1) {
+      const angle = now / 400 + (k * Math.PI * 2) / 3;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(angle) * 34, cy + Math.sin(angle) * 34, 3, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
   }

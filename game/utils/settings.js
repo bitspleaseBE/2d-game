@@ -24,7 +24,7 @@ export const playerSettings = {
 // Game settings
 export const gameSettings = {
     initialLevel: 1, // Initial level of the game
-    maxLevels: 10, // Maximum number of levels in the game (must match levels defined in levels/level-data.js)
+    maxLevels: 20, // Maximum number of levels in the game (must match levels defined in levels/level-data.js)
     scoreIncrement: 100, // Points added to the score for each successful action
     levelIntroDurationMs: 5200, // How long each level story card stays on screen
 };
@@ -37,6 +37,7 @@ export const powerupSettings = {
     strengthMultiplier: 2, // Attack power multiplier while a strength crystal is active
     strengthDurationMs: 10000, // Strength crystal effect duration (10 seconds)
     invincibilityDurationMs: 10000, // Invincibility crystal effect duration (10 seconds)
+    maxEffectDurationMs: 30000, // Cap on stacked duration when re-collecting the same crystal type
     notificationDurationMs: 4000, // Milliseconds a pickup notification stays on screen
 };
 
@@ -91,6 +92,25 @@ export const entitySettings = {
     explosiveBlastRadius: 96, // Blast radius in pixels
     explosivePlayerDamage: 30, // Damage the blast deals to the player
     explosiveGuardDamage: 100, // Damage the blast deals to guards
+};
+
+// Trap settings (spike traps 'S', dart shooters '^v<>', crumbling floors 'F')
+export const trapSettings = {
+    // Spike trap: retracted -> warning (tips telegraph) -> extended, on a loop
+    spikeRetractedMs: 1400, // Time spikes stay down (safe to cross)
+    spikeWarningMs: 500, // Telegraph before the spikes come up
+    spikeExtendedMs: 900, // Time spikes stay up (dangerous)
+    spikePlayerDamage: 15, // Damage per hit; the player's hurt window throttles repeats
+    spikeGuardDamage: 30, // Damage to a guard, once per extension cycle
+    // Dart shooter: wall-mounted, fires along its facing direction
+    dartCooldownMs: 2200, // Time between shots
+    dartSpeed: 360, // Slower than arrows (480) so darts can be dodged
+    dartDamage: 10, // Damage a dart deals to the player
+    dartRangeCells: 6, // Dart flight distance in cells
+    dartActivationRangeCells: 8, // Only fires while the player is this close
+    // Crumbling floor: cracks underfoot, then becomes an impassable pit
+    crumbleDelayMs: 800, // Time between the first step and collapse
+    crumbleCollapseDamage: 20, // Damage dealt if the player is still on it at collapse
 };
 
 // Sound settings

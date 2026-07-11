@@ -8,6 +8,7 @@ import {
   bossSettings,
   fogSettings,
   entitySettings,
+  trapSettings,
 } from "./utils/settings.js";
 import { sfx } from "./utils/sound.js";
 import { playNarration, stopNarration } from "./utils/narration.js";
@@ -33,6 +34,9 @@ import { createSoundToggleButton } from "./utils/sound-controls.js";
 import { randomInt } from "./utils/rng.js";
 import Wall from "./entities/wall.js";
 import Explosive from "./entities/explosive.js";
+import SpikeTrap from "./entities/spike-trap.js";
+import DartShooter from "./entities/dart-shooter.js";
+import CrumblingFloor from "./entities/crumbling-floor.js";
 import Guard from "./entities/guard.js";
 import Obstacle from "./entities/obstacle.js";
 import Powerup, { powerupDescriptions } from "./entities/powerup.js";
@@ -44,6 +48,16 @@ import { itemCatalog, guardDropPool, lateGuardDropPool, weaponCatalog, weaponOrd
 import { resolveThemeAssets } from "./assets/theme-manifest.js";
 import { random } from "./utils/rng.js";
 import { getWeaponUnlockCopy } from "./screens/weapon-unlocked.js";
+
+// Dart shooter cells encode their firing direction in the glyph. These cells
+// are also solid walls (see initializeBoard / drawMinimap).
+const DART_DIRECTIONS = {
+  "^": { x: 0, y: -1 },
+  v: { x: 0, y: 1 },
+  "<": { x: -1, y: 0 },
+  ">": { x: 1, y: 0 },
+};
+const isDartCell = (cell) => Object.prototype.hasOwnProperty.call(DART_DIRECTIONS, cell);
 
 // Main game logic
 // - Initialize the game board (labyrinth)
@@ -72,6 +86,9 @@ export class Game {
     this.assets = assets;
     this.themeAssets = resolveThemeAssets(this.assets.levelAssets);
     this.explosives = [];
+    this.spikeTraps = [];
+    this.dartShooters = [];
+    this.crumblingFloors = [];
     this.guards = [];
     this.obstacles = [];
     this.powerups = [];
@@ -124,7 +141,8 @@ export class Game {
       }
       for (let y = 0; y < level.layout.length; y++) {
         for (let x = 0; x < level.layout[y].length; x++) {
-          if (level.layout[y][x] === "#") {
+          if (level.layout[y][x] === "#" || isDartCell(level.layout[y][x])) {
+            // Dart shooters sit in the wall and are solid like any wall cell
             this.walls.push(
               new Wall(
                 x * canvasSettings.cellWidth,
@@ -369,6 +387,14 @@ export class Game {
       this.lockedDoors().some((door) => isColliding(nextHitBox, door.getHitBox())) ||
       this.obstacles.some((obstacle) =>
         isColliding(nextHitBox, obstacle.getHitBox())
+      ) ||
+      // Collapsed pits block entry only — a player caught standing over a pit
+      // as it forms can always step off, never get sealed in.
+      this.crumblingFloors.some(
+        (floor) =>
+          floor.isCollapsed() &&
+          isColliding(nextHitBox, floor.getHitBox()) &&
+          !isColliding(hitBox, floor.getHitBox())
       )
     );
   }
@@ -539,6 +565,9 @@ export class Game {
 
     if (level) {
       this.explosives = [];
+      this.spikeTraps = [];
+      this.dartShooters = [];
+      this.crumblingFloors = [];
       this.guards = [];
       this.obstacles = [];
       this.powerups = [];
@@ -546,6 +575,7 @@ export class Game {
       this.projectiles = [];
       this.weaponPedestals = [];
       const healthScale = this.guardHealthScale(level.number);
+      const bossScale = level.number <= 10 ? 1 : Math.min(1.5, 1 + (level.number - 10) * 0.05);
 
       for (let y = 0; y < level.layout.length; y++) {
         for (let x = 0; x < level.layout[y].length; x++) {
@@ -572,9 +602,13 @@ export class Game {
               );
               break;
             case "B":
-              // A boss: bigger, tougher and harder-hitting than a guard
+              // A boss: bigger, tougher and harder-hitting than a guard.
+              // Bosses only gain health past level 10 (bossScale).
               this.guards.push(
-                new Guard(position.x, position.y, `orc${randomInt(1, 4)}`, this.assets.guardAssets, { boss: true })
+                new Guard(position.x, position.y, `orc${randomInt(1, 4)}`, this.assets.guardAssets, {
+                  boss: true,
+                  healthScale: bossScale,
+                })
               );
               break;
             case "O":
@@ -613,6 +647,19 @@ export class Game {
             case "M":
               this.drops.push(new Drop(position.x, position.y, "runeMight", this.assets.itemAssets));
               break;
+            case "S":
+              // Stagger neighbouring spikes so a row does not fire in unison
+              this.spikeTraps.push(new SpikeTrap(position.x, position.y, { phaseMs: (x + y) * 350 }));
+              break;
+            case "F":
+              this.crumblingFloors.push(new CrumblingFloor(position.x, position.y));
+              break;
+            case "^":
+            case "v":
+            case "<":
+            case ">":
+              this.dartShooters.push(new DartShooter(position.x, position.y, DART_DIRECTIONS[cell]));
+              break;
           }
         }
       }
@@ -620,7 +667,9 @@ export class Game {
   }
 
   guardHealthScale(levelNumber) {
-    return 1 + Math.floor((levelNumber - 1) / 3) * 0.1;
+    // Same +10% every three levels as before, now capped at 1.6x so the deep
+    // Act 2 levels lean on layout pressure rather than bullet-sponge guards.
+    return Math.min(1.6, 1 + Math.floor((levelNumber - 1) / 3) * 0.1);
   }
 
   // Something a defeated guard leaves behind on the ground
@@ -731,13 +780,13 @@ export class Game {
     }[direction] || { x: 1, y: 0 };
   }
 
-  spawnProjectile({ x, y, direction, owner, damage }) {
+  spawnProjectile({ x, y, direction, owner, damage, speed, rangeCells }) {
     const projectile = new Projectile(
       x - 12,
       y - 6,
       direction,
       this.assets.projectileAssets,
-      { owner, damage }
+      { owner, damage, speed, rangeCells }
     );
     this.projectiles.push(projectile);
     return projectile;
@@ -905,8 +954,10 @@ export class Game {
     this.player.update(deltaMs);
     this.updatePlayerShot();
     this.updateExplosives(deltaMs);
-    // Locked doors block guards (and their line of sight) like walls
-    const guardBlockers = [...this.walls, ...this.lockedDoors()];
+    this.updateTraps(deltaMs);
+    // Locked doors block guards (and their line of sight) like walls; a
+    // collapsed pit is impassable to guards too (only the player triggers it)
+    const guardBlockers = [...this.walls, ...this.lockedDoors(), ...this.collapsedPits()];
     this.guards.forEach((guard) => {
       const shot = guard.update(this.player.getHitBox(), guardBlockers, deltaMs);
       if (shot) this.spawnProjectile({ ...shot, owner: "guard" });
@@ -1062,6 +1113,55 @@ export class Game {
     this.explosives = this.explosives.filter((explosive) => !explosive.isDone());
   }
 
+  // Collapsed crumbling floors, treated as impassable by guards
+  collapsedPits() {
+    return this.crumblingFloors.filter((floor) => floor.isCollapsed());
+  }
+
+  updateTraps(deltaMs) {
+    const playerBox = this.player.getHitBox();
+    const playerCenter = {
+      x: playerBox.x + playerBox.width / 2,
+      y: playerBox.y + playerBox.height / 2,
+    };
+
+    // Spike traps: hurt the player and any guard standing on extended spikes
+    this.spikeTraps.forEach((spike) => {
+      spike.update(deltaMs);
+      if (!spike.isExtended()) return;
+      const box = spike.getDamageBox();
+      if (isColliding(playerBox, box)) this.damagePlayer(trapSettings.spikePlayerDamage);
+      this.guards.forEach((guard) => {
+        if (guard.isDefeated() || !spike.canHurtGuard(guard)) return;
+        if (!isColliding(box, guard.getHitBox())) return;
+        spike.markGuardHurt(guard);
+        guard.takeDamage(trapSettings.spikeGuardDamage);
+        if (guard.consumeDefeatAward()) {
+          sfx.guardDown();
+          this.score += guard.isBoss() ? bossSettings.scoreValue : gameSettings.scoreIncrement;
+          this.spawnDrop(guard.getPosition());
+        }
+      });
+    });
+
+    // Dart shooters: fire darts (owner "guard") along their facing direction
+    this.dartShooters.forEach((shooter) => {
+      const shot = shooter.update(playerCenter, deltaMs);
+      if (shot) {
+        this.spawnProjectile({ ...shot, owner: "guard" });
+        sfx.swing?.();
+      }
+    });
+
+    // Crumbling floors: collapse under the player, damaging them if still on it
+    this.crumblingFloors.forEach((floor) => {
+      const collapsedNow = floor.update(playerBox, deltaMs);
+      if (collapsedNow && isColliding(playerBox, floor.getHitBox())) {
+        this.damagePlayer(trapSettings.crumbleCollapseDamage);
+      }
+    });
+  }
+
   // Route all player damage through one place so the hurt sound plays
   // only when damage actually lands (not while invincible or flashing)
   damagePlayer(amount) {
@@ -1198,6 +1298,11 @@ export class Game {
     // Draw the walls and doors
     this.walls.forEach((wall) => wall.draw(this.context));
     this.doors.forEach((door) => door.draw(this.context));
+
+    // Floor traps sit under the entities (dart shooters decorate their wall tile)
+    this.crumblingFloors.forEach((floor) => floor.draw(this.context));
+    this.spikeTraps.forEach((spike) => spike.draw(this.context));
+    this.dartShooters.forEach((shooter) => shooter.draw(this.context));
 
     // Draw the entities
     this.obstacles.forEach((obstacle) => obstacle.draw(this.context));
@@ -1615,7 +1720,7 @@ export class Game {
       for (let col = 0; col < cols; col += 1) {
         if (!this.explored[row][col]) continue;
         const cell = this.board[row]?.[col];
-        const isWall = cell === "#" || cell === "D";
+        const isWall = cell === "#" || cell === "D" || isDartCell(cell);
         ctx.fillStyle = isWall ? "rgba(120, 120, 140, 0.9)" : "rgba(70, 90, 120, 0.75)";
         ctx.fillRect(mapX + col * cellW, mapY + row * cellH, cellW, cellH);
       }
@@ -1807,6 +1912,9 @@ export class Game {
     this.attackCooldownMs = 0;
     this.projectiles = [];
     this.weaponPedestals = [];
+    this.spikeTraps = [];
+    this.dartShooters = [];
+    this.crumblingFloors = [];
     this.pressedDirections.clear();
     this.lastFrameTime = null;
     if (this.rafId) cancelAnimationFrame(this.rafId);

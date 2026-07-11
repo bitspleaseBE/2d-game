@@ -39,7 +39,7 @@ class Guard extends Entity {
     this.action = "idle";
     this.damage = boss ? bossSettings.damage : this.#ranged ? combatSettings.archerDamage : 10;
     this.#maxHealth = boss
-      ? bossSettings.health
+      ? Math.round(bossSettings.health * healthScale)
       : Math.round((this.#ranged ? combatSettings.archerHealth : 100) * healthScale);
     this.#health = this.#maxHealth;
     this.#speed = boss ? bossSettings.speed : this.#ranged ? 70 : 60; // pixels per second
