@@ -117,21 +117,18 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   title.textContent = 'Wandertrap';
   title.style.margin = '0 0 12px';
   title.style.padding = '0';
-  // letter-spacing adds trailing space after the last glyph — pad left to keep optical center
-  title.style.paddingLeft = '0.12em';
   title.style.fontFamily = theme.fonts.main;
   title.style.fontSize = theme.fontSize.title;
   title.style.fontWeight = '700';
-  title.style.letterSpacing = '0.12em';
+  // Trailing letter-spacing inflates the box; pull it back so the glyph stays centered
+  // and fully visible (background-clip + letter-spacing was eating the final "P").
+  title.style.letterSpacing = '0.08em';
+  title.style.marginRight = '-0.08em';
   title.style.textAlign = 'center';
-  title.style.width = '100%';
-  title.style.boxSizing = 'border-box';
+  title.style.width = 'auto';
+  title.style.maxWidth = '100%';
   title.style.color = theme.colors.text;
   title.style.textShadow = '0 2px 18px rgba(0, 0, 0, 0.65)';
-  title.style.background = 'linear-gradient(180deg, #ffe082 0%, #ffd54f 45%, #f5e6c8 100%)';
-  title.style.WebkitBackgroundClip = 'text';
-  title.style.WebkitTextFillColor = 'transparent';
-  title.style.backgroundClip = 'text';
   header.appendChild(title);
 
   const subtitle = document.createElement('h2');
