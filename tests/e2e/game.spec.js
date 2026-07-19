@@ -790,6 +790,37 @@ test('fog of war reveals cells around the player and remembers explored ground',
   expect(result.spawnStillExplored).toBe(true);
 });
 
+test('fog of war hides enemies outside the torch even on explored ground', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.startAtLevel(7);
+    game.step(1);
+
+    // Place an orc on already-explored ground, then walk the torch away
+    const spawn = game.player.getPosition();
+    const guard = game.spawnGuard(spawn.x, spawn.y);
+    game.step(1);
+    const visibleNear = game.isVisibleUnderFog(guard);
+
+    game.teleportPlayer(18 * 64, 8 * 64);
+    game.step(1);
+    const visibleFar = game.isVisibleUnderFog(guard);
+    const spawnStillExplored = game.isCellExplored(
+      Math.floor(spawn.x / 64),
+      Math.floor(spawn.y / 64)
+    );
+
+    return { visibleNear, visibleFar, spawnStillExplored };
+  });
+
+  expect(result.visibleNear).toBe(true);
+  expect(result.visibleFar).toBe(false);
+  expect(result.spawnStillExplored).toBe(true);
+});
+
 test('all 10 levels are defined and each has a spawn and an exit', async ({ page }) => {
   await startNewGame(page);
 
@@ -1573,7 +1604,7 @@ test('New Game mid-run asks for confirmation and starts a fresh run', async ({ p
 
 // ---------------------------------------------------------------------------
 // Phase 2 features: disarming, secrets, weapon arcs, tally, persistence,
-// Daily Dream, dawn timer, and patrol AI.
+// dawn timer, and patrol AI.
 // ---------------------------------------------------------------------------
 
 test("pressing 'p' disarms an armed trap for score", async ({ page }) => {
@@ -1702,40 +1733,6 @@ test('a bookmarked run survives a page refresh via Continue', async ({ page }) =
   const restored = await gameState(page);
   expect(restored.level).toBe(2);
   expect(restored.score).toBe(scoreBefore);
-});
-
-test('the Daily Dream runs date-seeded and records a shareable result', async ({ page }) => {
-  await openWelcomeScreen(page);
-  await page.getByRole('button', { name: 'Daily Dream' }).click();
-
-  // A three-slide explainer runs before the one-attempt run starts
-  await expect(page.locator('#daily-intro-screen')).toBeVisible();
-  await expect(page.getByText('The same dream for everyone')).toBeVisible();
-  await page.getByRole('button', { name: 'Next' }).click();
-  await expect(page.getByText('One attempt per day')).toBeVisible();
-  await page.getByRole('button', { name: 'Next' }).click();
-  await expect(page.getByText('Share your result')).toBeVisible();
-  await page.getByRole('button', { name: 'Begin the Daily Dream' }).click();
-
-  await expect(page.locator('canvas')).toBeVisible();
-  await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
-  const isDaily = await page.evaluate(() => window.__wandertrap.game.dailyMode);
-  expect(isDaily).toBe(true);
-
-  // Lose quickly: the result is recorded and the game-over screen offers a share
-  await page.evaluate(() => {
-    const game = window.__wandertrap.game;
-    game.dismissLevelIntro();
-    game.lives = 1;
-    game.player.takeDamage(100);
-    game.step(120); // defeat pause plays out and the run ends
-  });
-  await expect(page.locator('#game-over-screen')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Share Daily Result' })).toBeVisible();
-
-  // Back on the menu, today's attempt is spent and turns into a share action
-  await page.getByRole('button', { name: 'Main Menu' }).click();
-  await expect(page.getByRole('button', { name: /Daily Dream ✓/ })).toBeVisible();
 });
 
 test('the dawn timer collapses the dream when it runs out', async ({ page }) => {

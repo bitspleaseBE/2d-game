@@ -10,13 +10,11 @@ import {
   showLevelCompletedScreen,
   showStoryScreen,
   showSettingsScreen,
-  showDailyIntroScreen,
 } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
 import { setSeed } from './utils/rng.js';
 import { stopNarration } from './utils/narration.js';
 import { loadSoundPreferences, setCampaignComplete, loadRunState } from './utils/preferences.js';
-import { dailySeed, getTodayResult, recordTodayResult, shareString } from './utils/daily.js';
 import { installOrientationGuard } from './utils/orientation.js';
 
 // Entry point of the game
@@ -75,7 +73,6 @@ class GameEngine {
             this.assets = { playerAssets, levelAssets, guardAssets, powerupsAssets, itemAssets, projectileAssets, storyAssets };
             this.game = new Game(this.container.id, this.canvas, this.context, this.assets, {
                 onGameOver: () => {
-                    this.recordDailyIfNeeded(false);
                     this.showScreen('gameOver');
                 },
                 onLevelCompleted: (score, completedLevel, nextLevel, tally) => {
@@ -83,7 +80,6 @@ class GameEngine {
                     this.showScreen('levelCompleted');
                 },
                 onGameWon: () => {
-                    this.recordDailyIfNeeded(true);
                     setCampaignComplete();
                     this.showScreen('gameWon');
                 },
@@ -140,7 +136,6 @@ class GameEngine {
                     () => this.highScore(),
                     () => this.story(),
                     () => this.levelSelect(),
-                    () => this.dailyDream(),
                     () => this.settings()
                 );
                 break;
@@ -178,8 +173,7 @@ class GameEngine {
                 showGameOverScreen(
                     this.game.score,
                     () => this.startGame(),
-                    () => this.showScreen('welcome'),
-                    this.game.dailyMode ? shareString() : null
+                    () => this.showScreen('welcome')
                 );
                 break;
             case 'gameWon':
@@ -187,8 +181,7 @@ class GameEngine {
                     this.game.score,
                     () => this.startGame(),
                     () => this.showScreen('welcome'),
-                    this.assets.storyAssets,
-                    this.game.dailyMode ? shareString() : null
+                    this.assets.storyAssets
                 );
                 break;
             case 'highScore':
@@ -252,36 +245,6 @@ class GameEngine {
         this.pendingStartLevel = null;
         this.currentScreen = 'game';
         this.game.restoreRun(state);
-    }
-
-    // Start today's Daily Dream: a fresh run on the date-derived seed.
-    // A three-slide explainer runs first, so the one-attempt rule is clear
-    // before it counts. Results are recorded once; the welcome screen turns
-    // the button into a share action after the attempt.
-    dailyDream() {
-        if (getTodayResult()) return; // already played — welcome handles sharing
-        if (this.game && this.game.started) {
-            if (!window.confirm("Abandon Theo's current dream for today's Daily Dream?")) return;
-            this.game.started = false;
-        }
-        showDailyIntroScreen(
-            () => {
-                setSeed(dailySeed());
-                this.pendingStartLevel = null;
-                this.currentScreen = 'game';
-                this.game.start({ daily: true });
-            },
-            () => this.showScreen('welcome')
-        );
-    }
-
-    recordDailyIfNeeded(won) {
-        if (!this.game || !this.game.dailyMode) return;
-        recordTodayResult({
-            score: this.game.score,
-            levelReached: this.game.currentLevel,
-            won,
-        });
     }
 
     highScore() {

@@ -119,8 +119,6 @@ export class Game {
     // Theo has been hit since, for the time and no-damage bonuses
     this.levelStartMs = 0;
     this.levelDamageTaken = false;
-    // Set for Daily Dream runs (date-seeded, one attempt per day)
-    this.dailyMode = false;
     // Game feel: a short freeze when a melee hit lands, a decaying screen
     // shake, impact particles, and a shove on the player when damage lands.
     // None of it changes combat outcomes — it only makes them readable.
@@ -1038,6 +1036,20 @@ export class Game {
     return Boolean(this.explored[row] && this.explored[row][col]);
   }
 
+  // Fog levels only show living threats inside the current torch radius.
+  // Explored ground stays remembered, but orcs can still hide in the dark.
+  isInTorchLight(x, y) {
+    if (!this.fogEnabled) return true;
+    const center = this.playerCenter();
+    return Math.hypot(x - center.x, y - center.y) <= fogSettings.revealRadius;
+  }
+
+  isVisibleUnderFog(entity) {
+    if (!this.fogEnabled) return true;
+    const box = entity.getHitBox();
+    return this.isInTorchLight(box.x + box.width / 2, box.y + box.height / 2);
+  }
+
   updateGameState(deltaMs = 1000 / 60) {
     if (this.levelIntro) {
       this.levelIntro.msLeft -= deltaMs;
@@ -1544,9 +1556,8 @@ export class Game {
   }
 
   // Bookmark the run after each completed level so Continue survives a page
-  // refresh. Daily Dream runs are one attempt by design, so they never save.
+  // refresh.
   saveRun() {
-    if (this.dailyMode) return;
     saveRunState({
       level: this.currentLevel,
       score: this.score,
@@ -1613,9 +1624,13 @@ export class Game {
     this.powerups.forEach((powerup) => powerup.draw(this.context));
     this.drawWeaponPedestals();
     this.drops.forEach((drop) => drop.draw(this.context));
-    this.guards.forEach((guard) => guard.draw(this.context));
+    this.guards.forEach((guard) => {
+      if (this.isVisibleUnderFog(guard)) guard.draw(this.context);
+    });
     if (this.debugAi) {
-      this.guards.forEach((guard) => guard.drawDebug(this.context));
+      this.guards.forEach((guard) => {
+        if (this.isVisibleUnderFog(guard)) guard.drawDebug(this.context);
+      });
       this.context.save();
       this.context.font = "12px monospace";
       this.context.fillStyle = "rgba(0,0,0,0.65)";
@@ -1625,7 +1640,9 @@ export class Game {
       this.context.restore();
     }
     this.explosives.forEach((explosive) => explosive.draw(this.context));
-    this.projectiles.forEach((projectile) => projectile.draw(this.context));
+    this.projectiles.forEach((projectile) => {
+      if (this.isVisibleUnderFog(projectile)) projectile.draw(this.context);
+    });
 
     // Draw the exit
     if (this.exit) {
@@ -2259,10 +2276,9 @@ export class Game {
     }
   }
 
-  start({ fromLevel = null, daily = false } = {}) {
+  start({ fromLevel = null } = {}) {
     // Fresh run: reset all progress and abandon any bookmarked run
     clearRunState();
-    this.dailyMode = daily;
     this.started = true;
     this.paused = false;
     this.isGameOver = false;

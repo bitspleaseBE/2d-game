@@ -7,7 +7,7 @@ import { playNarration, stopNarration } from '../utils/narration.js';
 // - Shown when the player clears the final level
 // - Displays the final score and options to play again or return to the menu
 
-export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAssets = {}, dailyShare = null) {
+export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAssets = {}) {
     const container = document.getElementById('game-container');
     container.innerHTML = '';
 
@@ -27,22 +27,6 @@ export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAsse
     gameWonScreen.appendChild(scoreDisplay);
 
     appendScoreEntry(gameWonScreen, finalScore);
-
-    // Daily Dream runs end with a shareable one-liner of today's result
-    let shareButton = null;
-    if (dailyShare) {
-        shareButton = document.createElement('button');
-        shareButton.textContent = 'Share Daily Result';
-        shareButton.onclick = async () => {
-            try {
-                await navigator.clipboard.writeText(dailyShare);
-                shareButton.textContent = 'Copied to clipboard!';
-            } catch {
-                shareButton.textContent = dailyShare;
-            }
-        };
-        gameWonScreen.appendChild(shareButton);
-    }
 
     const playAgainButton = document.createElement('button');
     playAgainButton.textContent = 'Play Again';
@@ -66,8 +50,8 @@ export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAsse
     gameWonScreen.style.backgroundSize = 'cover';
     gameWonScreen.style.backgroundPosition = 'center';
     gameWonScreen.style.backgroundImage = storyAssets.endingDawn
-        ? `linear-gradient(rgba(8, 4, 2, 0.25), rgba(8, 4, 2, 0.72)), url("${storyAssets.endingDawn.src}")`
-        : 'radial-gradient(circle at center, #6d4c1d 0%, #1a0d00 65%)';
+        ? `linear-gradient(rgba(8, 12, 24, 0.35), rgba(8, 16, 28, 0.78)), url("${storyAssets.endingDawn.src}")`
+        : 'radial-gradient(circle at center, #3d7ea6 0%, #20222c 65%)';
     title.style.fontSize = theme.fontSize.title;
     title.style.marginBottom = '20px';
     title.style.textShadow = '0 3px 14px rgba(0, 0, 0, 0.85)';
@@ -76,16 +60,15 @@ export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAsse
     message.style.maxWidth = '880px';
     message.style.padding = '20px 28px';
     message.style.marginBottom = '20px';
-    message.style.background = 'rgba(12, 9, 18, 0.78)';
-    message.style.border = '2px solid rgba(212, 175, 55, 0.75)';
-    message.style.borderRadius = '14px';
+    message.style.background = 'rgba(32, 34, 44, 0.88)';
+    message.style.border = `2px solid ${theme.colors.text}`;
+    message.style.borderRadius = '4px';
 
     scoreDisplay.style.fontSize = theme.fontSize.subtitle;
     scoreDisplay.style.marginBottom = '20px';
 
-    styleButton(playAgainButton, theme.colors.accent);
+    styleButton(playAgainButton, theme.colors.primary);
     styleButton(mainMenuButton, theme.colors.secondary);
-    if (shareButton) styleButton(shareButton, theme.colors.primary);
 
     playNarration(endingStoryBeat.audioId);
 

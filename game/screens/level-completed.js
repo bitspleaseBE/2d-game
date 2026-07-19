@@ -29,7 +29,7 @@ export function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu, 
     modal.style.padding = theme.spacing.padding;
     modal.style.border = '2px solid ' + theme.colors.text;
     modal.style.borderRadius = theme.button.borderRadius;
-    modal.style.boxShadow = '0 0 30px rgba(212, 175, 55, 0.5)';
+    modal.style.boxShadow = '0 0 30px rgba(128, 216, 255, 0.35)';
 
     const title = document.createElement('h1');
     title.textContent = 'Dream-Shard Reclaimed!';
@@ -118,7 +118,7 @@ export function showLevelCompletedScreen(currentScore, onNextLevel, onMainMenu, 
     mainMenuButton.onclick = closeModal(onMainMenu);
     modal.appendChild(mainMenuButton);
 
-    styleButton(nextLevelButton, theme.colors.accent);
+    styleButton(nextLevelButton, theme.colors.primary);
     styleButton(mainMenuButton, theme.colors.secondary);
 
     overlay.appendChild(modal);

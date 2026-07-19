@@ -1,13 +1,14 @@
 // Theme configuration for the game
-// This file contains styles and colors used across different screens
+// Menu chrome mirrors the in-game inventory panel: dark slate, gold titles,
+// cyan accents, and green secondary actions.
 
 export const theme = {
     colors: {
-        background: '#1a0d00', // Dark brown for dungeon feel
-        text: '#d4af37', // Gold text for fantasy vibe
-        primary: '#8B4513', // Saddle brown to complement the existing colors
-        secondary: '#2e8b57', // Forest green for maze-like atmosphere
-        accent: '#ff4500', // Fiery orange for danger
+        background: '#20222c', // Same slate as the inventory panel
+        text: '#ffd54f', // Gold titles and borders
+        primary: '#3d7ea6', // Blue action buttons
+        secondary: '#3d8b5f', // Green secondary buttons
+        accent: '#80d8ff', // Cyan highlights (matches HUD labels)
     },
     fonts: {
         main: '"Luminari", "Papyrus", fantasy', // Quirky fantasy fonts
@@ -50,7 +51,7 @@ export function styleButton(button, color = theme.colors.primary) {
     button.style.borderRadius = theme.button.borderRadius;
     button.style.textTransform = 'uppercase';
     button.style.letterSpacing = '2px';
-    button.style.boxShadow = '0 0 10px rgba(212, 175, 55, 0.5)';
+    button.style.boxShadow = '0 0 12px rgba(128, 216, 255, 0.35)';
     button.style.transition = 'all 0.3s ease';
     button.style.minWidth = theme.button.minWidth;
 

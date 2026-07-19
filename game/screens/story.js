@@ -135,12 +135,12 @@ function styleStoryScreen(storyScreen, textContainer) {
     textContainer.style.bottom = '140px';
     textContainer.style.transform = 'translateX(-50%)';
     textContainer.style.width = 'min(880px, 78vw)';
-    textContainer.style.background = 'linear-gradient(180deg, rgba(12, 9, 18, 0.86), rgba(37, 20, 11, 0.9))';
+    textContainer.style.background = 'rgba(32, 34, 44, 0.92)';
     textContainer.style.color = theme.colors.text;
     textContainer.style.padding = '28px 36px';
-    textContainer.style.boxShadow = '0 0 35px rgba(0, 0, 0, 0.7)';
-    textContainer.style.border = '2px solid rgba(212, 175, 55, 0.75)';
-    textContainer.style.borderRadius = '14px';
+    textContainer.style.boxShadow = '0 0 24px rgba(128, 216, 255, 0.25)';
+    textContainer.style.border = `2px solid ${theme.colors.text}`;
+    textContainer.style.borderRadius = theme.button.borderRadius;
     textContainer.style.textAlign = 'center';
     textContainer.style.fontSize = '30px';
     textContainer.style.lineHeight = '1.35';

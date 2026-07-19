@@ -5,7 +5,6 @@ import {
   getFurthestLevel,
 } from '../utils/preferences.js';
 import levelData from '../levels/level-data.js';
-import { getTodayResult, copyShareString, shareString } from '../utils/daily.js';
 
 // Pick any unlocked dream after beating the campaign once.
 
@@ -71,7 +70,7 @@ export function showLevelSelectScreen(onPickLevel, onBack) {
 // - Display game title
 // - Provide buttons to start the game, view high scores, and adjust sound settings
 
-export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onStory, onLevelSelect, onDailyDream, onSettings) {
+export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onStory, onLevelSelect, onSettings) {
   const container = document.getElementById('game-container');
   container.innerHTML = '';
 
@@ -79,9 +78,9 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   welcomeScreen.id = 'welcome-screen';
 
   const title = document.createElement('h1');
-  title.textContent = 'Welcome to Wandertrap!';
+  title.textContent = 'Wandertrap';
   title.style.textShadow = '2px 2px 4px rgba(0, 0, 0, 0.5)';
-  title.style.background = 'linear-gradient(45deg, #FFD700, #FFA500)';
+  title.style.background = `linear-gradient(45deg, ${theme.colors.text}, ${theme.colors.accent})`;
   title.style.WebkitBackgroundClip = 'text';
   title.style.WebkitTextFillColor = 'transparent';
   title.style.display = 'inline-block';
@@ -89,7 +88,7 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
 
   const subtitle = document.createElement('h2');
   subtitle.textContent = 'Theo fell asleep... and the orcs stole the way home.';
-  subtitle.style.color = theme.colors.primary;
+  subtitle.style.color = theme.colors.accent;
   subtitle.style.fontSize = theme.fontSize.subtitle;
   subtitle.style.fontFamily = theme.fonts.subtitle;
   subtitle.style.marginBottom = '30px';
@@ -108,31 +107,12 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   startButton.onclick = onStartGame;
   welcomeScreen.appendChild(startButton);
 
-  // The Daily Dream: one date-seeded attempt per day. Once played, the
-  // button turns into a share action for today's result.
-  if (onDailyDream) {
-    const dailyButton = document.createElement('button');
-    const played = getTodayResult();
-    if (played) {
-      dailyButton.textContent = 'Daily Dream ✓ — Share';
-      dailyButton.onclick = async () => {
-        const copied = await copyShareString();
-        dailyButton.textContent = copied ? 'Copied to clipboard!' : shareString();
-      };
-    } else {
-      dailyButton.textContent = 'Daily Dream';
-      dailyButton.onclick = onDailyDream;
-    }
-    welcomeScreen.appendChild(dailyButton);
-    styleButton(dailyButton, theme.colors.accent);
-  }
-
   if (onLevelSelect && (isCampaignComplete() || getFurthestLevel() > 1)) {
     const levelSelectButton = document.createElement('button');
     levelSelectButton.textContent = 'Level Select';
     levelSelectButton.onclick = onLevelSelect;
     welcomeScreen.appendChild(levelSelectButton);
-    styleButton(levelSelectButton, theme.colors.accent);
+    styleButton(levelSelectButton, theme.colors.secondary);
   }
 
   const storyButton = document.createElement('button');
@@ -167,6 +147,6 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   title.style.marginBottom = '20px';
 
   styleButton(startButton);
-  styleButton(highScoresButton);
-  styleButton(settingsButton);
+  styleButton(highScoresButton, theme.colors.primary);
+  styleButton(settingsButton, theme.colors.primary);
 }

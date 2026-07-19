@@ -23,7 +23,6 @@ Wandertrap is an exciting 2D top-down maze game that challenges players to navig
 - Secret cracked walls (two per act) that fall to an axe swing and always hide a stash — including a hidden way into the Orc King's sanctum
 - Level twists: a defuse-every-trap bonus in the Quarry, a wake-before-dawn timer in the Serpent, and sneak-or-fight choices against both the first Warden and the Orc King
 - End-of-level mastery tally: time and untouched bonuses plus a persistent 1-3 star rating per dream, shown in Level Select
-- The Daily Dream: one date-seeded attempt per day with a shareable, Wordle-style result string — entirely local
 - Runs are bookmarked after each level, so Continue survives closing the browser
 - Short story beats between levels — with dry commentary from Sooth the dream-dragon — plus illustrated intro scenes and optional generated narration
 - Pixel art graphics for a retro gaming feel, plus synthesized sound effects

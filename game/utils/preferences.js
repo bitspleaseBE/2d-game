@@ -11,7 +11,6 @@ const KEYS = {
   levelStars: 'wandertrap.levelStars',
   runState: 'wandertrap.runState',
   furthestLevel: 'wandertrap.furthestLevel',
-  daily: 'wandertrap.daily',
 };
 
 function readJson(key, fallback) {
@@ -146,17 +145,6 @@ export function recordFurthestLevel(levelNumber) {
   } catch {
     // best-effort
   }
-}
-
-// --- Daily Dream ------------------------------------------------------------
-
-export function getDailyResult(dateKey) {
-  const daily = readJson(KEYS.daily, null);
-  return daily && daily.date === dateKey ? daily : null;
-}
-
-export function recordDailyResult(result) {
-  writeJson(KEYS.daily, result);
 }
 
 export function isCampaignComplete() {
