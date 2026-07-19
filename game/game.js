@@ -49,6 +49,7 @@ import Door from "./entities/door.js";
 import Projectile from "./entities/projectile.js";
 import { itemCatalog, guardDropPool, lateGuardDropPool, weaponCatalog, weaponOrder } from "./items.js";
 import { resolveThemeAssets } from "./assets/theme-manifest.js";
+import { getWallMask } from "./utils/wall-mask.js";
 import { random } from "./utils/rng.js";
 import { getWeaponUnlockCopy } from "./screens/weapon-unlocked.js";
 
@@ -128,6 +129,8 @@ export class Game {
     this.shakeTimeMs = 0;
     this.particles = [];
     this.playerKnockback = null;
+    // AI debug overlay (?debug=1 or F3). Shows mode/facing/leash per guard.
+    this.debugAi = new URLSearchParams(window.location.search).has("debug");
     // Per-level twists: the defuse-all trap counter and the dawn timer
     this.objective = null;
     this.trapStats = null;
@@ -142,7 +145,9 @@ export class Game {
       this.walls = [];
       this.doors = [];
       this.exit = null;
-      this.board = level.layout;
+      // Clone so breakable walls / unlocked doors can clear cells without
+      // mutating the shared level definition used by later runs.
+      this.board = level.layout.map((row) => row.slice());
       this.themeAssets = resolveThemeAssets(this.assets.levelAssets, level.theme);
       music.setTheme(level.theme);
       this.objective = level.objective || null;
@@ -154,19 +159,22 @@ export class Game {
       if (this.fogEnabled) {
         this.notify("Fog of war — explore to reveal the map!");
       }
-      for (let y = 0; y < level.layout.length; y++) {
-        for (let x = 0; x < level.layout[y].length; x++) {
-          if (level.layout[y][x] === "#" || level.layout[y][x] === "R") {
+      for (let y = 0; y < this.board.length; y++) {
+        for (let x = 0; x < this.board[y].length; x++) {
+          if (this.board[y][x] === "#" || this.board[y][x] === "R") {
             this.walls.push(
               new Wall(
                 x * canvasSettings.cellWidth,
                 y * canvasSettings.cellHeight,
-                level.layout[y][x] === "R" ? "breakable" : "normal",
-                this.themeAssets
+                this.board[y][x] === "R" ? "breakable" : "normal",
+                this.themeAssets,
+                x,
+                y,
+                getWallMask(this.board, x, y)
               )
             );
           }
-          if (level.layout[y][x] === "D") {
+          if (this.board[y][x] === "D") {
             this.doors.push(
               new Door(
                 x * canvasSettings.cellWidth,
@@ -175,7 +183,7 @@ export class Game {
               )
             );
           }
-          if (level.layout[y][x] === "X") {
+          if (this.board[y][x] === "X") {
             this.exit = new Exit(
               x * canvasSettings.cellWidth,
               y * canvasSettings.cellHeight,
@@ -255,6 +263,14 @@ export class Game {
     };
 
     window.addEventListener("keydown", (event) => {
+      if (event.key === "F3") {
+        event.preventDefault();
+        this.debugAi = !this.debugAi;
+        if (this.started) {
+          this.notify(this.debugAi ? "AI debug ON — F3 to hide" : "AI debug OFF");
+        }
+        return;
+      }
       if (!this.started || this.paused || this.isGameOver) return;
       if (this.weaponUnlock) {
         if (event.key === " " || event.key === "Enter" || event.key === "Escape") {
@@ -588,20 +604,41 @@ export class Game {
     this.drops.push(new Drop(box.x, box.y, itemId, this.assets.itemAssets));
   }
 
+  // Recompute autotile masks for a cell and its orthogonal neighbors.
+  refreshWallMasksAround(gridX, gridY) {
+    const cells = [
+      [gridX, gridY],
+      [gridX, gridY - 1],
+      [gridX + 1, gridY],
+      [gridX, gridY + 1],
+      [gridX - 1, gridY],
+    ];
+    for (const [x, y] of cells) {
+      const wall = this.walls.find((w) => w.getGridX() === x && w.getGridY() === y);
+      if (wall) wall.setMask(getWallMask(this.board, x, y));
+    }
+  }
+
   // Cracked walls ('R' cells) crumble to an axe swing and always hide a
   // stash — the reward for spotting the hairline cracks
   breakWallsInSwing(attackBox) {
     let broke = false;
+    const cleared = [];
     this.walls = this.walls.filter((wall) => {
       if (!wall.isBreakable() || !isColliding(attackBox, wall.getHitBox())) return true;
       const box = wall.getHitBox();
       const center = Game.boxCenter(box);
+      const gx = wall.getGridX();
+      const gy = wall.getGridY();
+      if (this.board[gy]) this.board[gy][gx] = " ";
+      cleared.push([gx, gy]);
       this.spawnParticles(center.x, center.y, { color: "#9e9e9e", count: 14, speed: 200 });
       this.drops.push(new Drop(box.x, box.y, "dreamShard", this.assets.itemAssets));
       this.notify("The cracked wall crumbles — something glitters in the rubble!");
       broke = true;
       return false;
     });
+    for (const [gx, gy] of cleared) this.refreshWallMasksAround(gx, gy);
     if (broke) {
       sfx.chop();
       this.triggerShake(juiceSettings.damageShakeMagnitude, juiceSettings.damageShakeMs);
@@ -1099,6 +1136,11 @@ export class Game {
       if (atDoor) {
         this.player.removeItem("key");
         door.unlock();
+        const box = door.getHitBox();
+        const gx = Math.round(box.x / canvasSettings.cellWidth);
+        const gy = Math.round(box.y / canvasSettings.cellHeight);
+        if (this.board[gy]) this.board[gy][gx] = " ";
+        this.refreshWallMasksAround(gx, gy);
         sfx.unlock();
         this.notify("You unlocked the door with your key!");
         return;
@@ -1261,7 +1303,8 @@ export class Game {
   }
 
   // The shove from damagePlayer: pushed along the same per-axis collision
-  // checks as walking, and cancelled early against a wall
+  // checks as walking, and cancelled early against a wall. Uses slideBy so
+  // facing stays whatever the player was looking at before the hit.
   applyPlayerKnockback(deltaMs) {
     if (!this.playerKnockback) return;
     const distance = combatSettings.playerKnockbackSpeed * (deltaMs / 1000);
@@ -1269,13 +1312,13 @@ export class Game {
     let blocked = true;
     const nextX = { x: current.x + this.playerKnockback.x * distance, y: current.y };
     if (this.playerKnockback.x !== 0 && this.canPlayerMoveTo(nextX)) {
-      this.player.moveBy(this.playerKnockback.x * distance, 0);
+      this.player.slideBy(this.playerKnockback.x * distance, 0);
       blocked = false;
     }
     const afterX = this.player.getPosition();
     const nextY = { x: afterX.x, y: afterX.y + this.playerKnockback.y * distance };
     if (this.playerKnockback.y !== 0 && this.canPlayerMoveTo(nextY)) {
-      this.player.moveBy(0, this.playerKnockback.y * distance);
+      this.player.slideBy(0, this.playerKnockback.y * distance);
       blocked = false;
     }
     this.playerKnockback.msLeft -= deltaMs;
@@ -1571,6 +1614,16 @@ export class Game {
     this.drawWeaponPedestals();
     this.drops.forEach((drop) => drop.draw(this.context));
     this.guards.forEach((guard) => guard.draw(this.context));
+    if (this.debugAi) {
+      this.guards.forEach((guard) => guard.drawDebug(this.context));
+      this.context.save();
+      this.context.font = "12px monospace";
+      this.context.fillStyle = "rgba(0,0,0,0.65)";
+      this.context.fillRect(8, this.canvas.height - 28, 280, 20);
+      this.context.fillStyle = "#b2ff59";
+      this.context.fillText("AI debug ON (F3) — red label = many facing flips", 12, this.canvas.height - 14);
+      this.context.restore();
+    }
     this.explosives.forEach((explosive) => explosive.draw(this.context));
     this.projectiles.forEach((projectile) => projectile.draw(this.context));
 
@@ -1763,7 +1816,9 @@ export class Game {
     const cycleMs = weaponId === "dreamBow" ? 900 : 620;
     const frameMs = this.weaponUnlockDemoMs % cycleMs;
     const frame = Math.floor(frameMs / (weaponId === "dreamBow" ? 70 : 80));
-    const row = weaponId === "dreamBow" ? 3 : manifestState === "axe" ? 10 : 7;
+    // Face right in every demo so the swing/shot reads clearly left-to-right.
+    // Rows match playerSpriteManifest (bow right=3, axe right=3, attack right=7).
+    const row = weaponId === "dreamBow" ? 3 : manifestState === "axe" ? 3 : 7;
     const sheet = weaponId === "dreamBow"
       ? this.assets.playerAssets.playerBow
       : manifestState === "axe"

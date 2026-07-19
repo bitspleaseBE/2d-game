@@ -34,6 +34,14 @@ class Guard extends Entity {
   #patrolDirection = null;
   #patrolMs = 0;
   #home;
+  // Committed chase/path axis ('x' | 'y'). Kept until that axis is aligned
+  // or a wall forces a switch, so facing cannot thrash every frame.
+  #chaseAxis = null;
+  // Leash hysteresis: once past the outer radius, keep walking home until
+  // inside the inner radius (avoids ping-pong facing at the leash edge).
+  #returningHome = false;
+  #aiMode = "idle";
+  #facingFlips = 0;
 
   #isBoss;
 
@@ -152,6 +160,9 @@ class Guard extends Entity {
 
   moveTowards(target, walls, deltaMs = 1000 / 60) {
     if (this.isDefeated()) return;
+    // Hold still (and keep facing) during the contact telegraph / strike so
+    // near-diagonal overlaps cannot flip up-down-up-down every frame.
+    if (this.#windupMs > 0 || this.#strikeGraceMs > 0) return;
 
     const targetCenter = {
       x: target.x + (target.width || 0) / 2,
@@ -160,40 +171,81 @@ class Guard extends Entity {
     const own = this.getMoveBox();
     const dx = targetCenter.x - (own.x + own.width / 2);
     const dy = targetCenter.y - (own.y + own.height / 2);
+
+    // Already on top of the target — start the windup without reshuffling facing.
+    if (isColliding(own, target) || (Math.abs(dx) < 1 && Math.abs(dy) < 1)) {
+      this.#chaseAxis = null;
+      this.beginWindup();
+      this.idle();
+      return;
+    }
+
+    if (!this.#stepOnAxes(dx, dy, walls, deltaMs, target)) {
+      this.idle();
+    }
+  }
+
+  // Axis-aligned walk that commits to one axis until it is aligned (or a
+  // wall forces a switch). Prevents left/right and up/down thrashing.
+  #stepOnAxes(dx, dy, walls, deltaMs, stopTarget = null) {
+    if (this.#chaseAxis === "x" && Math.abs(dx) < 1) this.#chaseAxis = null;
+    if (this.#chaseAxis === "y" && Math.abs(dy) < 1) this.#chaseAxis = null;
+    if (!this.#chaseAxis) {
+      this.#chaseAxis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+    }
+
+    const axes = [this.#chaseAxis, this.#chaseAxis === "x" ? "y" : "x"];
     const step = this.#speed * (deltaMs / 1000);
 
-    // Walk the axis with the larger remaining distance first, falling back
-    // to the other axis when a wall blocks the way (so corners don't stall
-    // the chase). The step is clamped to the remaining distance — without
-    // the clamp a nearly-aligned guard overshoots the target every frame
-    // and flips its facing left-right-left-right while going nowhere.
-    const axes = Math.abs(dx) >= Math.abs(dy) ? ["x", "y"] : ["y", "x"];
     for (const axis of axes) {
       const remaining = axis === "x" ? dx : dy;
-      if (Math.abs(remaining) < 1) continue; // already aligned on this axis
+      if (Math.abs(remaining) < 1) continue;
       const distance = Math.sign(remaining) * Math.min(step, Math.abs(remaining));
       const next = axis === "x"
         ? { x: this._position.x + distance, y: this._position.y }
         : { x: this._position.x, y: this._position.y + distance };
       const nextBox = this.getMoveBox(next.x, next.y);
-
-      this.movement = axis === "x"
+      const facing = axis === "x"
         ? (distance > 0 ? "right" : "left")
         : (distance > 0 ? "down" : "up");
-      this.animator.setDirection(this.movement);
 
-      if (isColliding(nextBox, target)) {
+      if (stopTarget && isColliding(nextBox, stopTarget)) {
+        this.#chaseAxis = axis;
+        this.#face(facing);
         this.beginWindup();
-        return;
+        return true;
       }
       if (walls.some((wall) => isColliding(nextBox, wall.getHitBox()))) {
-        continue; // blocked: try the other axis
+        continue;
       }
+
+      this.#chaseAxis = axis;
+      this.#face(facing);
       this._position = next;
       this.walk();
-      return;
+      return true;
     }
-    this.idle();
+    return false;
+  }
+
+  #face(direction) {
+    if (!direction || direction === this.movement) return;
+    this.#facingFlips += 1;
+    this.movement = direction;
+    this.animator.setDirection(direction);
+  }
+
+  getAiDebugInfo() {
+    return {
+      mode: this.#aiMode,
+      facing: this.movement,
+      axis: this.#chaseAxis,
+      patrol: this.#patrolDirection,
+      returningHome: this.#returningHome,
+      facingFlips: this.#facingFlips,
+      home: { ...this.#home },
+      pos: { ...this._position },
+    };
   }
 
   detectPlayer(playerPosition, walls) {
@@ -380,12 +432,17 @@ class Guard extends Entity {
     }
 
     if (this.detectPlayer(playerPosition, walls)) {
+      this.#aiMode = "chase";
+      this.#returningHome = false;
       this.#lastSeen = { x: playerPosition.x, y: playerPosition.y };
       this.moveTowards(playerPosition, walls, deltaMs);
     } else if (this.#isBoss) {
       // Bosses anchor their arena: no wandering, no chasing shadows
+      this.#aiMode = "idle";
+      this.#chaseAxis = null;
       this.idle();
     } else if (this.#lastSeen) {
+      this.#aiMode = "investigate";
       this.#investigate(walls, deltaMs);
     } else {
       this.#patrol(walls, deltaMs);
@@ -413,73 +470,90 @@ class Guard extends Entity {
   // seconds, sometimes just stand and turn in place, repeat
   #patrol(walls, deltaMs) {
     this.#patrolMs -= deltaMs;
-    if (this.#patrolMs <= 0) {
+    if (this.#patrolMs <= 0 && !this.#returningHome) {
       this.#patrolMs = randomInt(1600, 3200);
+      this.#chaseAxis = null;
       const roll = randomInt(0, 4);
       this.#patrolDirection = roll === 0 ? null : ["up", "down", "left", "right"][roll - 1];
-      if (!this.#patrolDirection) this.lookAround();
+      if (!this.#patrolDirection) {
+        this.#aiMode = "look";
+        this.lookAround();
+      }
     }
-    if (!this.#patrolDirection) return;
+    if (!this.#patrolDirection && !this.#returningHome) {
+      this.#aiMode = "idle";
+      return;
+    }
 
-    // Leashed to the spawn post: once the guard wanders more than a couple
-    // of cells away, the next steps head home instead of further out
+    // Leashed to the spawn post with hysteresis so the guard does not
+    // flip outward/home every frame at the boundary.
     const fromHome = Math.hypot(this._position.x - this.#home.x, this._position.y - this.#home.y);
-    let target;
-    if (fromHome > canvasSettings.cellWidth * 2) {
-      target = this.#home;
-    } else {
-      const step = {
-        up: { x: 0, y: -1 },
-        down: { x: 0, y: 1 },
-        left: { x: -1, y: 0 },
-        right: { x: 1, y: 0 },
-      }[this.#patrolDirection];
-      target = {
-        x: this._position.x + step.x * canvasSettings.cellWidth * 10,
-        y: this._position.y + step.y * canvasSettings.cellHeight * 10,
-      };
+    const leashOut = canvasSettings.cellWidth * 2.5;
+    const leashIn = canvasSettings.cellWidth * 0.6;
+
+    if (this.#returningHome) {
+      if (fromHome <= leashIn) {
+        this.#returningHome = false;
+        this.#chaseAxis = null;
+        this.#patrolDirection = null;
+        this.#patrolMs = randomInt(500, 1000);
+        this.#aiMode = "idle";
+        this.idle();
+        return;
+      }
+      this.#aiMode = "return";
+      if (!this.#stepToward(this.#home, walls, deltaMs * 0.6)) {
+        // Blocked on the way home — pause, then try a fresh patrol leg
+        this.#returningHome = false;
+        this.#chaseAxis = null;
+        this.#patrolDirection = null;
+        this.#patrolMs = randomInt(400, 900);
+        this.#aiMode = "idle";
+        this.idle();
+      }
+      return;
     }
-    // Patrolling ambles at 60% speed (scaled via the time slice). A wall
-    // ends the leg early — the guard then stands for a short beat before
-    // rolling a new direction, instead of re-rolling every frame (which
-    // made boxed-in guards flip their facing rapidly on the spot).
+
+    if (fromHome > leashOut) {
+      this.#returningHome = true;
+      this.#chaseAxis = null;
+      this.#aiMode = "return";
+      this.#stepToward(this.#home, walls, deltaMs * 0.6);
+      return;
+    }
+
+    this.#aiMode = "patrol";
+    const step = {
+      up: { x: 0, y: -1 },
+      down: { x: 0, y: 1 },
+      left: { x: -1, y: 0 },
+      right: { x: 1, y: 0 },
+    }[this.#patrolDirection];
+    const target = {
+      x: this._position.x + step.x * canvasSettings.cellWidth * 10,
+      y: this._position.y + step.y * canvasSettings.cellHeight * 10,
+    };
+    // Patrolling ambles at 60% speed. A wall ends the leg early.
     if (!this.#stepToward(target, walls, deltaMs * 0.6)) {
+      this.#chaseAxis = null;
       this.#patrolDirection = null;
       this.#patrolMs = randomInt(400, 900);
+      this.#aiMode = "idle";
       this.idle();
     }
   }
 
   // One movement step toward a point, blocked by walls. Returns false when
-  // the path is blocked. Shared by investigate and patrol. The step is
-  // clamped to the remaining distance so arrival never overshoots into a
-  // facing-flipping jitter.
+  // the path is blocked. Shared by investigate and patrol.
   #stepToward(point, walls, deltaMs) {
     const dx = point.x - this._position.x;
     const dy = point.y - this._position.y;
-    const axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
-    const remaining = axis === "x" ? dx : dy;
-    if (Math.abs(remaining) < 1) {
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+      this.#chaseAxis = null;
       this.idle();
       return true; // close enough — treat as arrived rather than blocked
     }
-
-    this.movement = axis === "x"
-      ? (remaining > 0 ? "right" : "left")
-      : (remaining > 0 ? "down" : "up");
-    this.animator.setDirection(this.movement);
-
-    const step = this.#speed * (deltaMs / 1000);
-    const distance = Math.sign(remaining) * Math.min(step, Math.abs(remaining));
-    const next = axis === "x"
-      ? { x: this._position.x + distance, y: this._position.y }
-      : { x: this._position.x, y: this._position.y + distance };
-    if (walls.some((wall) => isColliding(this.getMoveBox(next.x, next.y), wall.getHitBox()))) {
-      return false;
-    }
-    this._position = next;
-    this.walk();
-    return true;
+    return this.#stepOnAxes(dx, dy, walls, deltaMs);
   }
 
   #updateRanged(playerPosition, walls, deltaMs) {
@@ -492,15 +566,17 @@ class Guard extends Entity {
     const dy = targetCenter.y - ownCenter.y;
     const distance = Math.hypot(dx, dy) || 1;
 
-    this.movement = Math.abs(dx) > Math.abs(dy)
-      ? (dx > 0 ? "right" : "left")
-      : (dy > 0 ? "down" : "up");
-    this.animator.setDirection(this.movement);
-
     if (this.detectPlayer(playerPosition, walls)) {
       if (distance < combatSettings.archerKeepDistanceCells * canvasSettings.cellWidth) {
         this.#retreatFrom(dx, dy, walls, deltaMs);
       } else {
+        // Face the player only when standing to shoot — use committed axis.
+        if (this.#chaseAxis === "x" && Math.abs(dx) < 1) this.#chaseAxis = null;
+        if (this.#chaseAxis === "y" && Math.abs(dy) < 1) this.#chaseAxis = null;
+        if (!this.#chaseAxis) this.#chaseAxis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+        this.#face(this.#chaseAxis === "x"
+          ? (dx > 0 ? "right" : "left")
+          : (dy > 0 ? "down" : "up"));
         this.idle();
       }
       // The shot is telegraphed: the archer draws for a moment (visible
@@ -531,26 +607,8 @@ class Guard extends Entity {
   }
 
   #retreatFrom(dx, dy, walls, deltaMs) {
-    const distance = this.#speed * (deltaMs / 1000);
-    const axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
-    const next = { x: this._position.x, y: this._position.y };
-
-    if (axis === "x") {
-      next.x += dx > 0 ? -distance : distance;
-      this.movement = dx > 0 ? "left" : "right";
-    } else {
-      next.y += dy > 0 ? -distance : distance;
-      this.movement = dy > 0 ? "up" : "down";
-    }
-    this.animator.setDirection(this.movement);
-
-    const blocked = walls.some((wall) => isColliding(this.getMoveBox(next.x, next.y), wall.getHitBox()));
-    if (!blocked) {
-      this._position = next;
-      this.walk();
-    } else {
-      this.idle();
-    }
+    // Step away on the committed axis (opposite of the vector toward player).
+    if (!this.#stepOnAxes(-dx, -dy, walls, deltaMs)) this.idle();
   }
 
   #applyKnockback(walls, deltaMs) {
@@ -591,6 +649,35 @@ class Guard extends Entity {
 
     this.#drawHealthBar(ctx);
     this.#drawTelegraph(ctx);
+  }
+
+  // AI debug overlay: mode, facing, leash state, and flip count
+  drawDebug(ctx) {
+    if (this.isDefeated()) return;
+    const info = this.getAiDebugInfo();
+    const x = this._position.x - 4;
+    const y = this._position.y - 36;
+    const lines = [
+      info.mode,
+      `face:${info.facing} axis:${info.axis || "-"}`,
+      info.returningHome ? "RETURNING" : `patrol:${info.patrol || "-"}`,
+      `flips:${info.facingFlips}`,
+    ];
+    ctx.save();
+    ctx.font = "10px monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    const jittering = info.facingFlips > 8 && (info.mode === "patrol" || info.mode === "return");
+    ctx.fillStyle = jittering ? "rgba(180,0,0,0.75)" : "rgba(0,0,0,0.7)";
+    ctx.fillRect(x - 2, y - 2, 118, lines.length * 11 + 4);
+    ctx.fillStyle = jittering ? "#ff8a80" : "#b2ff59";
+    lines.forEach((line, i) => ctx.fillText(line, x, y + i * 11));
+    // Home leash ring
+    ctx.strokeStyle = "rgba(255,235,59,0.45)";
+    ctx.beginPath();
+    ctx.arc(info.home.x + this._width / 2, info.home.y + this._height / 2, canvasSettings.cellWidth * 2.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   // The attack telegraph: a bold '!' pops above the guard while a contact

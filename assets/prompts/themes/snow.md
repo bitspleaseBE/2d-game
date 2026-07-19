@@ -19,7 +19,8 @@ Generate with gpt-image-2 using the current forest assets as style references:
 ## Assets
 
 - `floor.png` — seamless snow floor tile with packed snow, light blue shadows, and tiny ice specks.
-- `wall.png` — icy stone wall tile with snow collected on top edges.
+- `wall.png` — icy stone wall tile with snow collected on top edges (flat fallback).
+- `wall_atlas.png` — 4×4 perspective autotile sheet (256×256, sixteen 64×64 cells). Index = NESW bitmask (`N=1 E=2 S=4 W=8`); column = index % 4, row = floor(index / 4). Each cell is a 3/4 top-down wall piece (top face + south front face) with transparent empty areas. Prefer regenerating via `node tools/generate-wall-atlases.mjs` from `wall.png`.
 - `tree_1.png` — bare frosted tree obstacle, transparent background.
 - `tree_2.png` — snow-covered stump or dead winter shrub obstacle, transparent background.
 - `boulder.png` — icy boulder with snow cap, transparent background.

@@ -8,6 +8,7 @@ export const THEMES = {
     name: "Forest",
     floor: "forestFloor",
     wall: "forestWall",
+    wallAtlas: "forestWallAtlas",
     trees: ["forestTree1", "forestTree2"],
     boulder: "forestBoulder",
     exit: "forestExit",
@@ -17,6 +18,7 @@ export const THEMES = {
     name: "Desert Ruins",
     floor: "desertFloor",
     wall: "desertWall",
+    wallAtlas: "desertWallAtlas",
     trees: ["desertTree1", "desertTree2"],
     boulder: "desertBoulder",
     exit: "desertExit",
@@ -26,6 +28,7 @@ export const THEMES = {
     name: "Frozen Halls",
     floor: "snowFloor",
     wall: "snowWall",
+    wallAtlas: "snowWallAtlas",
     trees: ["snowTree1", "snowTree2"],
     boulder: "snowBoulder",
     exit: "snowExit",
@@ -35,6 +38,7 @@ export const THEMES = {
     name: "Dungeon Depths",
     floor: "dungeonFloor",
     wall: "dungeonWall",
+    wallAtlas: "dungeonWallAtlas",
     trees: ["dungeonObstacle1", "dungeonObstacle2"],
     boulder: "dungeonBoulder",
     exit: "dungeonExit",
@@ -61,6 +65,11 @@ export function resolveThemeAssets(levelAssets, themeId = DEFAULT_THEME) {
     name: theme.name,
     floor: assetFromTheme(levelAssets, theme, fallbackTheme, "floor"),
     wall: assetFromTheme(levelAssets, theme, fallbackTheme, "wall"),
+    // 4×4 NESW autotile atlas; falls back to the flat wall tile when missing
+    wallAtlas:
+      levelAssets[theme.wallAtlas] ||
+      levelAssets[fallbackTheme.wallAtlas] ||
+      assetFromTheme(levelAssets, theme, fallbackTheme, "wall"),
     trees: trees.length
       ? trees
       : fallbackTheme.trees.map((key) => levelAssets[key]).filter(Boolean),

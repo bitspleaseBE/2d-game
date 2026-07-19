@@ -8,7 +8,8 @@
     "test": "playwright test",
     "narrate:story": "node scripts/generate-narration.js",
     "optimize:story": "node scripts/optimize-story-images.js",
-    "generate:favicon": "node scripts/generate-favicon.js"
+    "generate:favicon": "node scripts/generate-favicon.js",
+    "generate:wall-atlases": "node tools/generate-wall-atlases.mjs"
   },
   "author": "Emiel Masyn",
   "license": "ISC",

@@ -185,6 +185,13 @@ class Player extends Entity {
     }
   }
 
+  // Position-only shove (knockback, scripted pushes). Keeps facing so a hit
+  // does not spin Theo around mid-fight.
+  slideBy(deltaX, deltaY) {
+    this._position.x += deltaX;
+    this._position.y += deltaY;
+  }
+
   moveLeft(distance = this.getSpeed() / 60) {
     this.moveBy(-distance, 0);
   }

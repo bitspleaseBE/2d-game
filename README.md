@@ -96,7 +96,13 @@ To get started with `Wandertrap`, follow these steps:
    npm run build
    ```
 
-   This will create a `dist` folder with the optimized and bundled files ready for deployment.
+   This creates a `dist` folder locally. **Do not commit `dist`** — GitHub Pages builds it in CI (see `.github/workflows/pages.yml`).
+
+### GitHub Pages
+
+1. Repo **Settings → Pages → Build and deployment → Source**: choose **GitHub Actions** (not “Deploy from a branch”).
+2. Push to `main`. The workflow builds and publishes `dist` automatically.
+3. Site URL: `https://<user-or-org>.github.io/<repo>/`
 
 Note: The game uses Parcel as its bundler, which is included in the dev dependencies and will be installed automatically when you run `npm install`.
 

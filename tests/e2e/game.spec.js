@@ -156,6 +156,99 @@ test('walls block the player', async ({ page }) => {
   expect(state.position.x).toBeGreaterThan(start.position.x - 20);
 });
 
+test('wall autotile masks match corner, T, X, end, straight, and breakable topology', async ({ page }) => {
+  await startNewGame(page);
+
+  const masks = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    const maskAt = (x, y) => {
+      const wall = game.walls.find((w) => w.getGridX() === x && w.getGridY() === y);
+      return wall ? wall.getMask() : null;
+    };
+
+    game.startAtLevel(1);
+    const level1 = {
+      cornerES: maskAt(1, 1), // E|S
+      tESW: maskAt(6, 1), // E|S|W
+      breakableEW: maskAt(11, 3), // R between # #
+      endStub: maskAt(3, 3), // # with few neighbors
+    };
+
+    game.startAtLevel(2);
+    const level2 = {
+      xJunction: maskAt(10, 1), // N|E|S|W
+      isolated: maskAt(2, 2),
+      doorAdjacent: maskAt(13, 4), // locked D counts as connected
+    };
+
+    return { level1, level2 };
+  });
+
+  // N=1 E=2 S=4 W=8
+  expect(masks.level1.cornerES).toBe(2 | 4);
+  expect(masks.level1.tESW).toBe(2 | 4 | 8);
+  expect(masks.level1.breakableEW).toBe(2 | 8);
+  expect(masks.level1.endStub).not.toBeNull();
+  expect(masks.level2.xJunction).toBe(1 | 2 | 4 | 8);
+  expect(masks.level2.isolated).toBe(0);
+  expect(masks.level2.doorAdjacent).toBe(1 | 2 | 4);
+});
+
+test('breaking a cracked wall refreshes neighbor autotile masks', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    const neighbor = () =>
+      game.walls.find((w) => w.getGridX() === 12 && w.getGridY() === 3);
+    const before = neighbor().getMask();
+    game.player.unlockWeapon('woodenAxe');
+    game.teleportPlayer(704, 128);
+    game.player.movement = 'down';
+    game.playerAttack();
+    return {
+      before,
+      after: neighbor().getMask(),
+      boardCleared: game.board[3][11] === ' ',
+    };
+  });
+
+  expect(result.boardCleared).toBe(true);
+  expect(result.after).not.toBe(result.before);
+  // Former E|W|... neighbor loses the west connection through the R cell
+  expect(result.after & 8).toBe(0);
+});
+
+test('unlocking a door refreshes adjoining wall autotile masks', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.startAtLevel(2);
+    game.guards = [];
+    const wall = () => game.walls.find((w) => w.getGridX() === 13 && w.getGridY() === 4);
+    const before = wall().getMask();
+    game.teleportPlayer(896, 192); // free cell above the level 2 door
+    game.player.addItem('key');
+    for (let i = 0; i < 30; i++) game.movePlayer('down');
+    game.step(1);
+    return {
+      before,
+      after: wall().getMask(),
+      unlocked: !game.doors[0].locked,
+      boardCleared: game.board[4][14] === ' ',
+    };
+  });
+
+  expect(result.unlocked).toBe(true);
+  expect(result.boardCleared).toBe(true);
+  expect(result.before).toBe(1 | 2 | 4);
+  expect(result.after).toBe(1 | 4);
+});
+
 test('diagonal movement slides along blockers without clipping through walls', async ({ page }) => {
   await startNewGame(page);
 
@@ -1392,8 +1485,10 @@ test('contact damage knocks the player back, away from the guard', async ({ page
     game.walls = [];
     game.explosives = [];
     game.teleportPlayer(320, 300);
+    game.player.setMovement('up'); // facing should survive the shove
     const guard = game.spawnGuard(280, 300); // overlapping hitboxes, guard to the left
     const xBefore = game.player.getPosition().x;
+    const facingBefore = game.player.movement;
 
     game.step(2); // contact starts the windup telegraph — no damage yet
     const healthDuringWindup = game.player.getHealth();
@@ -1405,6 +1500,8 @@ test('contact damage knocks the player back, away from the guard', async ({ page
       xBefore,
       xAfter: game.player.getPosition().x,
       health: game.player.getHealth(),
+      facingBefore,
+      facingAfter: game.player.movement,
     };
   });
 
@@ -1412,6 +1509,7 @@ test('contact damage knocks the player back, away from the guard', async ({ page
   expect(result.healthDuringWindup).toBe(100); // no damage during the windup
   expect(result.health).toBe(90); // then one contact hit lands
   expect(result.xAfter).toBeGreaterThan(result.xBefore); // pushed right, away from the guard
+  expect(result.facingAfter).toBe(result.facingBefore); // knockback does not spin Theo
 });
 
 test('hurt invulnerability counts down in game time, not wall-clock time', async ({ page }) => {
@@ -1726,6 +1824,78 @@ test('a chasing guard settles on its target instead of jittering left-right', as
   expect(Math.abs(result.centerY - 336)).toBeLessThanOrEqual(25);
   expect(result.drift).toBeLessThan(1); // and stays put once there
   expect(result.facingCount).toBe(1); // no left-right-left-right flapping
+});
+
+test('a chasing guard does not thrash facing on a near-diagonal approach', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    const guard = game.spawnGuard(300, 300);
+    // Nearly equal dx/dy so a naive axis picker would flip every few steps
+    const target = { x: 420, y: 420, width: 0, height: 0 };
+    const facings = [];
+    for (let i = 0; i < 180; i++) {
+      guard.moveTowards(target, [], 1000 / 60);
+      facings.push(guard.movement);
+    }
+    let flips = 0;
+    for (let i = 1; i < facings.length; i++) {
+      if (facings[i] !== facings[i - 1]) flips += 1;
+    }
+    // Also chase a moving near-diagonal target (player-like wobble)
+    const guard2 = game.spawnGuard(300, 300);
+    const movingFacings = [];
+    for (let i = 0; i < 120; i++) {
+      const wobble = (i % 2 === 0) ? 8 : -8;
+      guard2.moveTowards(
+        { x: 400 + wobble, y: 400 - wobble, width: 40, height: 40 },
+        [],
+        1000 / 60
+      );
+      movingFacings.push(guard2.movement);
+    }
+    let movingFlips = 0;
+    for (let i = 1; i < movingFacings.length; i++) {
+      if (movingFacings[i] !== movingFacings[i - 1]) movingFlips += 1;
+    }
+    return { flips, movingFlips };
+  });
+
+  // Committed-axis chase: at most one axis change (x then y), not thrashing.
+  expect(result.flips).toBeLessThanOrEqual(2);
+  expect(result.movingFlips).toBeLessThan(8);
+});
+
+test('patrol leash does not ping-pong facing at the boundary', async ({ page }) => {
+  await startNewGame(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.guards = [];
+    // Spawn far from walls; force patrol toward a leash-edge oscillation
+    const guard = game.spawnGuard(400, 300);
+    // Drive many update ticks with no player in sight (empty hitbox far away)
+    const farPlayer = { x: -9999, y: -9999, width: 1, height: 1 };
+    const facings = [];
+    for (let i = 0; i < 600; i++) {
+      guard.update(farPlayer, game.walls, 1000 / 60);
+      facings.push(guard.movement);
+    }
+    let flips = 0;
+    for (let i = 1; i < facings.length; i++) {
+      if (facings[i] !== facings[i - 1]) flips += 1;
+    }
+    const debug = guard.getAiDebugInfo();
+    return { flips, facingFlips: debug.facingFlips, mode: debug.mode };
+  });
+
+  // Occasional turns when choosing a new patrol leg are fine; boundary thrash is not.
+  expect(result.facingFlips).toBeLessThan(40);
+  expect(result.flips).toBeLessThan(40);
 });
 
 test('a guard walking into a wall keeps its body out of the wall cell', async ({ page }) => {

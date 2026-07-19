@@ -1,16 +1,26 @@
 import Entity from './entity.js';
+import { atlasRectForMask, WALL_TILE_SIZE } from '../utils/wall-mask.js';
 
 // Wall entity class
 // - 'normal' walls are permanent
 // - 'breakable' walls ('R' in level layouts) show hairline cracks and fall
 //   to a single axe swing, hiding shard stashes and secret shortcuts
+// - Visuals come from a 4×4 NESW autotile atlas when available
 
 class Wall extends Entity {
   #type;
+  #gridX;
+  #gridY;
+  #mask;
+  #atlas;
 
-  constructor(x, y, type, assets) {
+  constructor(x, y, type, assets, gridX, gridY, mask = 0) {
     super(x, y);
     this.#type = type; // 'normal' or 'breakable'
+    this.#gridX = gridX;
+    this.#gridY = gridY;
+    this.#mask = mask & 0xf;
+    this.#atlas = assets.wallAtlas || null;
     this._sprite = assets.wall;
   }
 
@@ -22,18 +32,38 @@ class Wall extends Entity {
     return this.#type === 'breakable';
   }
 
+  getGridX() {
+    return this.#gridX;
+  }
+
+  getGridY() {
+    return this.#gridY;
+  }
+
+  getMask() {
+    return this.#mask;
+  }
+
+  setMask(mask) {
+    this.#mask = mask & 0xf;
+  }
+
   update() {
     // Update wall state if needed (e.g., for breakable walls)
   }
 
   draw(ctx) {
-    ctx.drawImage(
-      this._sprite,
-      this._position.x,
-      this._position.y,
-      this._width,
-      this._height
-    );
+    const { x, y } = this._position;
+    const w = this._width;
+    const h = this._height;
+
+    if (this.#atlas) {
+      const { sx, sy, sw, sh } = atlasRectForMask(this.#mask, WALL_TILE_SIZE);
+      ctx.drawImage(this.#atlas, sx, sy, sw, sh, x, y, w, h);
+    } else if (this._sprite) {
+      ctx.drawImage(this._sprite, x, y, w, h);
+    }
+
     if (this.#type === 'breakable') this.#drawCracks(ctx);
   }
 
@@ -43,6 +73,10 @@ class Wall extends Entity {
     const w = this._width;
     const h = this._height;
     ctx.save();
+    // Keep cracks inside the wall cell artwork
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
     ctx.lineWidth = 2;
     ctx.beginPath();

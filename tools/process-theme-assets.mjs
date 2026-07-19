@@ -15,6 +15,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_DIR = join(ROOT, "assets", "generated-theme-sources");
 
 const OPAQUE_ASSETS = new Set(["floor", "wall"]);
+// Wall atlases keep transparency around shaped pieces.
+const ATLAS_ASSETS = new Set(["wall_atlas"]);
 
 function themeAsset(theme, asset, outputName = asset) {
   return {
@@ -28,6 +30,7 @@ function themeAsset(theme, asset, outputName = asset) {
 const SOURCE_ASSETS = [
   themeAsset("forest", "floor"),
   themeAsset("forest", "wall"),
+  themeAsset("forest", "wall_atlas"),
   themeAsset("forest", "tree_1"),
   themeAsset("forest", "tree_2"),
   themeAsset("forest", "boulder"),
@@ -35,6 +38,7 @@ const SOURCE_ASSETS = [
 
   themeAsset("desert", "floor"),
   themeAsset("desert", "wall"),
+  themeAsset("desert", "wall_atlas"),
   themeAsset("desert", "tree_1"),
   themeAsset("desert", "tree_2"),
   themeAsset("desert", "boulder"),
@@ -42,6 +46,7 @@ const SOURCE_ASSETS = [
 
   themeAsset("snow", "floor"),
   themeAsset("snow", "wall"),
+  themeAsset("snow", "wall_atlas"),
   themeAsset("snow", "tree_1"),
   themeAsset("snow", "tree_2"),
   themeAsset("snow", "boulder"),
@@ -49,6 +54,7 @@ const SOURCE_ASSETS = [
 
   themeAsset("dungeon", "floor"),
   themeAsset("dungeon", "wall"),
+  themeAsset("dungeon", "wall_atlas"),
   themeAsset("dungeon", "obstacle_1"),
   themeAsset("dungeon", "obstacle_2"),
   themeAsset("dungeon", "boulder"),
@@ -60,9 +66,11 @@ function parseEntries() {
     const bytes = readFileSync(inputPath);
     return {
       key,
+      asset,
       inputPath,
       outputPath,
       transparent: !OPAQUE_ASSETS.has(asset),
+      atlas: ATLAS_ASSETS.has(asset),
       dataUrl: `data:image/png;base64,${bytes.toString("base64")}`,
     };
   });
@@ -80,6 +88,7 @@ try {
   const page = await browser.newPage();
   const results = await page.evaluate(async (assets) => {
     const SIZE = 64;
+    const ATLAS_SIZE = 256;
 
     function loadImage(dataUrl) {
       return new Promise((resolve, reject) => {
@@ -194,6 +203,22 @@ try {
       const sourceCtx = source.getContext("2d");
       sourceCtx.imageSmoothingEnabled = false;
       sourceCtx.drawImage(image, 0, 0);
+
+      // Autotile atlases: scale the whole 4×4 sheet to 256×256, keep alpha.
+      if (asset.atlas) {
+        const target = document.createElement("canvas");
+        target.width = ATLAS_SIZE;
+        target.height = ATLAS_SIZE;
+        const targetCtx = target.getContext("2d");
+        targetCtx.imageSmoothingEnabled = false;
+        targetCtx.clearRect(0, 0, ATLAS_SIZE, ATLAS_SIZE);
+        targetCtx.drawImage(source, 0, 0, ATLAS_SIZE, ATLAS_SIZE);
+        return {
+          key: asset.key,
+          outputPath: asset.outputPath,
+          dataUrl: target.toDataURL("image/png"),
+        };
+      }
 
       if (asset.transparent) removeEdgeBackground(source);
 
