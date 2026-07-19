@@ -163,6 +163,24 @@ const PROJECTILE_ASSET_URLS = {
   arrow: new URL("../assets/images/projectiles/arrow.png", import.meta.url),
 };
 
+// Menu backdrop: full-bleed scary-dream art for the welcome screen.
+// Prefer WebP when supported; PNG stays as the Parcel-bundled fallback.
+const MENU_BACKDROP_SOURCES = {
+  webp: new URL("../assets/images/ui/menu_backdrop.webp", import.meta.url),
+  png: new URL("../assets/images/ui/menu_backdrop.png", import.meta.url),
+};
+
+/** Resolve the menu backdrop URL (WebP when the browser supports it). */
+export async function getMenuBackdropUrl() {
+  const preferWebp = await supportsWebP();
+  return preferWebp ? MENU_BACKDROP_SOURCES.webp.href : MENU_BACKDROP_SOURCES.png.href;
+}
+
+/** Sync PNG fallback for callers that cannot await (before WebP detection). */
+export function getMenuBackdropPngUrl() {
+  return MENU_BACKDROP_SOURCES.png.href;
+}
+
 // Total number of images the splash screen progress bar should expect.
 // Derived from the URL maps so it can never drift out of sync with the
 // actual asset lists (which previously caused progress above 100%).
