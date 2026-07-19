@@ -85,6 +85,8 @@ export const itemCatalog = {
     article: "a",
     kind: "upgrade",
     icon: "arrowBundle",
+    // Unlock panel reuses the bow shot demo (this is ammo capacity, not a new weapon).
+    demoWeaponId: "dreamBow",
     description: "Raises arrow capacity and steadies Theo's bow draw.",
   },
   runeHaste: {

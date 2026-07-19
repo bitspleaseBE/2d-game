@@ -120,7 +120,8 @@ export const playerSpriteManifest = {
           frameHeight: 64,
           frames: 8,
           frameDurationMs: 70,
-          rows: { down: 0, up: 1, left: 2, right: 3 },
+          // Sheet order is down/up/right/left (row 2 faces right, row 3 faces left).
+          rows: { down: 0, up: 1, left: 3, right: 2 },
           oneShot: true,
           returnTo: "idle",
           activeStartMs: 360,

@@ -1810,15 +1810,16 @@ export class Game {
   drawWeaponDemo(x, y, width, height) {
     const ctx = this.context;
     const item = itemCatalog[this.weaponUnlock.itemId];
-    const weaponId = item?.weaponId || this.weaponUnlock.itemId;
+    // Upgrades like moonlitQuiver set demoWeaponId so the panel shows the related attack.
+    const weaponId = item?.demoWeaponId || item?.weaponId || this.weaponUnlock.itemId;
     const weapon = weaponCatalog[weaponId] || weaponCatalog.dreamBow;
     const manifestState = weapon.actionState || "attack";
     const cycleMs = weaponId === "dreamBow" ? 900 : 620;
     const frameMs = this.weaponUnlockDemoMs % cycleMs;
     const frame = Math.floor(frameMs / (weaponId === "dreamBow" ? 70 : 80));
     // Face right in every demo so the swing/shot reads clearly left-to-right.
-    // Rows match playerSpriteManifest (bow right=3, axe right=3, attack right=7).
-    const row = weaponId === "dreamBow" ? 3 : manifestState === "axe" ? 3 : 7;
+    // Rows match playerSpriteManifest (bow right=2, axe right=3, attack right=7).
+    const row = weaponId === "dreamBow" ? 2 : manifestState === "axe" ? 3 : 7;
     const sheet = weaponId === "dreamBow"
       ? this.assets.playerAssets.playerBow
       : manifestState === "axe"
