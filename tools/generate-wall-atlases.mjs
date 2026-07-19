@@ -118,14 +118,94 @@ try {
         return rgbArr.map((c) => Math.max(0, Math.min(255, Math.round(c * factor))));
       }
 
-      // Solid dark brick for every mask. Top/front splits made T-stubs look
-      // checkered (full-top cells next to front-faced cells); keep one look.
-      function drawTile(ctx, _mask, _palette, texture, size) {
+      // Same 3/4 tile for every mask: short top ledge + tall dark front face.
+      // Using one layout for all neighbors avoids the checkered look from
+      // mixing full-top (hasS) cells with front-faced (!hasS) cells.
+      function drawTile(ctx, _mask, palette, texture, size) {
+        const frontH = Math.round(size * 0.62);
+        const topH = size - frontH;
+        const topMid = shade(palette.mid, 0.58);
+        const topDark = shade(palette.dark, 0.68);
+        const topLight = shade(palette.light, 0.75);
+
         ctx.imageSmoothingEnabled = false;
         ctx.clearRect(0, 0, size, size);
-        ctx.drawImage(texture, 0, 0, size, size);
-        ctx.fillStyle = "rgba(0,0,0,0.22)";
-        ctx.fillRect(0, 0, size, size);
+
+        // Top ledge — flat, quieter than the upright brick face
+        const topCanvas = document.createElement("canvas");
+        topCanvas.width = size;
+        topCanvas.height = topH;
+        const topCtx = topCanvas.getContext("2d");
+        topCtx.imageSmoothingEnabled = false;
+        topCtx.drawImage(texture, 0, 0, size, size, 0, 0, size, topH);
+        topCtx.fillStyle = "rgba(0,0,0,0.4)";
+        topCtx.fillRect(0, 0, size, topH);
+        const topData = topCtx.getImageData(0, 0, size, topH).data;
+        const out = ctx.createImageData(size, size);
+
+        for (let y = 0; y < topH; y++) {
+          for (let x = 0; x < size; x++) {
+            const i = (y * size + x) * 4;
+            const si = (y * size + x) * 4;
+            const base = ((x + y) & 1) === 0 ? topMid : topDark;
+            out.data[i] = Math.round(topData[si] * 0.3 + base[0] * 0.7);
+            out.data[i + 1] = Math.round(topData[si + 1] * 0.3 + base[1] * 0.7);
+            out.data[i + 2] = Math.round(topData[si + 2] * 0.3 + base[2] * 0.7);
+            out.data[i + 3] = 255;
+          }
+        }
+        // North rim highlight on the ledge
+        for (let x = 0; x < size; x++) {
+          const i = x * 4;
+          out.data[i] = topLight[0];
+          out.data[i + 1] = topLight[1];
+          out.data[i + 2] = topLight[2];
+        }
+        // Soft shadow where top meets the front face
+        for (let x = 0; x < size; x++) {
+          const i = ((topH - 1) * size + x) * 4;
+          out.data[i] = Math.round(out.data[i] * 0.55);
+          out.data[i + 1] = Math.round(out.data[i + 1] * 0.55);
+          out.data[i + 2] = Math.round(out.data[i + 2] * 0.55);
+        }
+
+        // Tall front face — the shadowed vertical side
+        const faceCanvas = document.createElement("canvas");
+        faceCanvas.width = size;
+        faceCanvas.height = frontH;
+        const faceCtx = faceCanvas.getContext("2d");
+        faceCtx.imageSmoothingEnabled = false;
+        faceCtx.drawImage(texture, 0, 0, size, size, 0, 0, size, frontH);
+        faceCtx.fillStyle = "rgba(0,0,0,0.28)";
+        faceCtx.fillRect(0, 0, size, frontH);
+        const faceData = faceCtx.getImageData(0, 0, size, frontH).data;
+
+        for (let fy = 0; fy < frontH; fy++) {
+          for (let x = 0; x < size; x++) {
+            const src = (fy * size + x) * 4;
+            const dst = ((topH + fy) * size + x) * 4;
+            let r = faceData[src];
+            let g = faceData[src + 1];
+            let b = faceData[src + 2];
+            if (fy === 0) {
+              r = Math.min(255, Math.round(r * 0.85 + 20));
+              g = Math.min(255, Math.round(g * 0.85 + 20));
+              b = Math.min(255, Math.round(b * 0.85 + 20));
+            }
+            if (fy >= frontH - 2) {
+              const t = fy === frontH - 1 ? 0.45 : 0.7;
+              r = Math.round(r * t);
+              g = Math.round(g * t);
+              b = Math.round(b * t);
+            }
+            out.data[dst] = r;
+            out.data[dst + 1] = g;
+            out.data[dst + 2] = b;
+            out.data[dst + 3] = 255;
+          }
+        }
+
+        ctx.putImageData(out, 0, 0);
       }
 
       const outputs = [];
