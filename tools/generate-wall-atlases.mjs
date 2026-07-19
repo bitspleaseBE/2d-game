@@ -125,11 +125,11 @@ try {
         const topH = size - frontH;
         const hasE = (mask & 2) !== 0;
         const hasW = (mask & 8) !== 0;
-        const topMid = shade(palette.mid, 0.58);
-        const topDark = shade(palette.dark, 0.68);
-        const topLight = shade(palette.light, 0.75);
-        const edgeDark = shade(palette.dark, 0.55);
-        const edgeLight = shade(palette.light, 1.08);
+        const topMid = shade(palette.mid, 0.72);
+        const topDark = shade(palette.dark, 0.82);
+        const topLight = shade(palette.light, 0.9);
+        const edgeDark = shade(palette.dark, 0.45);
+        const edgeLight = shade(palette.light, 1.15);
 
         ctx.imageSmoothingEnabled = false;
         ctx.clearRect(0, 0, size, size);
@@ -143,7 +143,7 @@ try {
         const tw = texture.naturalWidth || texture.width;
         const th = texture.naturalHeight || texture.height;
         topCtx.drawImage(texture, 0, 0, tw, th, 0, 0, size, topH);
-        topCtx.fillStyle = "rgba(0,0,0,0.38)";
+        topCtx.fillStyle = "rgba(0,0,0,0.22)";
         topCtx.fillRect(0, 0, size, topH);
         const topData = topCtx.getImageData(0, 0, size, topH).data;
         const out = ctx.createImageData(size, size);
@@ -153,9 +153,9 @@ try {
             const i = (y * size + x) * 4;
             const si = (y * size + x) * 4;
             const base = ((x + y) & 1) === 0 ? topMid : topDark;
-            out.data[i] = Math.round(topData[si] * 0.3 + base[0] * 0.7);
-            out.data[i + 1] = Math.round(topData[si + 1] * 0.3 + base[1] * 0.7);
-            out.data[i + 2] = Math.round(topData[si + 2] * 0.3 + base[2] * 0.7);
+            out.data[i] = Math.round(topData[si] * 0.2 + base[0] * 0.8);
+            out.data[i + 1] = Math.round(topData[si + 1] * 0.2 + base[1] * 0.8);
+            out.data[i + 2] = Math.round(topData[si + 2] * 0.2 + base[2] * 0.8);
             out.data[i + 3] = 255;
           }
         }
@@ -174,17 +174,17 @@ try {
           out.data[i + 2] = Math.round(out.data[i + 2] * 0.55);
         }
 
-        // Tall front face — the shadowed vertical side (keep brick texture)
+        // Tall front face — darker shadowed vertical side (brick texture kept)
         const faceCanvas = document.createElement("canvas");
         faceCanvas.width = size;
         faceCanvas.height = frontH;
         const faceCtx = faceCanvas.getContext("2d");
         faceCtx.imageSmoothingEnabled = false;
         faceCtx.drawImage(texture, 0, 0, tw, th, 0, 0, size, frontH);
-        faceCtx.fillStyle = "rgba(0,0,0,0.18)";
+        faceCtx.fillStyle = "rgba(0,0,0,0.42)";
         faceCtx.fillRect(0, 0, size, frontH);
         const faceData = faceCtx.getImageData(0, 0, size, frontH).data;
-        const bevel = Math.max(2, Math.round(size * 0.06));
+        const bevel = Math.max(3, Math.round(size * 0.08));
 
         for (let fy = 0; fy < frontH; fy++) {
           for (let x = 0; x < size; x++) {
@@ -194,17 +194,17 @@ try {
             let g = faceData[src + 1];
             let b = faceData[src + 2];
             // Soft vertical AO — darker toward the floor
-            const depth = 0.92 - (fy / frontH) * 0.22;
+            const depth = 0.88 - (fy / frontH) * 0.28;
             r = Math.round(r * depth);
             g = Math.round(g * depth);
             b = Math.round(b * depth);
             if (fy === 0) {
-              r = Math.min(255, Math.round(r * 0.9 + 18));
-              g = Math.min(255, Math.round(g * 0.9 + 18));
-              b = Math.min(255, Math.round(b * 0.9 + 18));
+              r = Math.min(255, Math.round(r * 0.75 + 12));
+              g = Math.min(255, Math.round(g * 0.75 + 12));
+              b = Math.min(255, Math.round(b * 0.75 + 12));
             }
             if (fy >= frontH - 2) {
-              const t = fy === frontH - 1 ? 0.5 : 0.72;
+              const t = fy === frontH - 1 ? 0.4 : 0.62;
               r = Math.round(r * t);
               g = Math.round(g * t);
               b = Math.round(b * t);
@@ -230,12 +230,12 @@ try {
 
         if (!hasW) {
           for (let x = 0; x < bevel; x++) {
-            blendColumn(x, edgeLight, 0.55 * (1 - x / bevel));
+            blendColumn(x, edgeLight, 0.7 * (1 - x / bevel));
           }
         }
         if (!hasE) {
           for (let x = 0; x < bevel; x++) {
-            blendColumn(size - 1 - x, edgeDark, 0.65 * (1 - x / bevel));
+            blendColumn(size - 1 - x, edgeDark, 0.8 * (1 - x / bevel));
           }
         }
 
