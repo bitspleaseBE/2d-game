@@ -118,15 +118,18 @@ try {
         return rgbArr.map((c) => Math.max(0, Math.min(255, Math.round(c * factor))));
       }
 
-      // Same 3/4 tile for every mask: short top ledge + tall dark front face.
-      // Using one layout for all neighbors avoids the checkered look from
-      // mixing full-top (hasS) cells with front-faced (!hasS) cells.
-      function drawTile(ctx, _mask, palette, texture, size) {
+      // Same top/front layout for every mask (avoids T-stub checkering), but
+      // open E/W edges get light/dark bevels so wall ends read as shadowed sides.
+      function drawTile(ctx, mask, palette, texture, size) {
         const frontH = Math.round(size * 0.62);
         const topH = size - frontH;
+        const hasE = (mask & 2) !== 0;
+        const hasW = (mask & 8) !== 0;
         const topMid = shade(palette.mid, 0.58);
         const topDark = shade(palette.dark, 0.68);
         const topLight = shade(palette.light, 0.75);
+        const edgeDark = shade(palette.dark, 0.55);
+        const edgeLight = shade(palette.light, 1.08);
 
         ctx.imageSmoothingEnabled = false;
         ctx.clearRect(0, 0, size, size);
@@ -137,8 +140,10 @@ try {
         topCanvas.height = topH;
         const topCtx = topCanvas.getContext("2d");
         topCtx.imageSmoothingEnabled = false;
-        topCtx.drawImage(texture, 0, 0, size, size, 0, 0, size, topH);
-        topCtx.fillStyle = "rgba(0,0,0,0.4)";
+        const tw = texture.naturalWidth || texture.width;
+        const th = texture.naturalHeight || texture.height;
+        topCtx.drawImage(texture, 0, 0, tw, th, 0, 0, size, topH);
+        topCtx.fillStyle = "rgba(0,0,0,0.38)";
         topCtx.fillRect(0, 0, size, topH);
         const topData = topCtx.getImageData(0, 0, size, topH).data;
         const out = ctx.createImageData(size, size);
@@ -169,16 +174,17 @@ try {
           out.data[i + 2] = Math.round(out.data[i + 2] * 0.55);
         }
 
-        // Tall front face — the shadowed vertical side
+        // Tall front face — the shadowed vertical side (keep brick texture)
         const faceCanvas = document.createElement("canvas");
         faceCanvas.width = size;
         faceCanvas.height = frontH;
         const faceCtx = faceCanvas.getContext("2d");
         faceCtx.imageSmoothingEnabled = false;
-        faceCtx.drawImage(texture, 0, 0, size, size, 0, 0, size, frontH);
-        faceCtx.fillStyle = "rgba(0,0,0,0.28)";
+        faceCtx.drawImage(texture, 0, 0, tw, th, 0, 0, size, frontH);
+        faceCtx.fillStyle = "rgba(0,0,0,0.18)";
         faceCtx.fillRect(0, 0, size, frontH);
         const faceData = faceCtx.getImageData(0, 0, size, frontH).data;
+        const bevel = Math.max(2, Math.round(size * 0.06));
 
         for (let fy = 0; fy < frontH; fy++) {
           for (let x = 0; x < size; x++) {
@@ -187,13 +193,18 @@ try {
             let r = faceData[src];
             let g = faceData[src + 1];
             let b = faceData[src + 2];
+            // Soft vertical AO — darker toward the floor
+            const depth = 0.92 - (fy / frontH) * 0.22;
+            r = Math.round(r * depth);
+            g = Math.round(g * depth);
+            b = Math.round(b * depth);
             if (fy === 0) {
-              r = Math.min(255, Math.round(r * 0.85 + 20));
-              g = Math.min(255, Math.round(g * 0.85 + 20));
-              b = Math.min(255, Math.round(b * 0.85 + 20));
+              r = Math.min(255, Math.round(r * 0.9 + 18));
+              g = Math.min(255, Math.round(g * 0.9 + 18));
+              b = Math.min(255, Math.round(b * 0.9 + 18));
             }
             if (fy >= frontH - 2) {
-              const t = fy === frontH - 1 ? 0.45 : 0.7;
+              const t = fy === frontH - 1 ? 0.5 : 0.72;
               r = Math.round(r * t);
               g = Math.round(g * t);
               b = Math.round(b * t);
@@ -202,6 +213,29 @@ try {
             out.data[dst + 1] = g;
             out.data[dst + 2] = b;
             out.data[dst + 3] = 255;
+          }
+        }
+
+        // Open-edge bevels (only when not connected) — restores shadowed sides
+        // without painting seams between adjacent wall cells.
+        function blendColumn(x, color, strength) {
+          for (let y = 0; y < size; y++) {
+            const i = (y * size + x) * 4;
+            const t = strength;
+            out.data[i] = Math.round(out.data[i] * (1 - t) + color[0] * t);
+            out.data[i + 1] = Math.round(out.data[i + 1] * (1 - t) + color[1] * t);
+            out.data[i + 2] = Math.round(out.data[i + 2] * (1 - t) + color[2] * t);
+          }
+        }
+
+        if (!hasW) {
+          for (let x = 0; x < bevel; x++) {
+            blendColumn(x, edgeLight, 0.55 * (1 - x / bevel));
+          }
+        }
+        if (!hasE) {
+          for (let x = 0; x < bevel; x++) {
+            blendColumn(size - 1 - x, edgeDark, 0.65 * (1 - x / bevel));
           }
         }
 
