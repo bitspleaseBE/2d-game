@@ -9,10 +9,14 @@ import {
   showHighScoreScreen,
   showLevelCompletedScreen,
   showStoryScreen,
+  showSettingsScreen,
+  showDailyIntroScreen,
 } from './screens/index.js';
 import { canvasSettings, controlSettings } from './utils/settings.js';
 import { setSeed } from './utils/rng.js';
-import { loadSoundPreferences, setCampaignComplete } from './utils/preferences.js';
+import { stopNarration } from './utils/narration.js';
+import { loadSoundPreferences, setCampaignComplete, loadRunState } from './utils/preferences.js';
+import { dailySeed, getTodayResult, recordTodayResult, shareString } from './utils/daily.js';
 import { installOrientationGuard } from './utils/orientation.js';
 
 // Entry point of the game
@@ -70,12 +74,16 @@ class GameEngine {
 
             this.assets = { playerAssets, levelAssets, guardAssets, powerupsAssets, itemAssets, projectileAssets, storyAssets };
             this.game = new Game(this.container.id, this.canvas, this.context, this.assets, {
-                onGameOver: () => this.showScreen('gameOver'),
-                onLevelCompleted: (score, completedLevel, nextLevel) => {
-                    this.levelCompletion = { score, completedLevel, nextLevel };
+                onGameOver: () => {
+                    this.recordDailyIfNeeded(false);
+                    this.showScreen('gameOver');
+                },
+                onLevelCompleted: (score, completedLevel, nextLevel, tally) => {
+                    this.levelCompletion = { score, completedLevel, nextLevel, tally };
                     this.showScreen('levelCompleted');
                 },
                 onGameWon: () => {
+                    this.recordDailyIfNeeded(true);
                     setCampaignComplete();
                     this.showScreen('gameWon');
                 },
@@ -92,6 +100,16 @@ class GameEngine {
         window.addEventListener('keydown', (event) => {
             switch (event.key) {
                 case controlSettings.esc:
+                    // While a game overlay (weapon unlock, level story card) is
+                    // up, Escape only dismisses the overlay — the game's own
+                    // handler takes care of it
+                    if (this.game && this.game.started && !this.game.paused &&
+                        (this.game.weaponUnlock || this.game.levelIntro)) {
+                        break;
+                    }
+                    // Leaving the story screen (or a level card) must not let
+                    // the narrator keep talking over the menu
+                    stopNarration();
                     if (this.game && this.game.started) {
                         this.game.pause();
                     }
@@ -107,15 +125,28 @@ class GameEngine {
             case 'splash':
                 showSplashScreen(this.initialize.bind(this), () => this.showScreen('welcome'));
                 break;
-            case 'welcome':
+            case 'welcome': {
+                // Continue resumes the paused in-memory run, or — after a
+                // refresh — restores the run bookmarked in localStorage
+                const savedRun = this.game && !this.game.started ? loadRunState() : null;
+                const onContinue = this.game && this.game.started
+                    ? () => this.continueGame()
+                    : savedRun
+                        ? () => this.resumeSavedRun(savedRun)
+                        : null;
                 showWelcomeScreen(
                     () => this.startGame(),
-                    this.game && this.game.started ? () => this.continueGame() : null,
+                    onContinue,
                     () => this.highScore(),
-                    () => this.gameOver(),
                     () => this.story(),
-                    () => this.levelSelect()
+                    () => this.levelSelect(),
+                    () => this.dailyDream(),
+                    () => this.settings()
                 );
+                break;
+            }
+            case 'settings':
+                showSettingsScreen(() => this.showScreen('welcome'));
                 break;
             case 'levelSelect':
                 showLevelSelectScreen(
@@ -144,10 +175,21 @@ class GameEngine {
             case 'gameOver':
                 this.game.pause();
                 this.game.started = false;
-                showGameOverScreen(this.game.score, () => this.startGame(), () => this.showScreen('welcome'));
+                showGameOverScreen(
+                    this.game.score,
+                    () => this.startGame(),
+                    () => this.showScreen('welcome'),
+                    this.game.dailyMode ? shareString() : null
+                );
                 break;
             case 'gameWon':
-                showGameWonScreen(this.game.score, () => this.startGame(), () => this.showScreen('welcome'), this.assets.storyAssets);
+                showGameWonScreen(
+                    this.game.score,
+                    () => this.startGame(),
+                    () => this.showScreen('welcome'),
+                    this.assets.storyAssets,
+                    this.game.dailyMode ? shareString() : null
+                );
                 break;
             case 'highScore':
                 showHighScoreScreen(() => this.showScreen('welcome'));
@@ -170,12 +212,23 @@ class GameEngine {
         this.showScreen(this.currentScreen);
     }
 
+    settings() {
+        this.currentScreen = 'settings';
+        this.showScreen(this.currentScreen);
+    }
+
     levelSelect() {
         this.currentScreen = 'levelSelect';
         this.showScreen(this.currentScreen);
     }
 
     startGame() {
+        // A run may still be in progress (paused behind the menu); starting a
+        // new game must abandon it, not silently continue it
+        if (this.game && this.game.started) {
+            if (!window.confirm("Abandon Theo's current dream and start a new game?")) return;
+            this.game.started = false;
+        }
         this.pendingStartLevel = null;
         this.currentScreen = 'game';
         this.showScreen(this.currentScreen);
@@ -194,9 +247,41 @@ class GameEngine {
         this.showScreen(this.currentScreen);
     }
 
-    gameOver() {
-        this.currentScreen = 'gameOver';
-        this.showScreen(this.currentScreen);
+    // Restore a run bookmarked in localStorage (after a page refresh)
+    resumeSavedRun(state) {
+        this.pendingStartLevel = null;
+        this.currentScreen = 'game';
+        this.game.restoreRun(state);
+    }
+
+    // Start today's Daily Dream: a fresh run on the date-derived seed.
+    // A three-slide explainer runs first, so the one-attempt rule is clear
+    // before it counts. Results are recorded once; the welcome screen turns
+    // the button into a share action after the attempt.
+    dailyDream() {
+        if (getTodayResult()) return; // already played — welcome handles sharing
+        if (this.game && this.game.started) {
+            if (!window.confirm("Abandon Theo's current dream for today's Daily Dream?")) return;
+            this.game.started = false;
+        }
+        showDailyIntroScreen(
+            () => {
+                setSeed(dailySeed());
+                this.pendingStartLevel = null;
+                this.currentScreen = 'game';
+                this.game.start({ daily: true });
+            },
+            () => this.showScreen('welcome')
+        );
+    }
+
+    recordDailyIfNeeded(won) {
+        if (!this.game || !this.game.dailyMode) return;
+        recordTodayResult({
+            score: this.game.score,
+            levelReached: this.game.currentLevel,
+            won,
+        });
     }
 
     highScore() {

@@ -8,8 +8,9 @@ class Player extends Entity {
   #health;
   #baseSpeed;
   #attackPower;
-  #isHurt = false;
-  #hurtInterval = null;
+  // Remaining invulnerability after a hit, in game time; the hurt flicker is
+  // derived from it so pausing the game also pauses the i-frames
+  #hurtMs = 0;
   #effectMs = { speed: 0, strength: 0, invincibility: 0 };
 
   constructor(x, y, assets) {
@@ -63,19 +64,44 @@ class Player extends Entity {
     };
   }
 
+  // The swing's shape depends on the readied weapon: the axe sweeps a wide
+  // 180° arc across Theo's front half, the sword thrusts a longer, narrower
+  // line, and everything else (dagger, bow butt) uses the plain front box.
   getAttackBox() {
     const hitBox = this.getHitBox();
-    const reach = this._width * 0.6;
+    const weapon = this.getSelectedWeapon();
+
+    if (weapon.arc === "wide") {
+      const reach = this._width * 0.6;
+      switch (this.movement) {
+        case "up":
+          return { x: hitBox.x - reach, y: hitBox.y - reach, width: hitBox.width + reach * 2, height: reach + hitBox.height / 2 };
+        case "down":
+          return { x: hitBox.x - reach, y: hitBox.y + hitBox.height / 2, width: hitBox.width + reach * 2, height: reach + hitBox.height / 2 };
+        case "left":
+          return { x: hitBox.x - reach, y: hitBox.y - reach, width: reach + hitBox.width / 2, height: hitBox.height + reach * 2 };
+        case "right":
+        default:
+          return { x: hitBox.x + hitBox.width / 2, y: hitBox.y - reach, width: reach + hitBox.width / 2, height: hitBox.height + reach * 2 };
+      }
+    }
+
+    const narrow = weapon.arc === "narrow";
+    const reach = this._width * (narrow ? 0.8 : 0.6);
+    // A narrow thrust covers only the middle of Theo's silhouette
+    const across = narrow ? 0.5 : 1;
+    const insetX = (hitBox.width * (1 - across)) / 2;
+    const insetY = (hitBox.height * (1 - across)) / 2;
     switch (this.movement) {
       case "up":
-        return { x: hitBox.x, y: hitBox.y - reach, width: hitBox.width, height: reach };
+        return { x: hitBox.x + insetX, y: hitBox.y - reach, width: hitBox.width * across, height: reach };
       case "down":
-        return { x: hitBox.x, y: hitBox.y + hitBox.height, width: hitBox.width, height: reach };
+        return { x: hitBox.x + insetX, y: hitBox.y + hitBox.height, width: hitBox.width * across, height: reach };
       case "left":
-        return { x: hitBox.x - reach, y: hitBox.y, width: reach, height: hitBox.height };
+        return { x: hitBox.x - reach, y: hitBox.y + insetY, width: reach, height: hitBox.height * across };
       case "right":
       default:
-        return { x: hitBox.x + hitBox.width, y: hitBox.y, width: reach, height: hitBox.height };
+        return { x: hitBox.x + hitBox.width, y: hitBox.y + insetY, width: reach, height: hitBox.height * across };
     }
   }
 
@@ -113,7 +139,7 @@ class Player extends Entity {
 
   takeDamage(amount) {
     if (this.#effectMs.invincibility > 0) return;
-    if (this.#isHurt || this.#health <= 0) return;
+    if (this.#hurtMs > 0 || this.#health <= 0) return;
     if (this.equipment.rune === "runeWarding") amount = Math.ceil(amount / 2);
     this.#health = Math.max(0, this.#health - amount);
     if (this.#health <= 0) {
@@ -129,11 +155,7 @@ class Player extends Entity {
     // A short shield after respawning: a guard standing on the spawn point
     // could otherwise drain the fresh life before the player can react
     this.#effectMs = { speed: 0, strength: 0, invincibility: playerSettings.respawnProtectionMs };
-    this.#isHurt = false;
-    if (this.#hurtInterval) {
-      clearInterval(this.#hurtInterval);
-      this.#hurtInterval = null;
-    }
+    this.#hurtMs = 0;
     this.visible = true;
     this.movement = "down";
     this.animator.play("idle", { restart: true, direction: "down" });
@@ -347,6 +369,9 @@ class Player extends Entity {
     for (const name of Object.keys(this.#effectMs)) {
       this.#effectMs[name] = Math.max(0, this.#effectMs[name] - deltaMs);
     }
+    this.#hurtMs = Math.max(0, this.#hurtMs - deltaMs);
+    // Flicker in 100ms steps while hurt-invulnerable
+    this.visible = this.#hurtMs <= 0 || Math.floor(this.#hurtMs / 100) % 2 === 0;
     this.animator.update(deltaMs);
     this.#syncAnimationState();
   }
@@ -371,25 +396,11 @@ class Player extends Entity {
   }
 
   hurtAnimation() {
-    if (this.#isHurt) return;
+    this.#hurtMs = playerSettings.hurtInvulnerabilityMs;
+  }
 
-    this.#isHurt = true;
-
-    let flickerCount = 0;
-    const maxFlickers = 10;
-    const flickerDuration = 100;
-
-    this.#hurtInterval = setInterval(() => {
-      this.visible = !this.visible;
-      flickerCount++;
-
-      if (flickerCount >= maxFlickers) {
-        clearInterval(this.#hurtInterval);
-        this.#hurtInterval = null;
-        this.#isHurt = false;
-        this.visible = true;
-      }
-    }, flickerDuration);
+  isHurt() {
+    return this.#hurtMs > 0;
   }
 
   draw(ctx) {

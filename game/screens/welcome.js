@@ -1,7 +1,11 @@
 import { theme, applyContainerStyles, styleButton } from '../utils/theme.js';
-import { createSoundToggleButton } from '../utils/sound-controls.js';
-import { getSkipLevelIntros, setSkipLevelIntros, isCampaignComplete } from '../utils/preferences.js';
+import {
+  isCampaignComplete,
+  getLevelStars,
+  getFurthestLevel,
+} from '../utils/preferences.js';
 import levelData from '../levels/level-data.js';
+import { getTodayResult, copyShareString, shareString } from '../utils/daily.js';
 
 // Pick any unlocked dream after beating the campaign once.
 
@@ -32,10 +36,16 @@ export function showLevelSelectScreen(onPickLevel, onBack) {
   grid.style.maxWidth = '960px';
   grid.style.margin = '0 auto 24px';
 
-  for (let levelNumber = 1; levelNumber <= 10; levelNumber += 1) {
+  const stars = getLevelStars();
+  // Finished campaigns unlock everything; otherwise the furthest dream
+  // reached so far marks the end of the list
+  const unlockedUpTo = isCampaignComplete() ? 10 : getFurthestLevel();
+  for (let levelNumber = 1; levelNumber <= unlockedUpTo; levelNumber += 1) {
     const level = levelData.getLevel(levelNumber);
+    const earned = stars[levelNumber] || 0;
+    const rating = earned > 0 ? `  ${'★★★'.slice(0, earned)}${'☆☆☆'.slice(earned)}` : '';
     const button = document.createElement('button');
-    button.textContent = `${levelNumber}. ${level ? level.name : `Level ${levelNumber}`}`;
+    button.textContent = `${levelNumber}. ${level ? level.name : `Level ${levelNumber}`}${rating}`;
     button.style.minWidth = 'auto';
     button.style.margin = '0';
     button.style.width = '100%';
@@ -61,43 +71,12 @@ export function showLevelSelectScreen(onPickLevel, onBack) {
 // - Display game title
 // - Provide buttons to start the game, view high scores, and adjust sound settings
 
-export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onExit, onStory, onLevelSelect) {
+export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores, onStory, onLevelSelect, onDailyDream, onSettings) {
   const container = document.getElementById('game-container');
   container.innerHTML = '';
 
   const welcomeScreen = document.createElement('div');
   welcomeScreen.id = 'welcome-screen';
-
-  const settingsBar = document.createElement('div');
-  settingsBar.style.display = 'flex';
-  settingsBar.style.flexWrap = 'wrap';
-  settingsBar.style.gap = '16px';
-  settingsBar.style.alignItems = 'center';
-  settingsBar.style.justifyContent = 'center';
-  settingsBar.style.marginBottom = '24px';
-
-  settingsBar.appendChild(createSoundToggleButton());
-
-  const skipLabel = document.createElement('label');
-  skipLabel.style.display = 'flex';
-  skipLabel.style.alignItems = 'center';
-  skipLabel.style.gap = '8px';
-  skipLabel.style.fontFamily = theme.fonts.subtitle;
-  skipLabel.style.fontSize = '16px';
-  skipLabel.style.cursor = 'pointer';
-
-  const skipCheckbox = document.createElement('input');
-  skipCheckbox.type = 'checkbox';
-  skipCheckbox.checked = getSkipLevelIntros();
-  skipCheckbox.addEventListener('change', () => setSkipLevelIntros(skipCheckbox.checked));
-
-  const skipText = document.createElement('span');
-  skipText.textContent = 'Skip level story cards';
-
-  skipLabel.appendChild(skipCheckbox);
-  skipLabel.appendChild(skipText);
-  settingsBar.appendChild(skipLabel);
-  welcomeScreen.appendChild(settingsBar);
 
   const title = document.createElement('h1');
   title.textContent = 'Welcome to Wandertrap!';
@@ -129,7 +108,26 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   startButton.onclick = onStartGame;
   welcomeScreen.appendChild(startButton);
 
-  if (onLevelSelect && isCampaignComplete()) {
+  // The Daily Dream: one date-seeded attempt per day. Once played, the
+  // button turns into a share action for today's result.
+  if (onDailyDream) {
+    const dailyButton = document.createElement('button');
+    const played = getTodayResult();
+    if (played) {
+      dailyButton.textContent = 'Daily Dream ✓ — Share';
+      dailyButton.onclick = async () => {
+        const copied = await copyShareString();
+        dailyButton.textContent = copied ? 'Copied to clipboard!' : shareString();
+      };
+    } else {
+      dailyButton.textContent = 'Daily Dream';
+      dailyButton.onclick = onDailyDream;
+    }
+    welcomeScreen.appendChild(dailyButton);
+    styleButton(dailyButton, theme.colors.accent);
+  }
+
+  if (onLevelSelect && (isCampaignComplete() || getFurthestLevel() > 1)) {
     const levelSelectButton = document.createElement('button');
     levelSelectButton.textContent = 'Level Select';
     levelSelectButton.onclick = onLevelSelect;
@@ -148,10 +146,10 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
   highScoresButton.onclick = onViewHighScores;
   welcomeScreen.appendChild(highScoresButton);
 
-  const exitButton = document.createElement('button');
-  exitButton.textContent = 'Exit';
-  exitButton.onclick = onExit;
-  welcomeScreen.appendChild(exitButton);
+  const settingsButton = document.createElement('button');
+  settingsButton.textContent = 'Settings';
+  settingsButton.onclick = onSettings;
+  welcomeScreen.appendChild(settingsButton);
 
   const controlsHint = document.createElement('p');
   controlsHint.textContent = 'Arrows: move · Space: attack · I: inventory · Esc: menu';
@@ -170,5 +168,5 @@ export function showWelcomeScreen(onStartGame, onContinueGame, onViewHighScores,
 
   styleButton(startButton);
   styleButton(highScoresButton);
-  styleButton(exitButton);
+  styleButton(settingsButton);
 }

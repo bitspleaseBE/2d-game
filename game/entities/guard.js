@@ -19,6 +19,21 @@ class Guard extends Entity {
   #deathElapsedMs = 0;
   #ranged = false;
   #rangedCooldownMs = 0;
+  // Contact-attack telegraph: windup counts down, then the strike is "ready"
+  // for a short grace window during which touching the player lands the hit
+  #windupMs = 0;
+  #strikeGraceMs = 0;
+  // Archer telegraph: time left drawing the bow before the arrow releases
+  #drawMs = null;
+  // Where the player was last spotted; the guard walks there to investigate
+  // after losing line of sight instead of forgetting instantly
+  #lastSeen = null;
+  // Idle wandering between sightings: current direction (null = stand) and
+  // time until the next change of heart. The guard stays leashed near its
+  // spawn post so corridors keep their designed coverage.
+  #patrolDirection = null;
+  #patrolMs = 0;
+  #home;
 
   #isBoss;
 
@@ -33,6 +48,7 @@ class Guard extends Entity {
     );
     this.#isBoss = boss;
     this.#ranged = ranged && !boss;
+    this.#home = { x, y };
     this.animator = new Animator(guardSpriteManifest);
     this.movement = ["down", "up", "left", "right"][randomInt(0, 3)];
     this.animator.setDirection(this.movement);
@@ -123,53 +139,61 @@ class Guard extends Entity {
     this.#setSpriteForAction(this.action);
   }
 
+  // Movement collision box: a corridor-friendly square centered under the
+  // drawn body (sprites render 10px up-left of the position with generous
+  // padding). Centering it keeps the visible orc in the middle of a path
+  // instead of letting its sprite ride along wall edges.
+  getMoveBox(x = this._position.x, y = this._position.y) {
+    const size = canvasSettings.cellWidth * 0.75;
+    const centerX = x + this._width / 2 - 10;
+    const centerY = y + this._height / 2 - 10;
+    return { x: centerX - size / 2, y: centerY - size / 2, width: size, height: size };
+  }
+
   moveTowards(target, walls, deltaMs = 1000 / 60) {
     if (this.isDefeated()) return;
 
-    const dx = target.x - this._position.x;
-    const dy = target.y - this._position.y;
-
-    if (Math.abs(dx) > Math.abs(dy)) {
-      this.movement = dx > 0 ? "right" : "left";
-    } else {
-      this.movement = dy > 0 ? "down" : "up";
-    }
-    this.animator.setDirection(this.movement);
-
-    const distance = this.#speed * (deltaMs / 1000);
-    const nextPosition = {
-      ...this._position,
-      width: canvasSettings.cellWidth / 2,
-      height: canvasSettings.cellHeight / 2
+    const targetCenter = {
+      x: target.x + (target.width || 0) / 2,
+      y: target.y + (target.height || 0) / 2,
     };
-    switch (this.movement) {
-      case "up":
-        nextPosition.y -= distance;
-        break;
-      case "down":
-        nextPosition.y += distance;
-        break;
-      case "left":
-        nextPosition.x -= distance;
-        break;
-      case "right":
-        nextPosition.x += distance;
-        break;
-    }
+    const own = this.getMoveBox();
+    const dx = targetCenter.x - (own.x + own.width / 2);
+    const dy = targetCenter.y - (own.y + own.height / 2);
+    const step = this.#speed * (deltaMs / 1000);
 
-    const willCollideWithWalls = walls.some((wall) =>
-      isColliding(nextPosition, wall.getHitBox())
-    );
+    // Walk the axis with the larger remaining distance first, falling back
+    // to the other axis when a wall blocks the way (so corners don't stall
+    // the chase). The step is clamped to the remaining distance — without
+    // the clamp a nearly-aligned guard overshoots the target every frame
+    // and flips its facing left-right-left-right while going nowhere.
+    const axes = Math.abs(dx) >= Math.abs(dy) ? ["x", "y"] : ["y", "x"];
+    for (const axis of axes) {
+      const remaining = axis === "x" ? dx : dy;
+      if (Math.abs(remaining) < 1) continue; // already aligned on this axis
+      const distance = Math.sign(remaining) * Math.min(step, Math.abs(remaining));
+      const next = axis === "x"
+        ? { x: this._position.x + distance, y: this._position.y }
+        : { x: this._position.x, y: this._position.y + distance };
+      const nextBox = this.getMoveBox(next.x, next.y);
 
-    const willCollideWithPlayer = isColliding(nextPosition, target);
-    if (willCollideWithPlayer) {
-      this.attack();
-    } else if (!willCollideWithWalls) {
-      this._position = { x: nextPosition.x, y: nextPosition.y };
+      this.movement = axis === "x"
+        ? (distance > 0 ? "right" : "left")
+        : (distance > 0 ? "down" : "up");
+      this.animator.setDirection(this.movement);
+
+      if (isColliding(nextBox, target)) {
+        this.beginWindup();
+        return;
+      }
+      if (walls.some((wall) => isColliding(nextBox, wall.getHitBox()))) {
+        continue; // blocked: try the other axis
+      }
+      this._position = next;
       this.walk();
-    } else {
-      this.idle();
+      return;
     }
+    this.idle();
   }
 
   detectPlayer(playerPosition, walls) {
@@ -185,11 +209,9 @@ class Guard extends Entity {
         y: dy / distance,
       };
 
-      let checkPosition = {
-        ...this._position,
-        width: canvasSettings.cellWidth / 2,
-        height: canvasSettings.cellHeight / 2,
-      };
+      // March the guard's (centered) collision box toward the player; any
+      // wall it would cross breaks the line of sight
+      const checkPosition = this.getMoveBox();
       for (let i = 0; i < distance; i += canvasSettings.cellWidth / 2) {
         checkPosition.x += step.x * (canvasSettings.cellWidth / 2);
         checkPosition.y += step.y * (canvasSettings.cellHeight / 2);
@@ -223,9 +245,37 @@ class Guard extends Entity {
     this.#syncAnimationState();
   }
 
+  // Called while overlapping the player: starts the contact-attack windup
+  // (the telegraph) unless one is already running or ready to land
+  beginWindup() {
+    if (this.isDefeated()) return;
+    if (this.#windupMs <= 0 && this.#strikeGraceMs <= 0) {
+      this.#windupMs = combatSettings.guardWindupMs;
+      this.attack();
+    }
+  }
+
+  // The strike lands once, in the grace window right after the windup ends.
+  // The caller decides whether the player is still in reach — stepping away
+  // during the telegraph makes the hit whiff.
+  consumeStrike() {
+    if (this.#strikeGraceMs <= 0) return false;
+    this.#strikeGraceMs = 0;
+    return true;
+  }
+
+  isWindingUp() {
+    return this.#windupMs > 0;
+  }
+
+  isDrawingBow() {
+    return this.#drawMs !== null;
+  }
+
   // Apply damage from the player. `fromDirection` is the direction the
   // player was facing, so the guard is knocked back away from the swing.
-  takeDamage(amount, fromDirection = null) {
+  // `knockbackMultiplier` scales the push (the axe shoves twice as hard).
+  takeDamage(amount, fromDirection = null, knockbackMultiplier = 1) {
     if (this.#health <= 0) return false;
     this.#health = Math.max(0, this.#health - amount);
     this.#healthBarMs = combatSettings.healthBarVisibleMs;
@@ -241,7 +291,13 @@ class Guard extends Entity {
         left: { x: -1, y: 0 },
         right: { x: 1, y: 0 },
       }[fromDirection];
-      if (push) this.#knockback = { ...push, msLeft: combatSettings.knockbackDurationMs };
+      if (push) {
+        this.#knockback = {
+          ...push,
+          msLeft: combatSettings.knockbackDurationMs,
+          multiplier: knockbackMultiplier,
+        };
+      }
     }
     this.hurt();
     return false;
@@ -301,6 +357,12 @@ class Guard extends Entity {
     this.#syncAnimationState();
     this.#healthBarMs = Math.max(0, this.#healthBarMs - deltaMs);
     this.#rangedCooldownMs = Math.max(0, this.#rangedCooldownMs - deltaMs);
+    if (this.#windupMs > 0) {
+      this.#windupMs -= deltaMs;
+      if (this.#windupMs <= 0) this.#strikeGraceMs = combatSettings.guardStrikeGraceMs;
+    } else {
+      this.#strikeGraceMs = Math.max(0, this.#strikeGraceMs - deltaMs);
+    }
 
     if (this.isDefeated()) {
       this.#deathElapsedMs += deltaMs;
@@ -318,11 +380,106 @@ class Guard extends Entity {
     }
 
     if (this.detectPlayer(playerPosition, walls)) {
+      this.#lastSeen = { x: playerPosition.x, y: playerPosition.y };
       this.moveTowards(playerPosition, walls, deltaMs);
-    } else {
+    } else if (this.#isBoss) {
+      // Bosses anchor their arena: no wandering, no chasing shadows
       this.idle();
+    } else if (this.#lastSeen) {
+      this.#investigate(walls, deltaMs);
+    } else {
+      this.#patrol(walls, deltaMs);
     }
     return null;
+  }
+
+  // Walk to where the player was last spotted; on arrival (or when a wall
+  // blocks the way) give up, look around, and go back to patrolling
+  #investigate(walls, deltaMs) {
+    const dx = this.#lastSeen.x - this._position.x;
+    const dy = this.#lastSeen.y - this._position.y;
+    if (Math.hypot(dx, dy) < canvasSettings.cellWidth / 2) {
+      this.#lastSeen = null;
+      this.lookAround();
+      return;
+    }
+    if (!this.#stepToward(this.#lastSeen, walls, deltaMs)) {
+      this.#lastSeen = null;
+      this.lookAround();
+    }
+  }
+
+  // Bored-watchman wandering: amble in one direction for a couple of
+  // seconds, sometimes just stand and turn in place, repeat
+  #patrol(walls, deltaMs) {
+    this.#patrolMs -= deltaMs;
+    if (this.#patrolMs <= 0) {
+      this.#patrolMs = randomInt(1600, 3200);
+      const roll = randomInt(0, 4);
+      this.#patrolDirection = roll === 0 ? null : ["up", "down", "left", "right"][roll - 1];
+      if (!this.#patrolDirection) this.lookAround();
+    }
+    if (!this.#patrolDirection) return;
+
+    // Leashed to the spawn post: once the guard wanders more than a couple
+    // of cells away, the next steps head home instead of further out
+    const fromHome = Math.hypot(this._position.x - this.#home.x, this._position.y - this.#home.y);
+    let target;
+    if (fromHome > canvasSettings.cellWidth * 2) {
+      target = this.#home;
+    } else {
+      const step = {
+        up: { x: 0, y: -1 },
+        down: { x: 0, y: 1 },
+        left: { x: -1, y: 0 },
+        right: { x: 1, y: 0 },
+      }[this.#patrolDirection];
+      target = {
+        x: this._position.x + step.x * canvasSettings.cellWidth * 10,
+        y: this._position.y + step.y * canvasSettings.cellHeight * 10,
+      };
+    }
+    // Patrolling ambles at 60% speed (scaled via the time slice). A wall
+    // ends the leg early — the guard then stands for a short beat before
+    // rolling a new direction, instead of re-rolling every frame (which
+    // made boxed-in guards flip their facing rapidly on the spot).
+    if (!this.#stepToward(target, walls, deltaMs * 0.6)) {
+      this.#patrolDirection = null;
+      this.#patrolMs = randomInt(400, 900);
+      this.idle();
+    }
+  }
+
+  // One movement step toward a point, blocked by walls. Returns false when
+  // the path is blocked. Shared by investigate and patrol. The step is
+  // clamped to the remaining distance so arrival never overshoots into a
+  // facing-flipping jitter.
+  #stepToward(point, walls, deltaMs) {
+    const dx = point.x - this._position.x;
+    const dy = point.y - this._position.y;
+    const axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+    const remaining = axis === "x" ? dx : dy;
+    if (Math.abs(remaining) < 1) {
+      this.idle();
+      return true; // close enough — treat as arrived rather than blocked
+    }
+
+    this.movement = axis === "x"
+      ? (remaining > 0 ? "right" : "left")
+      : (remaining > 0 ? "down" : "up");
+    this.animator.setDirection(this.movement);
+
+    const step = this.#speed * (deltaMs / 1000);
+    const distance = Math.sign(remaining) * Math.min(step, Math.abs(remaining));
+    const next = axis === "x"
+      ? { x: this._position.x + distance, y: this._position.y }
+      : { x: this._position.x, y: this._position.y + distance };
+    if (walls.some((wall) => isColliding(this.getMoveBox(next.x, next.y), wall.getHitBox()))) {
+      return false;
+    }
+    this._position = next;
+    this.walk();
+    return true;
   }
 
   #updateRanged(playerPosition, walls, deltaMs) {
@@ -346,19 +503,29 @@ class Guard extends Entity {
       } else {
         this.idle();
       }
-      if (this.#rangedCooldownMs <= 0) {
+      // The shot is telegraphed: the archer draws for a moment (visible
+      // indicator) before the arrow actually releases
+      if (this.#drawMs !== null) {
+        this.#drawMs -= deltaMs;
+        if (this.#drawMs <= 0) {
+          this.#drawMs = null;
+          this.#rangedCooldownMs = combatSettings.archerCooldownMs;
+          return {
+            x: ownCenter.x,
+            y: ownCenter.y,
+            direction: { x: dx / distance, y: dy / distance },
+            damage: combatSettings.archerArrowDamage,
+          };
+        }
+      } else if (this.#rangedCooldownMs <= 0) {
+        this.#drawMs = combatSettings.archerDrawMs;
         this.attack();
-        this.#rangedCooldownMs = combatSettings.archerCooldownMs;
-        return {
-          x: ownCenter.x,
-          y: ownCenter.y,
-          direction: { x: dx / distance, y: dy / distance },
-          damage: 20,
-        };
       }
       return null;
     }
 
+    // Losing sight of the player cancels the draw
+    this.#drawMs = null;
     this.idle();
     return null;
   }
@@ -366,25 +533,20 @@ class Guard extends Entity {
   #retreatFrom(dx, dy, walls, deltaMs) {
     const distance = this.#speed * (deltaMs / 1000);
     const axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
-    const nextPosition = {
-      x: this._position.x,
-      y: this._position.y,
-      width: canvasSettings.cellWidth / 2,
-      height: canvasSettings.cellHeight / 2,
-    };
+    const next = { x: this._position.x, y: this._position.y };
 
     if (axis === "x") {
-      nextPosition.x += dx > 0 ? -distance : distance;
+      next.x += dx > 0 ? -distance : distance;
       this.movement = dx > 0 ? "left" : "right";
     } else {
-      nextPosition.y += dy > 0 ? -distance : distance;
+      next.y += dy > 0 ? -distance : distance;
       this.movement = dy > 0 ? "up" : "down";
     }
     this.animator.setDirection(this.movement);
 
-    const blocked = walls.some((wall) => isColliding(nextPosition, wall.getHitBox()));
+    const blocked = walls.some((wall) => isColliding(this.getMoveBox(next.x, next.y), wall.getHitBox()));
     if (!blocked) {
-      this._position = { x: nextPosition.x, y: nextPosition.y };
+      this._position = next;
       this.walk();
     } else {
       this.idle();
@@ -392,16 +554,14 @@ class Guard extends Entity {
   }
 
   #applyKnockback(walls, deltaMs) {
-    const distance = combatSettings.knockbackSpeed * (deltaMs / 1000);
-    const nextPosition = {
+    const distance = combatSettings.knockbackSpeed * (this.#knockback.multiplier || 1) * (deltaMs / 1000);
+    const next = {
       x: this._position.x + this.#knockback.x * distance,
       y: this._position.y + this.#knockback.y * distance,
-      width: canvasSettings.cellWidth / 2,
-      height: canvasSettings.cellHeight / 2,
     };
-    const blocked = walls.some((wall) => isColliding(nextPosition, wall.getHitBox()));
+    const blocked = walls.some((wall) => isColliding(this.getMoveBox(next.x, next.y), wall.getHitBox()));
     if (!blocked) {
-      this._position = { x: nextPosition.x, y: nextPosition.y };
+      this._position = next;
     }
     this.#knockback.msLeft -= deltaMs;
     if (this.#knockback.msLeft <= 0 || blocked) this.#knockback = null;
@@ -430,6 +590,30 @@ class Guard extends Entity {
     ctx.restore();
 
     this.#drawHealthBar(ctx);
+    this.#drawTelegraph(ctx);
+  }
+
+  // The attack telegraph: a bold '!' pops above the guard while a contact
+  // strike winds up (red) or an archer draws the bow (amber), so every hit
+  // is announced before it lands
+  #drawTelegraph(ctx) {
+    if (this.isDefeated()) return;
+    const windingUp = this.isWindingUp();
+    const drawing = this.isDrawingBow();
+    if (!windingUp && !drawing) return;
+
+    const x = this._position.x + this._width / 2 - 10;
+    const y = this._position.y - 26;
+    ctx.save();
+    ctx.font = "bold 26px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+    ctx.fillStyle = windingUp ? "#ff5252" : "#ffd54f";
+    ctx.strokeText("!", x, y);
+    ctx.fillText("!", x, y);
+    ctx.restore();
   }
 
   // Small health bar above the guard, visible for a few seconds after a hit.

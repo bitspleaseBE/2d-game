@@ -25,20 +25,10 @@ class Obstacle extends Entity {
 
   takeDamage(amount) {
     this.#health -= amount;
-    if (this.#health <= 0) {
-      return this.destroy();
-    }
-    return null;
   }
 
   isDestroyed() {
     return this.#health <= 0;
-  }
-
-  destroy() {
-    // Implement destruction logic
-    console.log("Obstacle destroyed!");
-    // Return dropped items (powerups, explosives, keys)
   }
 
   update() {

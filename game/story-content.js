@@ -34,11 +34,15 @@ export const introStoryBeats = [
   },
 ];
 
+// `guide` lines belong to Sooth, the dream-guide dragon — a bored, faintly
+// sarcastic wisp of a dragon who narrates each act from somewhere just out
+// of sight. One remark per act; delivered on the level intro card.
 export const levelStoryBeats = [
   {
     level: 1,
     audioId: 'level-01-glade',
     story: 'Moonlit grass whispers around Theo as the first stolen dream-shard glows beyond the Glade.',
+    guide: 'A dagger? Adorable. Do try not to poke yourself, pyjama knight.',
   },
   {
     level: 2,
@@ -54,16 +58,18 @@ export const levelStoryBeats = [
     level: 4,
     audioId: 'level-04-quarry',
     story: 'The Quarry rumbles with buried traps, but every broken stone brings Theo closer to dawn.',
+    guide: 'Mind the buried surprises. The orcs never did learn to label their explosives.',
   },
   {
     level: 5,
     audioId: 'level-05-warden',
-    story: 'The first Warden waits in the sand, sworn to keep the Orc King\'s nightmare alive.',
+    story: 'The first Warden waits in the sand, sworn to keep the Orc King\'s nightmare alive. Slip past it, or bring it down — the dream rewards both.',
   },
   {
     level: 6,
     audioId: 'level-06-twin-halls',
     story: 'Twin Halls split the dream in two; Theo must find the right keys before sleep closes in.',
+    guide: 'Two doors, two keys, zero patience. I would fly you over, but I am strictly decorative.',
   },
   {
     level: 7,
@@ -74,6 +80,7 @@ export const levelStoryBeats = [
     level: 8,
     audioId: 'level-08-crossroads',
     story: 'At the Crossroads, a second Warden patrols the center where stolen shards burn like stars.',
+    guide: 'Another Warden. They do love their crossroads — left is wrong, right is also wrong.',
   },
   {
     level: 9,
@@ -84,6 +91,7 @@ export const levelStoryBeats = [
     level: 10,
     audioId: 'level-10-throne',
     story: 'On the Throne, the Orc King clutches the final shard between Theo and his own bed.',
+    guide: 'The Orc King snores louder than you do. Steal the shard or wake him — dealer\'s choice.',
   },
 ];
 

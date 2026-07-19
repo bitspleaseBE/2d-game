@@ -7,7 +7,7 @@ import { playNarration, stopNarration } from '../utils/narration.js';
 // - Shown when the player clears the final level
 // - Displays the final score and options to play again or return to the menu
 
-export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAssets = {}) {
+export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAssets = {}, dailyShare = null) {
     const container = document.getElementById('game-container');
     container.innerHTML = '';
 
@@ -27,6 +27,22 @@ export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAsse
     gameWonScreen.appendChild(scoreDisplay);
 
     appendScoreEntry(gameWonScreen, finalScore);
+
+    // Daily Dream runs end with a shareable one-liner of today's result
+    let shareButton = null;
+    if (dailyShare) {
+        shareButton = document.createElement('button');
+        shareButton.textContent = 'Share Daily Result';
+        shareButton.onclick = async () => {
+            try {
+                await navigator.clipboard.writeText(dailyShare);
+                shareButton.textContent = 'Copied to clipboard!';
+            } catch {
+                shareButton.textContent = dailyShare;
+            }
+        };
+        gameWonScreen.appendChild(shareButton);
+    }
 
     const playAgainButton = document.createElement('button');
     playAgainButton.textContent = 'Play Again';
@@ -69,6 +85,7 @@ export function showGameWonScreen(finalScore, onPlayAgain, onMainMenu, storyAsse
 
     styleButton(playAgainButton, theme.colors.accent);
     styleButton(mainMenuButton, theme.colors.secondary);
+    if (shareButton) styleButton(shareButton, theme.colors.primary);
 
     playNarration(endingStoryBeat.audioId);
 

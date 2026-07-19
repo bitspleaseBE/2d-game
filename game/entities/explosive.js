@@ -12,13 +12,26 @@ import { entitySettings } from '../utils/settings.js';
 const EXPLOSION_ANIMATION_MS = 350;
 
 class Explosive extends Entity {
-  #state = 'hidden'; // hidden -> armed -> exploding -> done
+  #state = 'hidden'; // hidden -> armed -> (exploding | disarmed) -> done
   #fuseMs = entitySettings.explosiveFuseMs;
   #explosionMs = EXPLOSION_ANIMATION_MS;
   #blastConsumed = false;
+  #disarmed = false;
 
   constructor(x, y) {
     super(x, y, 'explosive');
+  }
+
+  // Cut the fuse: an armed trap is rendered harmless (the pick action)
+  disarm() {
+    if (this.#state !== 'armed') return false;
+    this.#state = 'done';
+    this.#disarmed = true;
+    return true;
+  }
+
+  wasDisarmed() {
+    return this.#disarmed;
   }
 
   isHidden() {

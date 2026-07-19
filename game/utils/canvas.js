@@ -16,6 +16,10 @@ export function applyLandscapeCanvasLayout(container, canvas) {
   container.style.position = 'relative';
   container.style.width = '100vw';
   container.style.height = '100vh';
+  // Menu screens set inline padding on the shared container; without this
+  // reset the box grows past the viewport and the canvas edges get clipped.
+  container.style.padding = '0';
+  container.style.boxSizing = 'border-box';
   container.style.overflow = 'hidden';
   container.style.display = 'flex';
   container.style.alignItems = 'center';

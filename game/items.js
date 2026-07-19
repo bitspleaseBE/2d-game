@@ -131,11 +131,15 @@ export const weaponCatalog = {
     icon: "warAxe",
     actionState: "axe",
     damage: 30,
-    cooldownMs: 430,
+    cooldownMs: 560,
+    // The crowd-control pick: a slow 180° sweep that hits everything around
+    // Theo's front half and sends orcs flying twice as far
+    arc: "wide",
+    knockbackMultiplier: 2,
     canChopObstacles: true,
     obstacleDamage: 100,
     unlockLine: "The first shard remembers a wooden axe. It can carve paths through the dream.",
-    hint: "The only tool that cuts trees and breaks boulders.",
+    hint: "Slow, sweeping swings that hit all around and shove orcs far back. Cuts trees and boulders.",
   },
   steelSword: {
     itemId: "steelSword",
@@ -143,9 +147,11 @@ export const weaponCatalog = {
     icon: "steelSword",
     actionState: "attack",
     damage: 60,
-    cooldownMs: 360,
+    cooldownMs: 300,
+    // The duelist's pick: fast and hard-hitting, but only straight ahead
+    arc: "narrow",
     unlockLine: "The second shard sharpens into a steel sword.",
-    hint: "Higher melee damage with knockback. Keep the axe for trees and rocks.",
+    hint: "Fast, precise thrusts straight ahead. Keep the axe for trees, rocks and crowds.",
   },
   dreamBow: {
     itemId: "dreamBow",
