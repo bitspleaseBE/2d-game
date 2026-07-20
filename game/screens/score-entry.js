@@ -1,6 +1,16 @@
 import { theme, styleButton } from '../utils/theme.js';
 import { qualifiesForHighScore, addHighScore } from '../utils/storage.js';
 
+const NAME_MAX_LENGTH = 16;
+
+// Default high-score name from ?name= in the URL (e.g. ?name=Theo).
+function defaultScoreName() {
+    if (typeof window === 'undefined') return '';
+    const nameParam = new URLSearchParams(window.location.search).get('name');
+    if (!nameParam) return '';
+    return nameParam.trim().slice(0, NAME_MAX_LENGTH);
+}
+
 // Shared "save your score" widget for the game-over and game-won screens.
 // Renders a name input + save button when the score makes the top-10;
 // otherwise renders nothing.
@@ -19,8 +29,9 @@ export function appendScoreEntry(parent, score) {
     const input = document.createElement('input');
     input.id = 'score-name-input';
     input.type = 'text';
-    input.maxLength = 16;
+    input.maxLength = NAME_MAX_LENGTH;
     input.placeholder = 'Your name';
+    input.value = defaultScoreName();
     input.style.padding = '10px';
     input.style.fontSize = theme.fontSize.button;
     input.style.fontFamily = theme.fonts.subtitle;

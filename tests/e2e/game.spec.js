@@ -1414,6 +1414,28 @@ test('winning the final level asks for a high score name and saves it', async ({
   await expect(page.getByRole('cell', { name: '1934' })).toBeVisible();
 });
 
+test('?name= prefills the high score name input', async ({ page }) => {
+  await page.goto('/?name=Theo');
+  await expect(page.locator('#welcome-screen')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'New Game' }).click();
+  await expect(page.locator('canvas')).toBeVisible();
+  await expect.poll(() => gameState(page).then((s) => s.started)).toBe(true);
+  await page.evaluate(() => window.__wandertrap.game.dismissLevelIntro());
+
+  await page.evaluate(() => {
+    const game = window.__wandertrap.game;
+    game.pause();
+    game.startAtLevel(10);
+    game.score = 1234;
+    const exit = game.exit.getPosition();
+    game.teleportPlayer(exit.x, exit.y);
+    game.step(1);
+  });
+
+  await expect(page.locator('#game-won-screen')).toBeVisible();
+  await expect(page.locator('#score-name-input')).toHaveValue('Theo');
+});
+
 test('reaching the exit completes level 1 and advances to level 2', async ({ page }) => {
   await startNewGame(page);
 
