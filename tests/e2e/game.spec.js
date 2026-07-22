@@ -1414,8 +1414,8 @@ test('winning the final level asks for a high score name and saves it', async ({
   await expect(page.getByRole('cell', { name: '1934' })).toBeVisible();
 });
 
-test('?name= prefills the high score name input', async ({ page }) => {
-  await page.goto('/?name=Theo');
+test('?name= prefills a sanitized high score name', async ({ page }) => {
+  await page.goto('/?name=%3Cscript%3Ealert(1)%3C%2Fscript%3ETheo');
   await expect(page.locator('#welcome-screen')).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'New Game' }).click();
   await expect(page.locator('canvas')).toBeVisible();
@@ -1433,7 +1433,8 @@ test('?name= prefills the high score name input', async ({ page }) => {
   });
 
   await expect(page.locator('#game-won-screen')).toBeVisible();
-  await expect(page.locator('#score-name-input')).toHaveValue('Theo');
+  // Markup is stripped and the result is capped at 16 characters
+  await expect(page.locator('#score-name-input')).toHaveValue('scriptalert1scrip');
 });
 
 test('reaching the exit completes level 1 and advances to level 2', async ({ page }) => {

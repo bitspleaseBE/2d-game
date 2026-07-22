@@ -1,6 +1,6 @@
 import { theme, applyContainerStyles, styleButton, applyMenuAtmosphere } from '../utils/theme.js';
 import { timeAgo } from '../utils/date.js';
-import { getHighScores } from '../utils/storage.js';
+import { getHighScores, sanitizeScoreName } from '../utils/storage.js';
 import { getMenuBackdropPngUrl, getMenuBackdropUrl } from '../assets.js';
 
 // High Score screen
@@ -75,7 +75,8 @@ export function showHighScoreScreen(onBack) {
 
         highScores.forEach((entry) => {
             const row = document.createElement('tr');
-            [entry.name, entry.score, timeAgo(entry.timestamp)].forEach((text) => {
+            const safeName = sanitizeScoreName(entry.name) || 'Anonymous';
+            [safeName, entry.score, timeAgo(entry.timestamp)].forEach((text) => {
                 const cell = document.createElement('td');
                 cell.textContent = text;
                 row.appendChild(cell);

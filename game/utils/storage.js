@@ -4,6 +4,18 @@
 
 const STORAGE_KEY = 'wandertrap.highScores';
 const MAX_SCORES = 10;
+const NAME_MAX_LENGTH = 16;
+
+// Strip control chars and markup-ish characters; keep letters, numbers,
+// spaces, and a small set of name punctuation. Used for ?name= and saves.
+export function sanitizeScoreName(name) {
+    return String(name || '')
+        .normalize('NFKC')
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+        .replace(/[^\p{L}\p{N} _.'-]/gu, '')
+        .trim()
+        .slice(0, NAME_MAX_LENGTH);
+}
 
 export function getHighScores() {
     try {
@@ -26,7 +38,7 @@ export function qualifiesForHighScore(score) {
 export function addHighScore(name, score) {
     const scores = getHighScores();
     scores.push({
-        name: (name || 'Anonymous').slice(0, 16),
+        name: sanitizeScoreName(name) || 'Anonymous',
         score,
         timestamp: new Date().toISOString(),
     });

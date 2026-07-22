@@ -1,5 +1,5 @@
 import { theme, styleButton } from '../utils/theme.js';
-import { qualifiesForHighScore, addHighScore } from '../utils/storage.js';
+import { qualifiesForHighScore, addHighScore, sanitizeScoreName } from '../utils/storage.js';
 
 const NAME_MAX_LENGTH = 16;
 
@@ -7,8 +7,7 @@ const NAME_MAX_LENGTH = 16;
 function defaultScoreName() {
     if (typeof window === 'undefined') return '';
     const nameParam = new URLSearchParams(window.location.search).get('name');
-    if (!nameParam) return '';
-    return nameParam.trim().slice(0, NAME_MAX_LENGTH);
+    return sanitizeScoreName(nameParam);
 }
 
 // Shared "save your score" widget for the game-over and game-won screens.
